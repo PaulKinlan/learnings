@@ -1,0 +1,13 @@
+HTTP/2 400 
+date: Tue, 22 Sep 2026 09:31:03 GMT
+server: istio-envoy
+vary: Origin
+access-control-allow-methods: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT
+access-control-max-age: 600
+access-control-allow-headers: Accept, Accept-Language, Authorization, Content-Language, Content-Type, X-Dashboard-JWT, X-Typesafe-Organization-ID
+access-control-allow-credentials: true
+content-length: 22
+content-type: text/plain; charset=utf-8
+x-typesafe-request-id: req_01a0c8745ce17f4dad12a174bd9f3c12
+x-envoy-upstream-service-time: 4
+

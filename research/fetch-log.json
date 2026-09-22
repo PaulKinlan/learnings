@@ -1,0 +1,150 @@
+[
+  {
+    "id": "launch",
+    "url": "https://typesafe.ai/blog/introducing-system-one-models-and-jev",
+    "status": 200,
+    "bytes": 258883
+  },
+  {
+    "id": "langchain",
+    "url": "https://www.langchain.com/blog/building-a-harness-with-jev",
+    "status": 200,
+    "bytes": 170414
+  },
+  {
+    "id": "flavio",
+    "url": "https://flaviocopes.com/jev/",
+    "status": 200,
+    "bytes": 154035
+  },
+  {
+    "id": "arxiv",
+    "url": "https://arxiv.org/abs/2609.23886",
+    "status": 200,
+    "bytes": 43292
+  },
+  {
+    "id": "architecture",
+    "url": "https://archerhume.com/posts/jevs-architecture-unmasked",
+    "status": 200,
+    "bytes": 295827
+  },
+  {
+    "id": "use-cases",
+    "url": "https://docs.typesafe.ai/concepts/use-case-map.md",
+    "status": 200,
+    "bytes": 11707
+  },
+  {
+    "id": "limitations",
+    "url": "https://docs.typesafe.ai/concepts/system-one.md",
+    "status": 200,
+    "bytes": 4061
+  },
+  {
+    "id": "smart-home",
+    "url": "https://docs.typesafe.ai/demos/smart-home.md",
+    "status": 200,
+    "bytes": 3825
+  },
+  {
+    "id": "cookbooks",
+    "url": "https://docs.typesafe.ai/llms.txt",
+    "status": 200,
+    "bytes": 16019
+  },
+  {
+    "id": "kev-space",
+    "url": "https://huggingface.co/spaces/jaredpalmer/kev/raw/main/app.py",
+    "status": 200,
+    "bytes": 20043
+  },
+  {
+    "id": "kev08",
+    "url": "https://huggingface.co/jaredpalmer/kev-0.8b/raw/main/README.md",
+    "status": 200,
+    "bytes": 7257
+  },
+  {
+    "id": "x-search",
+    "url": "https://x.com/search?q=Jev%20Tetris&src=typed_query&f=live",
+    "status": 200,
+    "bytes": 298819
+  },
+  {
+    "id": "bing",
+    "url": "https://www.bing.com/search?format=rss&q=Jev+Tetris+site%3Ax.com",
+    "status": 200,
+    "bytes": 5175
+  },
+  {
+    "id": "ddg",
+    "url": "https://html.duckduckgo.com/html/?q=Jev+state+machine+Tetris+typesafe",
+    "status": 202,
+    "bytes": 14246
+  },
+  {
+    "id": "public-repos",
+    "url": "https://api.github.com/users/PaulKinlan/repos?type=owner&sort=updated&per_page=100",
+    "status": 200,
+    "bytes": 540112
+  },
+  {
+    "id": "kev4-old",
+    "url": "https://huggingface.co/jaredpalmer/kev-4b/raw/qwen3/README.md",
+    "status": 200,
+    "bytes": 6855
+  },
+  {
+    "id": "kev06",
+    "url": "https://huggingface.co/jaredpalmer/kev-0.6b/raw/main/README.md",
+    "status": 200,
+    "bytes": 6439
+  },
+  {
+    "id": "pricing",
+    "url": "https://docs.typesafe.ai/models.md",
+    "status": 200,
+    "bytes": 7245
+  },
+  {
+    "id": "claude",
+    "url": "https://platform.claude.com/docs/en/api/overview",
+    "error": "HTTP Error 403: Forbidden"
+  },
+  {
+    "id": "openai",
+    "url": "https://platform.openai.com/docs/api-reference/chat/create",
+    "error": "HTTP Error 403: Forbidden"
+  },
+  {
+    "id": "cap",
+    "url": "https://raw.githubusercontent.com/PaulKinlan/chrome-agent-platform/main/README.md",
+    "status": 200,
+    "bytes": 18787
+  },
+  {
+    "id": "agent-do",
+    "url": "https://raw.githubusercontent.com/PaulKinlan/agent-do/main/README.md",
+    "status": 200,
+    "bytes": 69065
+  },
+  {
+    "id": "idb",
+    "url": "https://raw.githubusercontent.com/PaulKinlan/idb-vector/main/README.md",
+    "status": 200,
+    "bytes": 10161
+  },
+  {
+    "id": "x-palmer",
+    "url": "https://x.com/jaredpalmer",
+    "status": 200,
+    "bytes": 264106
+  },
+  {
+    "id": "x-typesafe",
+    "url": "https://x.com/typesafeai",
+    "status": 200,
+    "bytes": 240709
+  }
+]
