@@ -1,0 +1,91 @@
+<!doctype html><html><head><meta charset="utf-8"><title>engine measurements</title></head><body><script type="module">
+import { loadLaya } from './laya-engine.js';
+import { loadKev } from './kev-engine.js';
+
+const MB = (n) => (n / 1048576).toFixed(1);
+const heap = () => performance.memory ? performance.memory.usedJSHeapSize : null;
+
+window.__measure = { done: false, error: null, rows: [] };
+const record = (row) => { window.__measure.rows.push(row); };
+
+const DECIDE_CASE = {
+  state: { from: "Velqun", subject: "Duplicate charge", body: "Please refund the duplicate charge." },
+  question: { t: "choice", ins: "Which department should handle this request?", crit: { billing: "invoices, payments, refunds", technical: "bugs, outages, system errors", sales: "pricing, new contracts", other: "everything else" } },
+};
+const KEV_CASE = {
+  state: "I was charged twice for the same order and nobody answers my emails. I want my money back now.",
+  question: { instruction: "Which team should handle this ticket?", options: ["billing: Charges, refunds, invoices", "technical support: Bugs, outages, login problems", "sales: Pricing, demos, new subscriptions", "account management: Profile, password, settings"] },
+};
+
+async function measureLaya() {
+  const before = heap();
+  const t0 = performance.now();
+  const session = await loadLaya({
+    checkpoint: 'multilingual', calibration: 'source',
+    urls: {
+      'laya_ml_s512_embeds_wfp16.tflite': './laya/laya_ml_s512_embeds_wfp16.tflite',
+      'token_embeddings_fp16.bin': './laya/token_embeddings_fp16.bin',
+      'tokenizer.json': './laya/ml-tokenizer.json',
+      'SHA256SUMS': './laya/ml-SHA256SUMS',
+      'laya_ml_act_head_fp32.tflite': './laya/laya_ml_act_head_fp32.tflite',
+      'laya_ml_calibration.json': './laya/laya_ml_calibration.json',
+    },
+  });
+  const loadMs = performance.now() - t0;
+  const afterLoad = heap();
+  record({ engine: 'laya', phase: 'load', ms: Math.round(loadMs), heapBeforeMB: before && +MB(before), heapAfterMB: afterLoad && +MB(afterLoad) });
+  const decisions = [];
+  for (let i = 0; i < 5; i++) {
+    const t1 = performance.now();
+    await session.decide(DECIDE_CASE.state, DECIDE_CASE.question);
+    decisions.push(Math.round(performance.now() - t1));
+  }
+  record({ engine: 'laya', phase: 'decisions', msEach: decisions, medianMs: decisions.sort((a,b)=>a-b)[2] });
+  const afterDecide = heap();
+  record({ engine: 'laya', phase: 'afterDecisions', heapAfterMB: afterDecide && +MB(afterDecide) });
+  session.delete();
+  await new Promise(r => setTimeout(r, 500));
+  const afterDelete = heap();
+  record({ engine: 'laya', phase: 'afterDelete', heapAfterMB: afterDelete && +MB(afterDelete) });
+}
+
+async function measureKev() {
+  const before = heap();
+  const t0 = performance.now();
+  const session = await loadKev({
+    urls: {
+      'tokenizer.json': '../kev-staging/tokenizer.json',
+      'config.json': '../kev-staging/config.json',
+      'onnx/model_q4.onnx': '../kev-staging/onnx/model_q4.onnx',
+      'onnx/model_q4.onnx_data': '../kev-staging/onnx/model_q4.onnx_data',
+    },
+  });
+  const loadMs = performance.now() - t0;
+  const afterLoad = heap();
+  record({ engine: 'kev', phase: 'load', ms: Math.round(loadMs), heapBeforeMB: before && +MB(before), heapAfterMB: afterLoad && +MB(afterLoad) });
+  const decisions = [];
+  for (let i = 0; i < 5; i++) {
+    const t1 = performance.now();
+    await session.decidePacked(KEV_CASE.state, [KEV_CASE.question]);
+    decisions.push(Math.round(performance.now() - t1));
+  }
+  record({ engine: 'kev', phase: 'decisions', msEach: decisions, medianMs: decisions.sort((a,b)=>a-b)[2] });
+  const afterDecide = heap();
+  record({ engine: 'kev', phase: 'afterDecisions', heapAfterMB: afterDecide && +MB(afterDecide) });
+  await session.delete();
+  await new Promise(r => setTimeout(r, 500));
+  const afterDelete = heap();
+  record({ engine: 'kev', phase: 'afterDelete', heapAfterMB: afterDelete && +MB(afterDelete) });
+}
+
+(async () => {
+  try {
+    await measureLaya();
+    await measureKev();
+    window.__measure.done = true;
+  } catch (e) {
+    window.__measure.error = String(e && e.stack || e);
+    window.__measure.done = true;
+  }
+})();
+</script></body></html>

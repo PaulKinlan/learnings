@@ -1,0 +1,285 @@
+{
+  "temperature": [
+    2.042901414492613,
+    3.684653192472766,
+    3.629100511692587
+  ],
+  "temperature_by_options": {
+    "choice:2": 1.397546128996061,
+    "choice:3-5": 1.3591985667953796,
+    "choice:6-10": 1.0,
+    "choice:11+": 2.445877143176841,
+    "score:3-5": 3.684653192472766,
+    "noul:2": 3.629100511692587
+  },
+  "provenance": {
+    "status": "PASS",
+    "round": 6,
+    "model": "convaiinnovations/laya",
+    "revision": "1c5edc17a7acd8701df6fc341c0d179f1c62c982",
+    "subfolder": "multilingual",
+    "max_len": 256,
+    "head_max_len": 256,
+    "source_runtime": "laya 0.3.4 / torch 2.12.1 CPU fp32, 4 threads",
+    "method": "Mean NLL minimized by bounded 1-D search over log(T), T in [0.05,20]; no ECE optimization",
+    "split": "Preserve every round-5 assignment; new rows: seed-0 80/20 by bucket, language, task and semantic label; nearest integer validation counts.",
+    "balance_policy": "Sort ids within language, random.Random(0), uniformly shuffle only larger fit-language pools; take the smaller-language count.",
+    "seed": 0,
+    "defaults_fitted_on": "Original fit rows pooled by question type and uniformly subsampled to equal EN/JA counts; validation excluded.",
+    "total_examples": 4415,
+    "source_datasets_and_splits": [
+      {
+        "dataset": "AmazonScience/massive",
+        "config": "en-US",
+        "split": "test",
+        "language": "en",
+        "n": 870
+      },
+      {
+        "dataset": "AmazonScience/massive",
+        "config": "ja-JP",
+        "split": "test",
+        "language": "ja",
+        "n": 870
+      },
+      {
+        "dataset": "google/civil_comments",
+        "config": "default",
+        "split": "validation",
+        "language": "en",
+        "n": 1200
+      },
+      {
+        "dataset": "sbintuitions/JMTEB",
+        "config": "livedoor_news",
+        "split": "test",
+        "language": "ja",
+        "n": 225
+      },
+      {
+        "dataset": "shunk031/JGLUE",
+        "config": "JCommonsenseQA",
+        "split": "validation",
+        "language": "ja",
+        "n": 200
+      },
+      {
+        "dataset": "shunk031/JGLUE",
+        "config": "JNLI",
+        "split": "validation",
+        "language": "ja",
+        "n": 650
+      },
+      {
+        "dataset": "shunk031/JGLUE",
+        "config": "JSTS",
+        "split": "validation",
+        "language": "ja",
+        "n": 400
+      }
+    ],
+    "licenses": "LICENSE_CHECK.md",
+    "source_design": "results/calibration_design_round6.json",
+    "source_examples_sha256": "5475dd337656b87ba9000ec3ea27f2bf1c9792ac8c806e3be7a67312cc6b640f",
+    "raw_logits_sha256": "db76c9c179a3ccbea369dd204e002a70c994e4e82e405afc38e7fe525c1a3587",
+    "round5_report_sha256": "20494fb5abae4ff338c7747f27e43aa2b2769d0f5f9d46b8f4ccbd4f7ca7ea77",
+    "round5_export_sha256": "7cf2447822645dd84958ffa70f91240dd4717b8a70d6ced7a0baf053edba6019",
+    "per_bucket": {
+      "choice:2": {
+        "total_n": 700,
+        "language_counts": {
+          "en": 400,
+          "ja": 300
+        },
+        "original_fit_n": 560,
+        "balanced_fit_n": 480,
+        "balanced_fit_language_counts": {
+          "en": 240,
+          "ja": 240
+        },
+        "validation_n": 140,
+        "validation_language_counts": {
+          "en": 80,
+          "ja": 60
+        },
+        "ship_rule": {
+          "selected": "balanced",
+          "temperature": 1.397546128996061,
+          "flagged": false,
+          "balanced_violations": [],
+          "round5_pooled_violations": [],
+          "shipped_violations": [],
+          "rule": "Use balanced T unless any language validation n>=40 has ECE increase >0.05 over T=1; then use round-5 pooled T if safe, else T=1.",
+          "round5_temperature_was_fitted": true
+        }
+      },
+      "choice:3-5": {
+        "total_n": 750,
+        "language_counts": {
+          "en": 200,
+          "ja": 550
+        },
+        "original_fit_n": 600,
+        "balanced_fit_n": 320,
+        "balanced_fit_language_counts": {
+          "en": 160,
+          "ja": 160
+        },
+        "validation_n": 150,
+        "validation_language_counts": {
+          "en": 40,
+          "ja": 110
+        },
+        "ship_rule": {
+          "selected": "balanced",
+          "temperature": 1.3591985667953796,
+          "flagged": false,
+          "balanced_violations": [],
+          "round5_pooled_violations": [],
+          "shipped_violations": [],
+          "rule": "Use balanced T unless any language validation n>=40 has ECE increase >0.05 over T=1; then use round-5 pooled T if safe, else T=1.",
+          "round5_temperature_was_fitted": true
+        }
+      },
+      "choice:6-10": {
+        "total_n": 625,
+        "language_counts": {
+          "en": 200,
+          "ja": 425
+        },
+        "original_fit_n": 500,
+        "balanced_fit_n": 320,
+        "balanced_fit_language_counts": {
+          "en": 160,
+          "ja": 160
+        },
+        "validation_n": 125,
+        "validation_language_counts": {
+          "en": 40,
+          "ja": 85
+        },
+        "ship_rule": {
+          "selected": "t1",
+          "temperature": 1.0,
+          "flagged": true,
+          "balanced_violations": [
+            {
+              "language": "en",
+              "n": 40,
+              "before": 0.04856881380219721,
+              "after": 0.16300514856750847,
+              "increase": 0.11443633476531126
+            }
+          ],
+          "round5_pooled_violations": [
+            {
+              "language": "en",
+              "n": 40,
+              "before": 0.04856881380219721,
+              "after": 0.20085710756474862,
+              "increase": 0.1522882937625514
+            }
+          ],
+          "shipped_violations": [],
+          "rule": "Use balanced T unless any language validation n>=40 has ECE increase >0.05 over T=1; then use round-5 pooled T if safe, else T=1.",
+          "round5_temperature_was_fitted": true
+        }
+      },
+      "choice:11+": {
+        "total_n": 540,
+        "language_counts": {
+          "en": 270,
+          "ja": 270
+        },
+        "original_fit_n": 432,
+        "balanced_fit_n": 432,
+        "balanced_fit_language_counts": {
+          "en": 216,
+          "ja": 216
+        },
+        "validation_n": 108,
+        "validation_language_counts": {
+          "en": 54,
+          "ja": 54
+        },
+        "ship_rule": {
+          "selected": "balanced",
+          "temperature": 2.445877143176841,
+          "flagged": false,
+          "balanced_violations": [],
+          "round5_pooled_violations": [],
+          "shipped_violations": [],
+          "rule": "Use balanced T unless any language validation n>=40 has ECE increase >0.05 over T=1; then use round-5 pooled T if safe, else T=1.",
+          "round5_temperature_was_fitted": true
+        }
+      },
+      "score:3-5": {
+        "total_n": 800,
+        "language_counts": {
+          "en": 400,
+          "ja": 400
+        },
+        "original_fit_n": 639,
+        "balanced_fit_n": 638,
+        "balanced_fit_language_counts": {
+          "en": 319,
+          "ja": 319
+        },
+        "validation_n": 161,
+        "validation_language_counts": {
+          "en": 80,
+          "ja": 81
+        },
+        "ship_rule": {
+          "selected": "balanced",
+          "temperature": 3.684653192472766,
+          "flagged": false,
+          "balanced_violations": [],
+          "round5_pooled_violations": [],
+          "shipped_violations": [],
+          "rule": "Use balanced T unless any language validation n>=40 has ECE increase >0.05 over T=1; then use round-5 pooled T if safe, else T=1.",
+          "round5_temperature_was_fitted": false
+        }
+      },
+      "noul:2": {
+        "total_n": 1000,
+        "language_counts": {
+          "en": 600,
+          "ja": 400
+        },
+        "original_fit_n": 800,
+        "balanced_fit_n": 640,
+        "balanced_fit_language_counts": {
+          "en": 320,
+          "ja": 320
+        },
+        "validation_n": 200,
+        "validation_language_counts": {
+          "en": 120,
+          "ja": 80
+        },
+        "ship_rule": {
+          "selected": "balanced",
+          "temperature": 3.629100511692587,
+          "flagged": false,
+          "balanced_violations": [],
+          "round5_pooled_violations": [],
+          "shipped_violations": [],
+          "rule": "Use balanced T unless any language validation n>=40 has ECE increase >0.05 over T=1; then use round-5 pooled T if safe, else T=1.",
+          "round5_temperature_was_fitted": true
+        }
+      }
+    },
+    "flagged_buckets": [
+      "choice:6-10"
+    ],
+    "all_argmax_unchanged": 4415,
+    "intended_use": "Generic local calibration for S256; task/domain-specific validation remains necessary.",
+    "limitations": [
+      "Civil toxicity fraction is the supervisor-selected ordinal proxy for the unchanged upstream severity rubric.",
+      "Existing and new tasks can reuse JNLI source pairs; fixed local validation is not independent generalization evaluation.",
+      "Mixed public tasks, translated utterances and reused source texts are not an independent task benchmark."
+    ],
+    "created_utc": "2026-09-21T05:37:04.296391+00:00"
+  }
+}

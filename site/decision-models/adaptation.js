@@ -16,7 +16,7 @@ $('compare').onclick=async()=>{
   const withExamples=structuredClone(base);withExamples.state=`Labelled examples (reference only):\n${$('labelled-examples').value}\n\nNew item to classify:\n${base.state}`;
   const arms=[];const expected=$('expected').value,provider=settings().provider,mode=$('drift').value;
   for(const [label,spec] of [['Without examples',base],['With examples',withExamples]]){if(controller.signal.aborted)throw new Error('Comparison cancelled.');const result=await runSpec(spec,AbortSignal.any([controller.signal,AbortSignal.timeout(45000)]));arms.push({label,spec,result});if(version!==started)throw new Error('Inputs changed during comparison. Results discarded; run again.');}
-  receipt={at:new Date().toISOString(),provider,mode,expected,arms,qualification:provider==='illustrative'?'Synthetic fixtures only; not model measurements.':'One labelled pair; not a calibration or generalization study.'};
+  receipt={at:new Date().toISOString(),provider,mode,expected,arms,qualification:'One labelled pair; not a calibration or generalization study.'};
   $('status').textContent=`${arms[0].result.source} — two arms complete. ${receipt.qualification}`;$('raw').textContent=JSON.stringify(receipt,null,2);$('download').disabled=false;render();
  }catch(e){$('status').textContent=e.message;}finally{$('compare').disabled=false;$('cancel').disabled=true;controller=null;}
 };

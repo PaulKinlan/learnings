@@ -18,7 +18,7 @@ function contextual(){
   spec.state=`Support state: ${stage}. Customer requests a refund for a damaged item. Inspect first, then propose a resolution; no actual refund is authorized.`;
  }
 }
-function load(name){current=name;position=[0,0];stage='new';spec=structuredClone(examples[name]);contextual();$('demo-title').textContent=spec.title;$('demo-description').textContent=spec.description;$('state').value=spec.state;$('questions').value=JSON.stringify(spec.questions,null,2);$('effect').textContent='No action applied.';world();invalidate('Ready. '+(settings().provider==='illustrative'?'ILLUSTRATIVE mode — fixed numbers, not AI.':'Real provider selected. Run sends this state.'));}
+function load(name){current=name;position=[0,0];stage='new';spec=structuredClone(examples[name]);contextual();$('demo-title').textContent=spec.title;$('demo-description').textContent=spec.description;$('state').value=spec.state;$('questions').value=JSON.stringify(spec.questions,null,2);$('effect').textContent='No action applied.';world();invalidate('Ready. Model will run locally in this tab (or via Jev if selected).');}
 function readSpec(){let questions;try{questions=JSON.parse($('questions').value);}catch{throw new Error('Questions are not valid JSON. Fix them before running.');}return validateSpec({...spec,state:$('state').value,questions});}
 function refresh(){if(!last)return;renderAnswers($('answers'),last.result);const action=last.result.data.answers.action??last.result.data.answers.route;const allowed=action?.type==='choice'&&gate(action,Number($('threshold').value))==='accept';$('apply').disabled=!allowed||!['tools','routing','machine','game','adaptive'].includes(current);}
 setupSettings(id=>{if(id==='threshold')refresh();else invalidate();});
@@ -27,8 +27,8 @@ for(const id of ['state','questions'])$(id).addEventListener('input',()=>invalid
 $('run').onclick=async()=>{
  invalidate('Running…');const started=version;controller=new AbortController();$('run').disabled=true;$('cancel').disabled=false;
  try{const submitted=readSpec(),result=await runSpec(submitted,AbortSignal.any([controller.signal,AbortSignal.timeout(45000)]));if(version!==started){$('status').textContent='Inputs changed during request. Result discarded; run again.';return;}
-  last={at:new Date().toISOString(),spec:submitted,request:requestFor(submitted,settings().provider==='illustrative'?'illustrative':settings().model),result};
-  $('status').textContent=`${result.source} · ${result.data.model??result.requestedModel} · ${result.elapsed.toFixed(1)}ms wall time${settings().provider==='illustrative'?' (synthetic; not inference latency)':''}`;
+  last={at:new Date().toISOString(),spec:submitted,request:requestFor(submitted,settings().model),result};
+  $('status').textContent=`${result.source} · ${result.data.model??result.requestedModel} · ${result.elapsed.toFixed(1)}ms wall time`;
   $('raw').textContent=JSON.stringify(last,null,2);$('download').disabled=false;refresh();if(current==='ranking')$('effect').textContent='Ranked by expected level (ties preserve input order): '+Object.entries(result.data.answers).sort((a,b)=>b[1].score-a[1].score).map(([id,a])=>id+' '+a.score.toFixed(2)).join(' → ');
  }catch(e){$('status').textContent=e.message;}finally{$('run').disabled=false;$('cancel').disabled=true;controller=null;}
 };

@@ -1,0 +1,79 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; font-src 'self'; worker-src 'self' blob:; connect-src 'self' https://api.typesafe.ai https://api.openai.com https://api.anthropic.com https://huggingface.co https://*.huggingface.co https://*.hf.co http://127.0.0.1:* http://localhost:* http://[::1]:* https://127.0.0.1:* https://localhost:* https://[::1]:*; base-uri 'none'; form-action 'none'; object-src 'none'"><meta name="referrer" content="no-referrer"><title>Decision playground · Learnings</title><link rel="stylesheet" href="../style.css"><script type="module" src="playground.js"></script></head><body><a class="skip" href="#main">Skip to content</a><header><a href="../">Paul’s learnings</a><nav aria-label="Main"><a href="../decision-models/catalogue.html">Use cases</a><a href="../decision-models/">Report</a><a href="../decision-models/lab.html">Decision lab</a><a href="../decision-models/on-device.html">In your browser</a><a href="../decision-models/playground.html">Playground</a><a href="../decision-models/adaptation.html">Unfamiliar labels</a></nav></header><main id="main"><h1>Decision playground.<br>Two engines, no keys.</h1><p class="lead">Four agent-flavoured decision problems, answered by real models running in this tab. Pick an engine, edit the state and the questions, and read the distribution.</p><p class="notice"><strong>Nothing you type leaves this tab.</strong> Each engine downloads its weights from <code>huggingface.co</code> — those are the only network requests — and every runtime is served from this site. <strong>No API key is used, there is no server, and no account is involved.</strong> The cost is the download: Kev is about <strong>375 MB</strong>, Laya about <strong>680 MB</strong>, each once, cached afterwards.</p><p class="small">Laya is the multilingual 0.3 B decision encoder (mmBERT) on Google’s LiteRT.js runtime (WASM/XNNPack, CPU). Kev is the 0.6 B decision model on ONNX Runtime Web (CPU). Neither offers a WebGPU path here and none is claimed.</p><div class="actions"><label for="engine">Engine</label> <select id="engine"><option value="laya">Laya — multilingual, LiteRT.js (in-browser)</option><option value="kev">Kev — ONNX Runtime Web (in-browser)</option><option value="jev">Jev — hosted API (api.typesafe.ai)</option></select> <div id="jev-options" hidden><label for="jev-key">Jev key</label> <input id="jev-key" type="password" placeholder="Key (memory only)" autocomplete="off"></div> <button id="load" class="secondary">Load selected engine</button></div><p id="progress" class="status" role="status">Nothing has been downloaded. An engine loads only when you ask for it — never on page load.</p><p id="backend" class="small"></p><div id="demos" hidden><h2>The four problems</h2><p class="small">Every question runs once per engine run. The state is shared by that demo’s questions; edit anything and run again. Answers come from your run, not from a table.</p><section class="demo" data-demo="tool-selection"><h3>1 · Tool selection</h3><p class="small">An agent with a typed tool shelf. Given the user’s goal, which tool should it call?</p><label>State<textarea class="state-text">The user says: take a picture of this page and put it in my Downloads folder, then read me the first heading back.</textarea></label><label>Typed questions<textarea class="state-questions code" spellcheck="false">{
+  "tool": {
+    "t": "choice",
+    "ins": "Which single tool should the agent call FIRST?",
+    "crit": {
+      "screenshot_tool": "captures the current page as an image file",
+      "read_page": "extracts the text of the current page",
+      "history_search": "searches the user's browsing history",
+      "download_manager": "lists and manages files in the Downloads folder"
+    }
+  }
+}</textarea></label><div class="actions"><button class="run-demo">Run with <span class="engine-name">Laya</span></button></div><div class="results" aria-live="polite"></div></section><section class="demo" data-demo="agent-routing"><h3>2 · Agent routing</h3><p class="small">The triage decision a router makes before any agent speaks.</p><label>State<textarea class="state-text">I was billed twice for the same subscription last month, and the second charge appeared again this week. I want both refunded before I call the bank.</textarea></label><label>Typed questions<textarea class="state-questions code" spellcheck="false">{
+  "route": {
+    "t": "choice",
+    "ins": "Which agent should own this conversation?",
+    "crit": {
+      "billing": "invoices, payments, refunds, duplicate charges",
+      "technical": "bugs, outages, login and integration problems",
+      "sales": "pricing, upgrades, new contracts",
+      "account_management": "profile, password, settings, cancellations"
+    }
+  },
+  "urgency": {
+    "t": "score",
+    "ins": "How urgent is this for the customer?",
+    "crit": ["not urgent", "routine", "soon", "urgent", "emergency"]
+  }
+}</textarea></label><div class="actions"><button class="run-demo">Run with <span class="engine-name">Laya</span></button></div><div class="results" aria-live="polite"></div></section><section class="demo" data-demo="state-machine"><h3>3 · State-machine transitions</h3><p class="small">The guard between “what the user said” and “which edge fires”.</p><label>State<textarea class="state-text">Current state: awaiting-payment. The customer has just written: paid the invoice at last — receipt attached, thanks for your patience.</textarea></label><label>Typed questions<textarea class="state-questions code" spellcheck="false">{
+  "transition": {
+    "t": "choice",
+    "ins": "Which transition should fire?",
+    "crit": {
+      "payment_received": "move to fulfillment",
+      "payment_failed": "return to checkout",
+      "needs_review": "hold for a human reviewer",
+      "cancel_order": "end the session"
+    }
+  }
+}</textarea></label><div class="actions"><button class="run-demo">Run with <span class="engine-name">Laya</span></button></div><div class="results" aria-live="polite"></div></section><section class="demo" data-demo="moderation"><h3>4 · Moderation</h3><p class="small">Yes/no with a probability, not a boolean. The ranking is the point.</p><label>State<textarea class="state-text">Please confirm your password and reply with the full number on the front of your card so we can verify your account.</textarea></label><label>Typed questions<textarea class="state-questions code" spellcheck="false">{
+  "credential_grab": {
+    "t": "noul",
+    "ins": "Is the sender trying to obtain the reader's password or card number?"
+  },
+  "abusive": {
+    "t": "noul",
+    "ins": "Is this message abusive or threatening?"
+  }
+}</textarea></label><div class="actions"><button class="run-demo">Run with <span class="engine-name">Laya</span></button></div><div class="results" aria-live="polite"></div></section><section class="demo" data-demo="classifier-api"><h3>5 · W3C Classifier API (window.Classifier)</h3><p class="small">The proposed standard Chrome Built-in AI Classifier API (as polyfilled by <code>web-ai.studio</code> using Laya on LiteRT.js). Runs directly via <code>window.Classifier</code> in this tab.</p><label>Input state / text<textarea id="classifier-input" class="state-text">Urgent: our database cluster is down with fatal errors and customers cannot complete payments!</textarea></label><label>Classifier schema (W3C standard JSON)<textarea id="classifier-schema" class="state-questions code" spellcheck="false">{
+  "context": "Customer support triage",
+  "questions": [
+    {
+      "id": "is_urgent",
+      "type": "binary",
+      "prompt": "Does this issue require emergency incident response?"
+    },
+    {
+      "id": "department",
+      "type": "categorical",
+      "prompt": "Which team should handle this?",
+      "options": [
+        { "label": "infrastructure", "description": "Database, server, network outages" },
+        { "label": "billing", "description": "Payment issues and refunds" },
+        { "label": "account", "description": "User login and profile settings" }
+      ]
+    },
+    {
+      "id": "severity",
+      "type": "ordinal",
+      "prompt": "Rate the severity from 1 (minimal) to 5 (critical outage)",
+      "options": [
+        { "label": "1", "description": "Minimal impact" },
+        { "label": "2", "description": "Low impact" },
+        { "label": "3", "description": "Moderate" },
+        { "label": "4", "description": "High" },
+        { "label": "5", "description": "Critical outage" }
+      ]
+    }
+  ]
+}</textarea></label><div class="actions"><button id="run-classifier" class="button">Run via window.Classifier</button></div><div id="classifier-results" class="results" aria-live="polite"></div><details><summary>Generated JavaScript code</summary><pre id="classifier-code" class="code"></pre></details></section></div><h2>What this page is for</h2><p>The four shapes — tool selection, routing, transition firing, moderation — are the decisions an agent platform makes constantly and an LLM makes expensively. A sub-billion-parameter decision encoder answers them locally in tens of milliseconds, and its distribution tells you when <em>not</em> to trust it. Edit a demo until the distribution flattens: that flatness is the honest signal to escalate to a bigger model, and it is the thing a generated yes/no hides from you.</p><p class="small">Each engine reports its own checkpoint, token count and milliseconds after every run. Latency is one machine's measurement; treat it as such.</p></main><footer>A working notebook, not a promise of correctness. <a href="https://github.com/PaulKinlan/learnings">Source & limitations</a>. No analytics. Downloads happen only when you ask.</footer></body></html>
