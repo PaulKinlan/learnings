@@ -9,9 +9,11 @@ the site's Content-Security-Policy can keep `script-src 'self'`.
 |---|---|---|---|
 | ort.bundle.min.mjs | onnxruntime-web (JS API bundle) | 1.31.0-dev.20260914 | MIT |
 | ort-wasm-simd-threaded.jsep.mjs | onnxruntime-web (JSEP glue) | 1.31.0-dev.20260914 | MIT |
-| ort-wasm-simd-threaded.jsep.wasm | onnxruntime-web (JSEP wasm binary) | 1.31.0-dev.20260914 | MIT |
+| ort-wasm-simd-threaded.jsep.wasm | onnxruntime-web (JSEP wasm binary, 28 MB) | 1.31.0-dev.20260914 | MIT |
+| ort-wasm-simd-threaded.asyncify.mjs | onnxruntime-web (asyncify glue) | 1.31.0-dev.20260914 | MIT |
+| ort-wasm-simd-threaded.asyncify.wasm | onnxruntime-web (asyncify wasm binary, 27 MB) | 1.31.0-dev.20260914 | MIT |
 | ort-wasm-simd-threaded.mjs | onnxruntime-web (CPU glue) | 1.31.0-dev.20260914 | MIT |
-| ort-wasm-simd-threaded.wasm | onnxruntime-web (CPU wasm binary) | 1.31.0-dev.20260914 | MIT |
+| ort-wasm-simd-threaded.wasm | onnxruntime-web (CPU wasm binary, 14 MB) | 1.31.0-dev.20260914 | MIT |
 
 Notes that matter:
 

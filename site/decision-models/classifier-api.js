@@ -1,5 +1,5 @@
-// W3C / Chrome Built-in Classifier API implementation
-// Follows the proposed specification (https://github.com/michaelwasserman/classifier-api)
+// Chrome Built-in AI Classifier API proposal implementation
+// Follows the explainer (https://github.com/explainers-by-googlers/classifier-api)
 // as polyfilled by web-ai.studio using the Laya decision encoder on LiteRT.js.
 //
 // Key methods:
