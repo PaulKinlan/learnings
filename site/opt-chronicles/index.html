@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chronicles of OPT-175B: Training Large Models at Scale | Learnings</title>
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="opt.css">
+  <meta name="description" content="An interactive graphical overview of Meta AI's 148-page OPT-175B training logbook, 90+ restarts, hardware crises, cluster deletions, and numerical stabilization techniques.">
+</head>
+<body>
+  <header>
+    <a href="../index.html">← Learnings Hub</a>
+    <nav>
+      <a href="#timeline">Timeline</a>
+      <a href="#trajectories">Loss Curves</a>
+      <a href="#learnings">Key Learnings</a>
+      <a href="#simulator">Failure Simulator</a>
+      <a href="https://github.com/facebookresearch/metaseq/tree/main/projects/OPT/chronicles" target="_blank" rel="noopener">Original GitHub Repo ↗</a>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Hero Banner -->
+    <section class="hero-banner">
+      <h1>Chronicles of OPT-175B</h1>
+      <p class="lead">
+        What training a 175-billion parameter model on 1024 A100 GPUs actually looks like in practice.
+        An interactive exploration of Meta AI’s 148-page logbook: numerical instabilities, 90+ hardware restarts,
+        the accidental deletion of the entire cluster, and the path to automated self-healing.
+      </p>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value">175B</div>
+          <div class="stat-label">Model Parameters</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">1,024</div>
+          <div class="stat-label">80GB A100 GPUs</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">4.30e23</div>
+          <div class="stat-label">Total FLOPs</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">90+</div>
+          <div class="stat-label">Cluster Restarts</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">33 Days</div>
+          <div class="stat-label">Continuous Compute</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">300B</div>
+          <div class="stat-label">Tokens Processed</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Interactive Timeline Section -->
+    <section id="timeline">
+      <div class="chart-header">
+        <div>
+          <h2>Interactive Incident & Training Timeline</h2>
+          <p class="small">Click any marker or log row to inspect exact logbook notes, token milestones, and architectural actions.</p>
+        </div>
+        <div class="legend">
+          <span class="legend-item"><span class="legend-color" style="background:#e02424;"></span> Major SEV</span>
+          <span class="legend-item"><span class="legend-color" style="background:#d97706;"></span> Hardware Failure</span>
+          <span class="legend-item"><span class="legend-color" style="background:#dc2626;"></span> Loss Spike / NaN</span>
+          <span class="legend-item"><span class="legend-color" style="background:#2563eb;"></span> Hyperparameter / Architecture</span>
+          <span class="legend-item"><span class="legend-color" style="background:#0d9488;"></span> Automation Win</span>
+        </div>
+      </div>
+
+      <!-- Controls Panel -->
+      <div class="controls-panel">
+        <div class="filter-row">
+          <span style="font-weight:700; font-size:0.85rem; color:var(--muted); text-transform:uppercase;">Phases:</span>
+          <button class="filter-btn active" data-phase-filter="all">All Phases</button>
+          <button class="filter-btn" data-phase-filter="pre">Ablations & Prep</button>
+          <button class="filter-btn" data-phase-filter="phase-10">0–10% (Pivot to 12.xx)</button>
+          <button class="filter-btn" data-phase-filter="phase-27">10–27% (HW Carnage)</button>
+          <button class="filter-btn" data-phase-filter="phase-56">27–56% (Scale & Stability)</button>
+          <button class="filter-btn" data-phase-filter="phase-100">56–100% (SEV & Auto)</button>
+        </div>
+
+        <div class="filter-row">
+          <span style="font-weight:700; font-size:0.85rem; color:var(--muted); text-transform:uppercase;">Category:</span>
+          <button class="filter-btn active" data-cat-filter="all">All</button>
+          <button class="filter-btn" data-cat-filter="sev">Major SEV</button>
+          <button class="filter-btn" data-cat-filter="hardware">Hardware</button>
+          <button class="filter-btn" data-cat-filter="stability">Numerical Stability</button>
+          <button class="filter-btn" data-cat-filter="tune">Architecture / LR</button>
+          <button class="filter-btn" data-cat-filter="auto">Automation</button>
+
+          <div class="search-box">
+            <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            <input type="text" id="chronicle-search" placeholder="Search logbook (e.g. Omicron, ReLU, ECC, 1.6TB)..." aria-label="Search logbook">
+          </div>
+        </div>
+      </div>
+
+      <!-- Timeline SVG Viz -->
+      <div class="timeline-viz-container">
+        <svg id="timeline-svg" class="timeline-svg" role="img" aria-label="Interactive timeline of OPT-175B training"></svg>
+      </div>
+
+      <!-- Detail Inspector -->
+      <div id="event-inspector" class="event-inspector" role="region" aria-live="polite">
+        <!-- Injected via JavaScript -->
+      </div>
+
+      <!-- Event Table / List -->
+      <h3 style="margin: 2rem 0 0.8rem 0;">Chronological Event Ledger</h3>
+      <div id="chronicle-event-list" class="event-list">
+        <!-- Injected via JavaScript -->
+      </div>
+    </section>
+
+    <!-- Trajectories Section -->
+    <section id="trajectories">
+      <h2>Validation Loss Dynamics & Trajectory</h2>
+      <p>
+        The comparison between the ill-fated <strong>Experiment 11.xx</strong> and the successful <strong>Experiment 12.xx</strong>
+        revealed a crucial counter-intuitive lesson in deep learning at scale:
+        <em>optimizing for the lowest loss early in training does not guarantee long-term convergence.</em>
+      </p>
+
+      <div class="charts-grid">
+        <div class="chart-card">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:0.8rem;">
+            <h3 style="margin:0;">Loss Trajectory vs Steps</h3>
+            <div style="font-size:0.85rem; color:var(--muted);">Updates (0 to 75,000)</div>
+          </div>
+          <svg id="loss-chart-svg" class="svg-chart" role="img" aria-label="Chart comparing 11.xx, 12.xx, and GPT-3 validation loss curves"></svg>
+          <div class="legend" style="margin-top:1rem; justify-content:center;">
+            <span class="legend-item"><span class="legend-color" style="background:#ef4444;"></span> Exp 11.xx (Diverged / Underflow)</span>
+            <span class="legend-item"><span class="legend-color" style="background:#0284c7;"></span> Exp 12.xx (Megatron Init / Final)</span>
+            <span class="legend-item"><span class="legend-color" style="background:#f59e0b;"></span> GPT-3 175B Reference</span>
+          </div>
+        </div>
+
+        <div class="chart-card" style="display:flex; flex-direction:column; justify-content:center;">
+          <h3 style="margin-top:0;">The Early Loss Trap</h3>
+          <p style="font-size:0.95rem;">
+            Notice how <strong>Exp 11.xx</strong> (red) plunged aggressively early on, reaching a loss of <strong>5.1</strong>
+            by update 3,500 while <strong>Exp 12.xx</strong> (blue) was lagging behind at <strong>5.4</strong>.
+          </p>
+          <p style="font-size:0.95rem;">
+            However, 11.xx achieved this through aggressive initialization and Normformer layers that quickly saturated gradients,
+            leading to floating-point underflow and terminal stagnation. Exp 12.xx sacrificed early speed for structural stability,
+            unlocking a steady, monotonic descent across 75,000 steps.
+          </p>
+          <div class="card-callout">
+            <strong>Key Metric:</strong> 175B dense training required ~2.5e12 FLOPs per parameter, roughly 125× higher than a
+            comparable Mixture-of-Experts (MoE) model.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Key Learnings Section -->
+    <section id="learnings">
+      <h2>Six Hard-Earned Engineering Learnings</h2>
+      <p>Lessons distilled from 148 pages of real-time firefighting across 87 days of distributed cluster execution.</p>
+
+      <div class="learnings-grid">
+        <div class="learning-card">
+          <div class="learning-num">Learning #1</div>
+          <h3>The $x^3$ GeLU FP16 Instability</h3>
+          <p>
+            In FP16 mixed-precision training, the cubic term in Gaussian Error Linear Units ($\text{GeLU}(x) \approx x \cdot \sigma(1.702 x)$)
+            amplifies activations exponentially during extreme forward passes. At 175B scale, this caused sudden gradient overflows.
+            Hot-swapping to standard $\text{ReLU}$ restored bounded linear gradients.
+          </p>
+          <div class="card-callout">
+            <strong>Takeaway:</strong> What works cleanly in FP32 on a 1.3B model can trigger catastrophic underflow or overflow in FP16 at 175B.
+          </div>
+        </div>
+
+        <div class="learning-card">
+          <div class="learning-num">Learning #2</div>
+          <h3>Frozen Positional Embeddings</h3>
+          <p>
+            The team originally used sinusoidal initialization for Learned Positional Embeddings (LPE). At 175B scale, the gradient
+            magnitudes flowed disproportionately through the massive projection matrices, effectively reducing gradients on LPE to zero.
+            The positional representations remained completely frozen.
+          </p>
+          <div class="card-callout">
+            <strong>Takeaway:</strong> Initialization schemes must be individually ablated at medium scale; sinusoidal init works for fixed encoders, not 175B decoders.
+          </div>
+        </div>
+
+        <div class="learning-card">
+          <div class="learning-num">Learning #3</div>
+          <h3>1.6TB Checkpoint I/O Hangs</h3>
+          <p>
+            Each checkpoint comprised 992 files (totaling 1.6 TB). When 1024 nodes attempted to download these shards simultaneously
+            from cloud object storage during restarts, the cloud provider's API experienced nondeterministic network stalls, turning a
+            15-minute reboot into a 4-hour deadlock.
+          </p>
+          <div class="card-callout">
+            <strong>Takeaway:</strong> Distributed storage is the primary hidden bottleneck of LLM training. Checkpoint staging must be coalesced and rate-limited.
+          </div>
+        </div>
+
+        <div class="learning-card">
+          <div class="learning-num">Learning #4</div>
+          <h3>The Hardware Failure Rate (~2 Hosts / Day)</h3>
+          <p>
+            At 1024-GPU scale (128 hosts with 8 A100s each), hardware components fail continuously: single-bit uncorrectable ECC memory errors,
+            PCIe bus drops, and InfiniBand link degradations. The cloud provider initially took hours to swap hosts and frequently re-assigned
+            the same malfunctioning machines back to the pool.
+          </p>
+          <div class="card-callout">
+            <strong>Takeaway:</strong> Maintain a live hot-standby pool of at least 12–18 burn-in tested nodes. Never rely on on-demand provisioning.
+          </div>
+        </div>
+
+        <div class="learning-card">
+          <div class="learning-num">Learning #5</div>
+          <h3>The "Omicron SEV" Cluster Deletion</h3>
+          <p>
+            On December 21, 2021, while attempting to replenish the buffer pool, the cloud provider's operations team mistakenly deleted the
+            entire active 1024-GPU production cluster. Because all nodes were wiped, the team had to rapidly rebuild the cluster from scratch,
+            discovering that 16 of the newly provisioned machines failed basic burn-in tests.
+          </p>
+          <div class="card-callout">
+            <strong>Takeaway:</strong> Cloud infrastructure is not infallible. Build strict validation scripts that gate cluster membership before any workload runs.
+          </div>
+        </div>
+
+        <div class="learning-card">
+          <div class="learning-num">Learning #6</div>
+          <h3>Automation Defeats On-Call Burnout</h3>
+          <p>
+            In November, 40+ manual restarts consumed the engineering team's nights and weekends. By late December, the team deployed custom
+            burn-in scripts, automated InfiniBand topology checks, and auto-restart harnesses. Over the Christmas–New Year break, the cluster
+            self-healed through 8 separate hardware drops without human intervention.
+          </p>
+          <div class="card-callout">
+            <strong>Takeaway:</strong> Human on-call rotations cannot sustainably service 1024-GPU training. Automated health-check & auto-restart is required.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Interactive Failure & Cost Simulator -->
+    <section id="simulator">
+      <h2>Cluster Failure & Cost Simulator</h2>
+      <p>
+        Estimate the real downtime, restart overhead, and lost cloud spend of training large models at scale
+        based on real-world MTTR (Mean Time to Recover) and hardware failure rates.
+      </p>
+
+      <div class="simulator-panel">
+        <div class="sim-columns">
+          <!-- Controls -->
+          <div>
+            <div class="sim-slider-row">
+              <label for="sim-gpus">
+                <span>Cluster Size (A100 GPUs)</span>
+                <span id="sim-val-gpus" class="slider-val">1,024 GPUs</span>
+              </label>
+              <input type="range" id="sim-gpus" min="256" max="2048" step="128" value="1024">
+            </div>
+
+            <div class="sim-slider-row">
+              <label for="sim-fail-rate">
+                <span>Hardware Failure Rate</span>
+                <span id="sim-val-fail" class="slider-val">2.0 / day</span>
+              </label>
+              <input type="range" id="sim-fail-rate" min="0.5" max="8.0" step="0.5" value="2.0">
+            </div>
+
+            <div class="sim-slider-row">
+              <label for="sim-mttr">
+                <span>Mean Time to Recover (MTTR)</span>
+                <span id="sim-val-mttr" class="slider-val">45 min</span>
+              </label>
+              <input type="range" id="sim-mttr" min="15" max="180" step="5" value="45">
+            </div>
+
+            <div class="sim-slider-row">
+              <label for="sim-cost">
+                <span>GPU Cost per Hour</span>
+                <span id="sim-val-cost" class="slider-val">$3.20/hr</span>
+              </label>
+              <input type="range" id="sim-cost" min="1.50" max="6.00" step="0.10" value="3.20">
+            </div>
+          </div>
+
+          <!-- Output Metrics -->
+          <div class="sim-results">
+            <div class="sim-metric">
+              <div class="sim-metric-label">Total Elapsed Duration:</div>
+              <div id="res-days" class="sim-metric-val">35.4 days</div>
+            </div>
+            <div class="sim-metric">
+              <div class="sim-metric-label">Estimated Restarts:</div>
+              <div id="res-restarts" class="sim-metric-val">71 restarts</div>
+            </div>
+            <div class="sim-metric">
+              <div class="sim-metric-label">Downtime Overhead:</div>
+              <div id="res-downtime" class="sim-metric-val">6.2% (53h)</div>
+            </div>
+            <div class="sim-metric">
+              <div class="sim-metric-label">Total Cluster Cloud Cost:</div>
+              <div id="res-cost" class="sim-metric-val">$2.78M</div>
+            </div>
+            <div class="sim-metric">
+              <div class="sim-metric-label">Wasted Idle Spend:</div>
+              <div id="res-wasted" class="sim-metric-val" style="color:#dc2626;">$174.5k wasted</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- References & Sources -->
+    <section style="margin-top: 3rem; border-top: 1px solid var(--line); padding-top: 2rem;">
+      <h3>Primary Sources & Documentation</h3>
+      <ul>
+        <li>
+          <a href="https://github.com/facebookresearch/metaseq/tree/main/projects/OPT/chronicles" target="_blank" rel="noopener">
+            Meta AI OPT Chronicles Repository (metaseq/projects/OPT/chronicles)
+          </a>
+        </li>
+        <li>
+          <a href="https://raw.githubusercontent.com/facebookresearch/metaseq/main/projects/OPT/chronicles/OPT175B_Logbook.pdf" target="_blank" rel="noopener">
+            Complete 148-Page OPT-175B Logbook (PDF)
+          </a>
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2205.01068" target="_blank" rel="noopener">
+            OPT: Open Pre-trained Transformer Language Models (Zhang et al., 2022)
+          </a>
+        </li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <p>Part of the <a href="../index.html">Learnings Platform</a> — Empirical Case Studies in AI Systems Engineering.</p>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
