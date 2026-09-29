@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { Tokenizer } from "@huggingface/tokenizers";
+import { Tokenizer } from "../site/vendor/tokenizers.min.mjs";
 import {
   ENGLISH_SPECIAL_IDS,
   buildSequence,

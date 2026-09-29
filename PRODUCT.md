@@ -10,11 +10,9 @@ Approved: zero-dependency static HTML/CSS/ES modules, Node standard-library test
 Paul and public readers exploring a topic through a sourced report and experiments. A hub for multiple learning topics; Jev and Kev are first, with Laya-LiteRT documented as an alternative edge architecture.
 
 ## Capabilities and constraints
-Read a comprehensive report, inspect typed requests and probabilities, experiment with thresholds, compare illustrative local examples with hosted Jev or a user-run local Kev endpoint. Generate a validated demo specification using user-supplied OpenAI or Claude keys. No execution of generated code. Keys remain memory-only. No analytics, external fonts or runtime CDN.
+Read a comprehensive report, inspect typed requests and probabilities, experiment with thresholds, run real on-device decisions in-browser via Laya (LiteRT.js) or Kev (ONNX Runtime Web), test the W3C / Chrome Built-in Classifier API via `window.Classifier`, or query hosted Jev with your key. Generate a validated demo specification using user-supplied OpenAI or Claude keys. No execution of generated code. Keys remain memory-only. No analytics, external fonts or runtime CDN.
 
-Actual browser Kev inference is not delivered: inspected upstream supplies PyTorch adapters/custom head, not a browser export. This revised scope was approved explicitly. Keep this limitation prominent.
-
-Laya-LiteRT (litert-community/laya-LiteRT, from convaiinnovations/laya) is documented as an alternative Google LiteRT (.tflite) dual-graph architecture (main decision graph with [MASK] option scoring + act-head graph); browser execution via Google LiteRT.js (@litertjs/core) is prospective and not delivered as an in-browser runtime on this site.
+Real browser decision inference is delivered on-device: Kev runs in-browser via ONNX Runtime Web (`onnx-community/kev-0.6b-ONNX`), and Laya runs in-browser via Google LiteRT.js (`litert-community/Laya-Multilingual-LiteRT`). The W3C Classifier API is polyfilled on `window.Classifier` backed by Laya. Weights download on demand from Hugging Face and are cached in browser storage; no user text leaves the tab. Illustrative and synthetic mode has been completely removed in favor of real working execution modes.
 
 Only public, unauthenticated GitHub sources inform repository suggestions. No private data. Paid model requests require user action; no project-owned API credentials.
 
