@@ -1,0 +1,42 @@
+{
+  "what": "on-device page, driven in Chrome",
+  "when": "2026-09-29T10:27:20.891Z",
+  "url": "http://127.0.0.1:42271/decision-models/on-device.html",
+  "loadedIn": "Ready in 40.9s.",
+  "backend": "Requested wasm (ONNX Runtime Web, jsep build). Session reports: wasm. WebGPU is present in this browser and this site does not vendor the WebGPU binary, so it was not used. Cross-origin isolation is off, so wasm runs without shared-memory threads.",
+  "summary": "11 of 12 exercises matched the expected answer. Latency per decision: fastest 1154 ms, median 1671 ms, slowest 2193 ms, measured in this tab on onnx-community/kev-0.6b-ONNX (q4 weights, CPU/ONNX Runtime Web jsep).",
+  "exercisesMatched": 11,
+  "exercisesTotal": 12,
+  "latencyMs": {
+    "fastest": 1154,
+    "median": 1671,
+    "slowest": 2193
+  },
+  "flatScoreVectors": 0,
+  "reversedOptionControl": {
+    "best": "billing: Charges, refunds, invoices",
+    "value": 99.3,
+    "position": 3
+  },
+  "batch": "All four questions were packed into a single 132-token sequence and answered in 3318 ms. Cost does not scale with the length of an answer, because there is no answer to generate.",
+  "hostsContacted": [
+    "127.0.0.1:42271",
+    "huggingface.co"
+  ],
+  "hubFetches": 4,
+  "checks": [
+    "nothing is downloaded before the reader asks",
+    "the page states the download size before it starts",
+    "the load reports how long it took",
+    "weights were fetched from the Hub",
+    "no third-party CDN was contacted",
+    "the backend actually used is reported, not assumed",
+    "no exercise produced a flat score vector",
+    "every exercise ran and reported a count",
+    "latency is measured in this tab",
+    "with the options reversed the answer follows the label, not the position",
+    "four questions are answered in one forward pass",
+    "a reader can supply their own state and questions",
+    "the custom run explains how to read each answer"
+  ]
+}
