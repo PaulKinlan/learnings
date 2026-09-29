@@ -118,7 +118,7 @@ try {
     label: "the batch run",
   });
   const batch = await page.evaluate(() => document.querySelector("#exercises .answer p").textContent);
-  check("four questions are answered in one forward pass", /4 questions were packed into a single \d+-token sequence/.test(batch), batch);
+  check("four questions are answered in one forward pass", /(?:All four|4) questions were packed into a single \d+-token sequence/.test(batch), batch);
 
   // 6. Reader-supplied questions, which is the point of the page.
   await page.evaluate(() => {
