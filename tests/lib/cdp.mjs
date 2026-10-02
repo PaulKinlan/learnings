@@ -227,7 +227,9 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
       if (!node) return null;
       node.scrollIntoView({ block: "center", inline: "center" });
       const box = node.getBoundingClientRect();
-      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      const ox = window.visualViewport ? window.visualViewport.offsetLeft : 0;
+      const oy = window.visualViewport ? window.visualViewport.offsetTop : 0;
+      return { x: box.x + box.width / 2 - ox, y: box.y + box.height / 2 - oy };
     }, selector);
 
   /** A real mouse click at the element's centre. */

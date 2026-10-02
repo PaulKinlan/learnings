@@ -384,11 +384,450 @@
   border-radius: 0 4px 4px 0;
 }
 
+/* Interactive Network Node Graph & Step-by-Step Debugger */
+.nn-stepper-workbench {
+  margin-top: 2rem;
+  background: var(--wash);
+  border: 1px solid var(--line);
+  border-top: 4px solid var(--accent);
+  border-radius: 8px;
+  padding: 1.4rem;
+}
+
+.stepper-header h3 {
+  margin-top: 0;
+  margin-bottom: 0.35rem;
+}
+
+.stepper-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin: 1rem 0;
+}
+
+.stepper-fields {
+  flex: 1 1 240px;
+  min-width: 0;
+  margin: 0;
+}
+
+.stepper-actions {
+  margin: 0;
+}
+
+.stepper-tape {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0.9rem 0;
+}
+
+.stepper-pill {
+  font-size: 0.78rem;
+  font-family: ui-monospace, monospace;
+  padding: 0.38rem 0.7rem;
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.stepper-pill.done {
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+  color: #0c4a6e;
+}
+
+.stepper-pill.active {
+  background: #0284c7;
+  border-color: #0369a1;
+  color: #ffffff;
+  font-weight: 800;
+  box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.25);
+}
+
+.stepper-pill.phase-backward.active {
+  background: #e11d48;
+  border-color: #be123c;
+}
+
+.stepper-pill.phase-update.active {
+  background: #059669;
+  border-color: #047857;
+}
+
+.stepper-stage-banner {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-left: 4px solid #0284c7;
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 1.1rem;
+}
+
+.stepper-stage-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  margin-bottom: 0.4rem;
+}
+
+.stepper-phase-badge {
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  background: #0284c7;
+  color: #ffffff;
+  letter-spacing: 0.05em;
+}
+
+.stepper-phase-badge.phase-backward {
+  background: #e11d48;
+}
+
+.stepper-phase-badge.phase-loss {
+  background: #d97706;
+}
+
+.stepper-phase-badge.phase-update {
+  background: #059669;
+}
+
+.stepper-pass-counter {
+  margin-left: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.stepper-stage-formula {
+  font-family: ui-monospace, monospace;
+  font-size: 0.86rem;
+  background: #f1f5f9;
+  padding: 0.45rem 0.65rem;
+  border-radius: 4px;
+  margin-bottom: 0.35rem;
+  overflow-x: auto;
+}
+
+.stepper-stage-summary {
+  font-size: 0.88rem;
+  color: var(--ink);
+}
+
+.stepper-body-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.stepper-graph-card,
+.stepper-inspector-card {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.95rem;
+  min-width: 0;
+}
+
+.stepper-inspector-card h4 {
+  margin-top: 0;
+  margin-bottom: 0.6rem;
+}
+
+.stepper-svg-container {
+  width: 100%;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #0b192c;
+}
+
+.nn-stepper-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.svg-node {
+  cursor: pointer;
+}
+
+.stepper-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.65rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.swatch-pos { background: #38bdf8; }
+.swatch-neg { background: #fb7185; }
+.swatch-fwd { background: #0284c7; border: 1px dashed #ffffff; }
+.swatch-bwd { background: #f59e0b; border: 1px dashed #ffffff; }
+.swatch-upd { background: #34d399; }
+
+.stepper-node-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+.node-select-pill {
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.node-select-pill.active {
+  background: #0f172a;
+  color: #facc15;
+  border-color: #facc15;
+  font-weight: 800;
+}
+
+.inspector-node-header {
+  font-size: 0.9rem;
+  margin-bottom: 0.6rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.inspector-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.45rem;
+  margin-bottom: 0.75rem;
+}
+
+.inspector-kpi {
+  background: var(--wash);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.4rem 0.55rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.inspector-kpi-label {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.inspector-kpi-val {
+  font-family: ui-monospace, monospace;
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.synapse-table {
+  font-size: 0.76rem;
+}
+
+/* ============================================================================
+   Study Prose, Kernel Code Explorer & Hyperparameter Encyclopedia
+   ============================================================================ */
+
+.study-prose {
+  margin-bottom: 1.1rem;
+  line-height: 1.65;
+}
+
+.study-prose p {
+  margin: 0 0 0.85rem;
+}
+
+.study-prose ul {
+  margin: 0.5rem 0 0.9rem 1.25rem;
+  padding: 0;
+}
+
+.study-prose li {
+  margin-bottom: 0.55rem;
+}
+
+.kernel-code-explorer {
+  margin-top: 1.15rem;
+  background: var(--wash);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1rem 1.15rem;
+  min-width: 0;
+}
+
+.kernel-code-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 0.65rem;
+}
+
+.kernel-code-toolbar > div:first-child {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.code-lang-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.code-lang-btn {
+  font-size: 0.78rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 4px;
+  background: #ffffff;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.code-lang-btn.active {
+  background: #0f172a;
+  color: #38bdf8;
+  border-color: #0284c7;
+  font-weight: 700;
+}
+
+.kernel-code-summary {
+  margin: 0.35rem 0 0.65rem;
+  color: var(--muted);
+}
+
+.kernel-code-pre {
+  margin: 0;
+  padding: 0.85rem 1rem;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.48;
+  overflow-x: auto;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.hyperparam-explainer {
+  margin-top: 1.15rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.hyperparam-explainer h4 {
+  margin: 0 0 0.25rem;
+}
+
+.hyperparam-card {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.6rem 0.75rem;
+}
+
+.hyperparam-card-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+  margin-bottom: 0.3rem;
+  font-size: 0.84rem;
+}
+
+.hyperparam-badge {
+  font-family: ui-monospace, monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: #e0f2fe;
+  color: #0369a1;
+  padding: 0.12rem 0.45rem;
+  border-radius: 3px;
+}
+
+.hyperparam-eq {
+  display: block;
+  font-size: 0.75rem;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.25rem 0.45rem;
+  margin-bottom: 0.35rem;
+  overflow-x: auto;
+}
+
+.hyperparam-card p.small {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.section-code-widget {
+  margin-top: 1.35rem;
+}
+
+.chapter-code-details {
+  background: var(--wash);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.65rem 0.95rem;
+}
+
+.chapter-code-details summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.88rem;
+  color: var(--ink);
+}
+
+.chapter-code-body {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
 @media (max-width: 860px) {
-  .nn-grid {
+  .nn-grid,
+  .stepper-body-grid {
     grid-template-columns: 1fr;
   }
   .block-item {
     grid-template-columns: 1fr 1fr;
   }
+  .grad-row {
+    grid-template-columns: minmax(95px, 135px) 1fr 78px;
+    font-size: 0.75rem;
+  }
 }
+

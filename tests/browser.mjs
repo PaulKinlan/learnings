@@ -79,6 +79,10 @@ try{
  await p.goto(base+'decision-models/catalogue.html');check('catalogue contains 37 concrete entries',await p.evaluate(()=>document.querySelectorAll('tbody tr').length===37));check('catalogue no mobile document overflow',await p.evaluate(()=>innerWidth===390&&document.documentElement.scrollWidth<=innerWidth));
  await p.goto(base+'neural-networks/');await p.waitFor(()=>document.querySelector('#mlp-epoch').textContent!=='0');
  check('neural-networks WASM GEMM kernel and interactive trainers render',await p.evaluate(()=>document.querySelector('#kernel-readout').textContent.includes('WebAssembly')&&document.querySelectorAll('#builder-stack .block-item').length===6));
+ await p.click('#stepper-next-btn');
+ check('neural-networks node graph and step-by-step debugger advance micro-steps',await p.evaluate(()=>document.querySelectorAll('#nn-stepper-svg .svg-node').length===11&&document.querySelector('#stepper-stage-title').textContent.includes('Stage 2')&&document.querySelectorAll('#stepper-node-detail .synapse-table tbody tr').length===2));
+ await p.click('[data-global-lang="webgpu"]');
+ check('neural-networks hyperparameter encyclopedia, RNN BPTT, Deep ResNet, and WebGPU WGSL code explorer render',await p.evaluate(()=>document.querySelectorAll('#mlp-hyperparam-explainer .hyperparam-card').length===5&&document.querySelectorAll('#rnn-temporal-strip .grad-row').length===8&&document.querySelectorAll('#resnet-depth-bars .grad-row').length===12&&document.querySelector('#global-code-display').textContent.includes('@compute @workgroup_size')));
  check('neural-networks no mobile document overflow',await p.evaluate(()=>innerWidth===390&&document.documentElement.scrollWidth<=innerWidth));
  await p.goto(base+'celld/');await p.waitFor(()=>document.querySelector('#cas-bucket-state').textContent.includes('ownership.json'));
  await p.click('#btn-cas-partition');await p.click('#btn-cas-zombie');

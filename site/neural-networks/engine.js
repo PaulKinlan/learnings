@@ -209,10 +209,187 @@ export function jsMatmul(A, B, M, K, N, out = new Float32Array(M * N)) {
   return out;
 }
 
-let activeBackendMode = "wasm"; // "wasm" | "js"
+export const WGSL_GEMM_SHADER = /* wgsl */ `
+struct Dimensions {
+  M : u32,
+  K : u32,
+  N : u32,
+  _pad : u32,
+};
+
+@group(0) @binding(0) var<uniform> dims : Dimensions;
+@group(0) @binding(1) var<storage, read> A : array<f32>;
+@group(0) @binding(2) var<storage, read> B : array<f32>;
+@group(0) @binding(3) var<storage, read_write> C : array<f32>;
+
+var<workgroup> tileA : array<array<f32, 8>, 8>;
+var<workgroup> tileB : array<array<f32, 8>, 8>;
+
+@compute @workgroup_size(8, 8, 1)
+fn main(
+  @builtin(global_invocation_id) global_id : vec3<u32>,
+  @builtin(local_invocation_id) local_id : vec3<u32>
+) {
+  let row = global_id.y;
+  let col = global_id.x;
+  let lRow = local_id.y;
+  let lCol = local_id.x;
+
+  var acc : f32 = 0.0;
+  let numTiles = (dims.K + 7u) / 8u;
+
+  for (var t : u32 = 0u; t < numTiles; t = t + 1u) {
+    let aCol = t * 8u + lCol;
+    let bRow = t * 8u + lRow;
+
+    if (row < dims.M && aCol < dims.K) {
+      tileA[lRow][lCol] = A[row * dims.K + aCol];
+    } else {
+      tileA[lRow][lCol] = 0.0;
+    }
+
+    if (bRow < dims.K && col < dims.N) {
+      tileB[lRow][lCol] = B[bRow * dims.N + col];
+    } else {
+      tileB[lRow][lCol] = 0.0;
+    }
+
+    workgroupBarrier();
+
+    for (var k : u32 = 0u; k < 8u; k = k + 1u) {
+      acc = acc + tileA[lRow][k] * tileB[k][lCol];
+    }
+
+    workgroupBarrier();
+  }
+
+  if (row < dims.M && col < dims.N) {
+    C[row * dims.N + col] = acc;
+  }
+}
+`.trim();
+
+let webgpuState = {
+  checked: false,
+  available: false,
+  adapterInfo: "Not initialized",
+  /** @type {any} */
+  device: null,
+  /** @type {any} */
+  pipeline: null,
+  /** @type {any} */
+  bindGroupLayout: null
+};
+
+/**
+ * Initializes the WebGPU compute pipeline if `navigator.gpu` is available.
+ * TODO(baseline/webgpu): Remove CPU WASM/JS fallback dispatch when WebGPU is guaranteed across all target environments.
+ */
+export async function initWebGPUBackend() {
+  if (webgpuState.checked && webgpuState.available) return webgpuState;
+  webgpuState.checked = true;
+  try {
+    const nav = /** @type {any} */ (typeof navigator !== "undefined" ? navigator : null);
+    if (!nav || !nav.gpu) {
+      webgpuState.available = false;
+      webgpuState.adapterInfo = "navigator.gpu unavailable in this browser/runtime (falling back to WASM GEMM)";
+      return webgpuState;
+    }
+    const adapter = await nav.gpu.requestAdapter();
+    if (!adapter) {
+      webgpuState.available = false;
+      webgpuState.adapterInfo = "No WebGPU adapter available (headless/disabled GPU — falling back to WASM GEMM)";
+      return webgpuState;
+    }
+    const device = await adapter.requestDevice();
+    const shaderModule = device.createShaderModule({ code: WGSL_GEMM_SHADER });
+    const pipeline = device.createComputePipeline({
+      layout: "auto",
+      compute: { module: shaderModule, entryPoint: "main" }
+    });
+    webgpuState.available = true;
+    webgpuState.device = device;
+    webgpuState.pipeline = pipeline;
+    webgpuState.adapterInfo = "WebGPU WGSL @workgroup_size(8,8) Tiled GEMM Ready";
+  } catch (err) {
+    webgpuState.available = false;
+    webgpuState.adapterInfo = `WebGPU unavailable (${err?.message || "fallback to WASM"})`;
+  }
+  return webgpuState;
+}
+
+export function getWebGPUStatus() {
+  return {
+    checked: webgpuState.checked,
+    available: webgpuState.available,
+    adapterInfo: webgpuState.adapterInfo,
+    shaderSource: WGSL_GEMM_SHADER
+  };
+}
+
+/**
+ * Executes an MxKxN matrix multiplication on the GPU using the tiled WGSL compute shader.
+ * Falls back to WASM GEMM if WebGPU is not available on the current host.
+ */
+export async function webgpuMatmulAsync(A, B, M, K, N) {
+  const st = await initWebGPUBackend();
+  if (!st.available || !st.device || !st.pipeline) {
+    return getWasmBackend().matmul(A, B, M, K, N);
+  }
+  const device = st.device;
+  // GPUBufferUsage flags: MAP_READ=1, COPY_SRC=4, COPY_DST=8, UNIFORM=64, STORAGE=128
+  const dimsData = new Uint32Array([M, K, N, 0]);
+  const uBuf = device.createBuffer({ size: 16, usage: 64 | 8 });
+  device.queue.writeBuffer(uBuf, 0, dimsData);
+
+  const aBytes = Math.max(16, A.byteLength);
+  const bBytes = Math.max(16, B.byteLength);
+  const cBytes = Math.max(16, M * N * 4);
+
+  const aBuf = device.createBuffer({ size: aBytes, usage: 128 | 8 });
+  const bBuf = device.createBuffer({ size: bBytes, usage: 128 | 8 });
+  const cBuf = device.createBuffer({ size: cBytes, usage: 128 | 4 });
+  const readBuf = device.createBuffer({ size: cBytes, usage: 1 | 8 });
+
+  device.queue.writeBuffer(aBuf, 0, A);
+  device.queue.writeBuffer(bBuf, 0, B);
+
+  const bindGroup = device.createBindGroup({
+    layout: st.pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: uBuf } },
+      { binding: 1, resource: { buffer: aBuf } },
+      { binding: 2, resource: { buffer: bBuf } },
+      { binding: 3, resource: { buffer: cBuf } }
+    ]
+  });
+
+  const encoder = device.createCommandEncoder();
+  const pass = encoder.beginComputePass();
+  pass.setPipeline(st.pipeline);
+  pass.setBindGroup(0, bindGroup);
+  pass.dispatchWorkgroups(Math.ceil(N / 8), Math.ceil(M / 8), 1);
+  pass.end();
+  encoder.copyBufferToBuffer(cBuf, 0, readBuf, 0, M * N * 4);
+  device.queue.submit([encoder.finish()]);
+
+  await readBuf.mapAsync(1);
+  const out = new Float32Array(readBuf.getMappedRange(0, M * N * 4)).slice();
+  readBuf.unmap();
+  uBuf.destroy();
+  aBuf.destroy();
+  bBuf.destroy();
+  cBuf.destroy();
+  readBuf.destroy();
+  return out;
+}
+
+let activeBackendMode = "wasm"; // "wasm" | "js" | "webgpu"
 
 export function setBackendMode(mode) {
-  activeBackendMode = mode === "js" ? "js" : "wasm";
+  if (mode === "js") activeBackendMode = "js";
+  else if (mode === "webgpu") activeBackendMode = "webgpu";
+  else activeBackendMode = "wasm";
   return activeBackendMode;
 }
 
@@ -221,7 +398,7 @@ export function getBackendMode() {
 }
 
 export function matmul(A, B, M, K, N, out = new Float32Array(M * N)) {
-  if (activeBackendMode === "wasm") {
+  if (activeBackendMode === "wasm" || activeBackendMode === "webgpu") {
     const wb = getWasmBackend();
     if (wb.available) return wb.matmul(A, B, M, K, N, out);
   }
@@ -273,7 +450,8 @@ export function benchmarkBackends(size = 64, iterations = 25) {
     wasmGflops: (totalFlops / (wasmMs * 1e6)),
     jsGflops: (totalFlops / (jsMs * 1e6)),
     maxDiff,
-    wasmBytes: wb.byteLength
+    wasmBytes: wb.byteLength,
+    webgpuAvailable: webgpuState.available
   };
 }
 
@@ -583,6 +761,391 @@ export class MLPNetwork {
   predictPoint(x1, x2) {
     const input = new Float32Array([x1, x2]);
     return this.forward(input, 1).probs[0];
+  }
+
+  /**
+   * Produces a non-destructive, node-and-synapse-level execution trace for a single sample (x, y),
+   * covering every micro-step of Forward Inference, BCE Loss, Analytical Backprop, and Optimizer Update.
+   *
+   * @param {Float32Array | number[]} xInput
+   * @param {number} yTarget
+   * @param {{ lr?: number, optimizer?: string, weightDecay?: number, mode?: "train" | "inference" }} [opts]
+   */
+  traceStep(xInput, yTarget = 1, opts = {}) {
+    const lr = opts.lr ?? 0.05;
+    const optimizer = opts.optimizer || "adamw";
+    const weightDecay = opts.weightDecay ?? 1e-3;
+    const mode = opts.mode === "inference" ? "inference" : "train";
+    const act = ACTIVATIONS[this.activationName] || ACTIVATIONS.gelu;
+    const L = this.layers.length;
+
+    const x = new Float32Array(this.layerSizes[0]);
+    for (let i = 0; i < x.length; i++) x[i] = Number(xInput[i] ?? 0);
+    const y = yTarget >= 0.5 ? 1 : 0;
+
+    // 1. Forward pass per layer
+    /** @type {Array<{ z: Float32Array, a: Float32Array, actDeriv: Float32Array }>} */
+    const fwd = [
+      {
+        z: new Float32Array(x),
+        a: new Float32Array(x),
+        actDeriv: new Float32Array(x.length).fill(1)
+      }
+    ];
+
+    for (let l = 0; l < L; l++) {
+      const layer = this.layers[l];
+      const isLast = l === L - 1;
+      const prevA = fwd[l].a;
+      const z = matmul(prevA, layer.W, 1, layer.inDim, layer.outDim);
+      const a = new Float32Array(layer.outDim);
+      const actDeriv = new Float32Array(layer.outDim);
+
+      for (let j = 0; j < layer.outDim; j++) {
+        const zVal = z[j] + layer.b[j];
+        z[j] = zVal;
+        if (isLast) {
+          const s = ACTIVATIONS.sigmoid.fn(zVal);
+          a[j] = s;
+          actDeriv[j] = s * (1 - s);
+        } else {
+          a[j] = act.fn(zVal);
+          actDeriv[j] = act.grad(zVal);
+        }
+      }
+      fwd.push({ z, a, actDeriv });
+    }
+
+    const predBefore = Math.max(1e-6, Math.min(1 - 1e-6, fwd[L].a[0]));
+    const lossBefore = -(y * Math.log(predBefore) + (1 - y) * Math.log(1 - predBefore));
+
+    // 2. Backward pass per layer (analytical reverse-mode autodiff)
+    /** @type {Float32Array[]} */
+    const deltas = new Array(L + 1);
+    deltas[L] = new Float32Array([predBefore - y]);
+
+    /** @type {Array<{ dW: Float32Array, db: Float32Array, wAfter: Float32Array, bAfter: Float32Array, mWAfter: Float32Array, vWAfter: Float32Array, mbAfter: Float32Array, vbAfter: Float32Array, gradNorm: number }>} */
+    const bwdLayers = new Array(L);
+
+    const nextStepCount = this.stepCount + 1;
+    const beta1 = 0.9;
+    const beta2 = 0.999;
+    const eps = 1e-8;
+    const bc1 = 1 - Math.pow(beta1, nextStepCount);
+    const bc2 = 1 - Math.pow(beta2, nextStepCount);
+
+    for (let l = L - 1; l >= 0; l--) {
+      const layer = this.layers[l];
+      const inDim = layer.inDim;
+      const outDim = layer.outDim;
+      const prevA = fwd[l].a;
+      const curDelta = deltas[l + 1];
+
+      const dW = new Float32Array(inDim * outDim);
+      const db = new Float32Array(outDim);
+      for (let j = 0; j < outDim; j++) {
+        const dz = curDelta[j];
+        db[j] = dz;
+        for (let i = 0; i < inDim; i++) {
+          dW[i * outDim + j] = prevA[i] * dz;
+        }
+      }
+
+      // Propagate delta to layer l (including l === 0 for input sensitivity dL/dx)
+      const prevDelta = new Float32Array(inDim);
+      const prevDeriv = fwd[l].actDeriv;
+      for (let i = 0; i < inDim; i++) {
+        let sum = 0;
+        for (let j = 0; j < outDim; j++) {
+          sum += curDelta[j] * layer.W[i * outDim + j];
+        }
+        prevDelta[i] = l > 0 ? sum * prevDeriv[i] : sum;
+      }
+      deltas[l] = prevDelta;
+
+      // Compute hypothetical post-update weights & optimizer moments
+      const wAfter = new Float32Array(layer.W);
+      const bAfter = new Float32Array(layer.b);
+      const mWAfter = new Float32Array(layer.mW);
+      const vWAfter = new Float32Array(layer.vW);
+      const mbAfter = new Float32Array(layer.mb);
+      const vbAfter = new Float32Array(layer.vb);
+
+      for (let idx = 0; idx < wAfter.length; idx++) {
+        const g = dW[idx];
+        if (optimizer === "sgd") {
+          wAfter[idx] -= lr * (g + weightDecay * wAfter[idx]);
+        } else if (optimizer === "momentum") {
+          mWAfter[idx] = beta1 * mWAfter[idx] + g;
+          wAfter[idx] -= lr * (mWAfter[idx] + weightDecay * wAfter[idx]);
+        } else {
+          mWAfter[idx] = beta1 * mWAfter[idx] + (1 - beta1) * g;
+          vWAfter[idx] = beta2 * vWAfter[idx] + (1 - beta2) * g * g;
+          const mHat = mWAfter[idx] / bc1;
+          const vHat = vWAfter[idx] / bc2;
+          wAfter[idx] = wAfter[idx] * (1 - lr * weightDecay) - lr * (mHat / (Math.sqrt(vHat) + eps));
+        }
+      }
+
+      for (let j = 0; j < bAfter.length; j++) {
+        const g = db[j];
+        if (optimizer === "sgd") {
+          bAfter[j] -= lr * g;
+        } else if (optimizer === "momentum") {
+          mbAfter[j] = beta1 * mbAfter[j] + g;
+          bAfter[j] -= lr * mbAfter[j];
+        } else {
+          mbAfter[j] = beta1 * mbAfter[j] + (1 - beta1) * g;
+          vbAfter[j] = beta2 * vbAfter[j] + (1 - beta2) * g * g;
+          const mHat = mbAfter[j] / bc1;
+          const vHat = vbAfter[j] / bc2;
+          bAfter[j] -= lr * (mHat / (Math.sqrt(vHat) + eps));
+        }
+      }
+
+      bwdLayers[l] = {
+        dW,
+        db,
+        wAfter,
+        bAfter,
+        mWAfter,
+        vWAfter,
+        mbAfter,
+        vbAfter,
+        gradNorm: l2Norm(dW)
+      };
+    }
+
+    // 3. Evaluate post-update forward pass to measure immediate loss reduction
+    let curAfterA = new Float32Array(x);
+    for (let l = 0; l < L; l++) {
+      const layer = this.layers[l];
+      const isLast = l === L - 1;
+      const zAfter = matmul(curAfterA, bwdLayers[l].wAfter, 1, layer.inDim, layer.outDim);
+      const nextA = new Float32Array(layer.outDim);
+      for (let j = 0; j < layer.outDim; j++) {
+        const zVal = zAfter[j] + bwdLayers[l].bAfter[j];
+        nextA[j] = isLast ? ACTIVATIONS.sigmoid.fn(zVal) : act.fn(zVal);
+      }
+      curAfterA = nextA;
+    }
+    const predAfter = Math.max(1e-6, Math.min(1 - 1e-6, curAfterA[0]));
+    const lossAfter = -(y * Math.log(predAfter) + (1 - y) * Math.log(1 - predAfter));
+
+    // 4. Assemble rich per-layer node and synapse structures for the graph view
+    const nodesByLayer = [];
+    for (let l = 0; l <= L; l++) {
+      const dim = this.layerSizes[l];
+      const layerNodes = [];
+      for (let j = 0; j < dim; j++) {
+        if (l === 0) {
+          layerNodes.push({
+            id: `L0N${j}`,
+            label: `x${j}`,
+            layerIndex: 0,
+            nodeIndex: j,
+            role: "input",
+            z: fwd[0].z[j],
+            a: fwd[0].a[j],
+            actDeriv: 1,
+            bBefore: 0,
+            bAfter: 0,
+            db: 0,
+            delta: deltas[0][j],
+            incoming: []
+          });
+        } else {
+          const layerObj = this.layers[l - 1];
+          const bwdObj = bwdLayers[l - 1];
+          const isLast = l === L;
+          const incoming = [];
+          for (let i = 0; i < layerObj.inDim; i++) {
+            const idx = i * layerObj.outDim + j;
+            const aPrev = fwd[l - 1].a[i];
+            const wBefore = layerObj.W[idx];
+            const wAfter = bwdObj.wAfter[idx];
+            const dWVal = bwdObj.dW[idx];
+            incoming.push({
+              id: `E_L${l - 1}N${i}_L${l}N${j}`,
+              fromLayer: l - 1,
+              fromNode: i,
+              fromLabel: l - 1 === 0 ? `x${i}` : `h${l - 1}_${i}`,
+              toLayer: l,
+              toNode: j,
+              aPrev,
+              wBefore,
+              contrib: aPrev * wBefore,
+              dW: dWVal,
+              wAfter,
+              deltaW: wAfter - wBefore
+            });
+          }
+          layerNodes.push({
+            id: `L${l}N${j}`,
+            label: isLast ? "ŷ" : `h${l}_${j}`,
+            layerIndex: l,
+            nodeIndex: j,
+            role: isLast ? "output" : "hidden",
+            activationFn: isLast ? "Sigmoid" : this.activationName.toUpperCase(),
+            z: fwd[l].z[j],
+            a: fwd[l].a[j],
+            actDeriv: fwd[l].actDeriv[j],
+            bBefore: layerObj.b[j],
+            bAfter: bwdObj.bAfter[j],
+            db: bwdObj.db[j],
+            delta: deltas[l][j],
+            incoming
+          });
+        }
+      }
+      nodesByLayer.push(layerNodes);
+    }
+
+    // 5. Build step-by-step execution tape
+    const microSteps = [];
+    microSteps.push({
+      index: 0,
+      id: "step-input",
+      phase: "input",
+      direction: "forward",
+      activeLayer: 0,
+      activeEdgeLayer: -1,
+      shortLabel: "1. Input x",
+      title: "Stage 1 · Input Feature Injection",
+      formula: `a⁽⁰⁾ = [x₀, x₁] = [${x[0].toFixed(3)}, ${x[1].toFixed(3)}], target y = ${y}`,
+      summary: `Clamped input coordinates (${x[0].toFixed(2)}, ${x[1].toFixed(2)}) into ${this.layerSizes[0]} input nodes.`
+    });
+
+    for (let l = 1; l <= L; l++) {
+      const isLast = l === L;
+      const inDim = this.layerSizes[l - 1];
+      const outDim = this.layerSizes[l];
+      const actLabel = isLast ? "Sigmoid" : this.activationName.toUpperCase();
+      const maxA = Math.max(...fwd[l].a);
+      const minA = Math.min(...fwd[l].a);
+      microSteps.push({
+        index: microSteps.length,
+        id: `step-fwd-${l}`,
+        phase: "forward",
+        direction: "forward",
+        activeLayer: l,
+        activeEdgeLayer: l - 1,
+        shortLabel: `${microSteps.length + 1}. Fwd L${l}`,
+        title: `Stage ${microSteps.length + 1} · Forward Layer ${l} (${inDim}→${outDim} ${actLabel})`,
+        formula: `z⁽${l}⁾ = a⁽${l - 1}⁾·W⁽${l}⁾ + b⁽${l}⁾  →  a⁽${l}⁾ = ${actLabel}(z⁽${l}⁾)`,
+        summary: isLast
+          ? `Output logit z⁽${l}⁾ = ${fwd[l].z[0].toFixed(4)} → Sigmoid probability ŷ = ${predBefore.toFixed(4)} (target y = ${y}).`
+          : `Computed ${outDim} neuron activations via ${getBackendMode().toUpperCase()} GEMM (${inDim}×${outDim} synapses); range [${minA.toFixed(3)}, ${maxA.toFixed(3)}].`
+      });
+    }
+
+    if (mode === "inference") {
+      const predClass = predBefore >= 0.5 ? 1 : 0;
+      microSteps.push({
+        index: microSteps.length,
+        id: "step-infer-verdict",
+        phase: "loss",
+        direction: "none",
+        activeLayer: L,
+        activeEdgeLayer: -1,
+        shortLabel: `${microSteps.length + 1}. Verdict`,
+        title: `Stage ${microSteps.length + 1} · Inference Readout Complete`,
+        formula: `ŷ = P(y = 1 | x) = ${predBefore.toFixed(4)} → Predicted Class ${predClass}`,
+        summary: `Forward pass finished with zero gradient computation. Prediction ${predClass === y ? "matches" : "differs from"} target y = ${y} (sample BCE = ${lossBefore.toFixed(4)}).`
+      });
+    } else {
+      microSteps.push({
+        index: microSteps.length,
+        id: "step-loss",
+        phase: "loss",
+        direction: "backward",
+        activeLayer: L,
+        activeEdgeLayer: -1,
+        shortLabel: `${microSteps.length + 1}. BCE & δ⁽${L}⁾`,
+        title: `Stage ${microSteps.length + 1} · Binary Cross-Entropy Loss & Output Error Signal`,
+        formula: `L(ŷ, y) = −(y·ln ŷ + (1−y)·ln(1−ŷ)) = ${lossBefore.toFixed(4)}  |  δ⁽${L}⁾ = ∂L/∂z⁽${L}⁾ = ŷ − y = ${(predBefore - y).toFixed(4)}`,
+        summary: `Evaluated loss L = ${lossBefore.toFixed(4)} and seeded reverse-mode autodiff at output node ŷ with error signal δ⁽${L}⁾ = ${(predBefore - y).toFixed(4)}.`
+      });
+
+      for (let l = L; l >= 1; l--) {
+        const inDim = this.layerSizes[l - 1];
+        const outDim = this.layerSizes[l];
+        const gNorm = bwdLayers[l - 1].gradNorm;
+        microSteps.push({
+          index: microSteps.length,
+          id: `step-bwd-${l}`,
+          phase: "backward",
+          direction: "backward",
+          activeLayer: l - 1,
+          activeEdgeLayer: l - 1,
+          shortLabel: `${microSteps.length + 1}. Bwd L${l}`,
+          title: `Stage ${microSteps.length + 1} · Backpropagate Layer ${l} (${outDim}→${inDim})`,
+          formula: l > 1
+            ? `∂L/∂W⁽${l}⁾ = (a⁽${l - 1}⁾)ᵀδ⁽${l}⁾,  δ⁽${l - 1}⁾ = (δ⁽${l}⁾(W⁽${l}⁾)ᵀ) ⊙ σ'(z⁽${l - 1}⁾)`
+            : `∂L/∂W⁽1⁾ = (a⁽0⁾)ᵀδ⁽1⁾,  ∂L/∂x = δ⁽1⁾(W⁽1⁾)ᵀ`,
+          summary: `Propagated error signals backward across ${inDim * outDim} synapses in Layer ${l}; ‖∇W⁽${l}⁾‖₂ = ${gNorm.toFixed(4)}.`
+        });
+      }
+
+      microSteps.push({
+        index: microSteps.length,
+        id: "step-update",
+        phase: "update",
+        direction: "update",
+        activeLayer: L,
+        activeEdgeLayer: -2, // all layers updated
+        shortLabel: `${microSteps.length + 1}. Update ΔW`,
+        title: `Stage ${microSteps.length + 1} · Optimizer Weight Update (${optimizer.toUpperCase()}, η = ${lr})`,
+        formula: `W⁽l⁾ ← W⁽l⁾ − η·ΔW⁽l⁾,  L_before = ${lossBefore.toFixed(4)} → L_after = ${lossAfter.toFixed(4)} (ΔL = ${(lossAfter - lossBefore).toFixed(4)})`,
+        summary: `Updated all parameters across ${L} layers: sample prediction shifted ${predBefore.toFixed(4)} → ${predAfter.toFixed(4)}, reducing sample loss by ${Math.max(0, lossBefore - lossAfter).toFixed(4)}.`
+      });
+    }
+
+    return {
+      mode,
+      optimizer,
+      lr,
+      weightDecay,
+      x: Array.from(x),
+      y,
+      layerSizes: [...this.layerSizes],
+      activationName: this.activationName,
+      predBefore,
+      lossBefore,
+      predAfter,
+      lossAfter,
+      nodesByLayer,
+      bwdLayers,
+      microSteps
+    };
+  }
+
+  /**
+   * Commits a previously traced single-sample training step to the live network weights.
+   */
+  commitTrace(trace) {
+    if (!trace || !trace.bwdLayers) return null;
+    this.stepCount++;
+    for (let l = 0; l < this.layers.length; l++) {
+      const layer = this.layers[l];
+      const bwd = trace.bwdLayers[l];
+      layer.W.set(bwd.wAfter);
+      layer.b.set(bwd.bAfter);
+      layer.dW.set(bwd.dW);
+      layer.db.set(bwd.db);
+      layer.mW.set(bwd.mWAfter);
+      layer.vW.set(bwd.vWAfter);
+      layer.mb.set(bwd.mbAfter);
+      layer.vb.set(bwd.vbAfter);
+      layer.gradNorm = bwd.gradNorm;
+    }
+    return {
+      step: this.stepCount,
+      predBefore: trace.predBefore,
+      predAfter: trace.predAfter,
+      lossBefore: trace.lossBefore,
+      lossAfter: trace.lossAfter
+    };
   }
 }
 
@@ -1656,6 +2219,36 @@ export const BLOCK_REGISTRY = new Map([
       };
     }
   }],
+  ["rnn_gru", {
+    type: "rnn_gru",
+    label: "Gated Recurrent Unit (GRU / LSTM Cell)",
+    category: "sequence",
+    description: "Sequential O(T·D²) recurrence with additive update gate h_t = (1-z_t)⊙h_{t-1} + z_t⊙h̃_t.",
+    computeStats(shape) {
+      const D = shape.d;
+      const T = shape.t;
+      return {
+        outShape: { ...shape },
+        params: 6 * D * D + 3 * D,
+        flops: 12 * T * D * D
+      };
+    }
+  }],
+  ["residual_highway", {
+    type: "residual_highway",
+    label: "Pre-RMSNorm Residual Highway (x + F(Norm(x)))",
+    category: "core",
+    description: "Identity skip connection with RMSNorm preserving O(1) gradient flow across 100+ layers.",
+    computeStats(shape) {
+      const D = shape.d;
+      const T = shape.t;
+      return {
+        outShape: { ...shape },
+        params: 2 * D * D + 3 * D,
+        flops: 4 * T * D * D + 5 * T * D
+      };
+    }
+  }],
   ["decision_head", {
     type: "decision_head",
     label: "Decision Pointer + Abstention Gate Head",
@@ -1672,6 +2265,519 @@ export const BLOCK_REGISTRY = new Map([
     }
   }]
 ]);
+
+// ============================================================================
+// 10. CHAPTER 3: RECURRENT NEURAL NETWORKS (ELMAN RNN vs GATED GRU & BPTT)
+// ============================================================================
+
+/**
+ * Generates sequential temporal tasks for testing RNN vs Gated GRU memory horizons.
+ * - "memory_first": Remember the sign of the very first token x_0 across T-1 distractors.
+ * - "parity": Compute the running XOR parity of positive tokens across all T steps.
+ */
+export function generateTemporalSequenceBatch(task = "memory_first", seqLen = 8, count = 32, seed = 606) {
+  const rng = createRng(seed);
+  const samples = [];
+  for (let n = 0; n < count; n++) {
+    const seq = new Float32Array(seqLen);
+    if (task === "memory_first") {
+      const firstBit = n % 2 === 0 ? 1.0 : -1.0;
+      seq[0] = firstBit;
+      for (let t = 1; t < seqLen; t++) {
+        // Low-amplitude distractor noise in [-0.35, +0.35]
+        seq[t] = (rng.next() * 2 - 1) * 0.35;
+      }
+      samples.push({ seq, target: firstBit > 0 ? 1 : 0 });
+    } else {
+      let ones = 0;
+      for (let t = 0; t < seqLen; t++) {
+        const bit = rng.next() > 0.5 ? 1.0 : -1.0;
+        seq[t] = bit;
+        if (bit > 0) ones++;
+      }
+      samples.push({ seq, target: ones % 2 === 1 ? 1 : 0 });
+    }
+  }
+  return samples;
+}
+
+export class MicroRNN {
+  /**
+   * @param {{ cellType?: "rnn" | "gru", hiddenDim?: number, seed?: number }} [opts]
+   */
+  constructor(opts = {}) {
+    this.cellType = opts.cellType === "rnn" ? "rnn" : "gru";
+    this.hiddenDim = opts.hiddenDim || 10;
+    this.rng = createRng(opts.seed || 1997);
+    this.stepCount = 0;
+
+    const D = this.hiddenDim;
+    const scaleH = this.cellType === "rnn" ? 0.55 / Math.sqrt(D) : 0.8 / Math.sqrt(D);
+
+    // Candidate / state weights
+    this.Wxh = new Float32Array(D);
+    this.Whh = new Float32Array(D * D);
+    this.bh = new Float32Array(D);
+    for (let i = 0; i < D; i++) this.Wxh[i] = this.rng.normal(0, 0.85);
+    for (let i = 0; i < D * D; i++) this.Whh[i] = this.rng.normal(0, scaleH);
+
+    // Update gate weights (used when cellType === "gru")
+    this.Wxz = new Float32Array(D);
+    this.Whz = new Float32Array(D * D);
+    this.bz = new Float32Array(D);
+    for (let i = 0; i < D; i++) {
+      this.Wxz[i] = this.rng.normal(0, 0.7);
+      // Negative bias initializes update gate z_t small (~0.22) so the Constant Error Carousel defaults to preserving memory
+      this.bz[i] = -1.25;
+    }
+    for (let i = 0; i < D * D; i++) this.Whz[i] = this.rng.normal(0, scaleH);
+
+    // Final readout head
+    this.Why = new Float32Array(D);
+    this.by = 0;
+    for (let i = 0; i < D; i++) this.Why[i] = this.rng.normal(0, 0.7 / Math.sqrt(D));
+  }
+
+  /**
+   * Unrolls the recurrent cell across sequence `seq` [T] and runs analytical
+   * Backpropagation Through Time (BPTT) from t = T - 1 back to t = 0.
+   */
+  forwardAndBptt(seq, target = 1) {
+    const T = seq.length;
+    const D = this.hiddenDim;
+    const isGru = this.cellType === "gru";
+
+    /** @type {Float32Array[]} */
+    const hStates = new Array(T + 1);
+    hStates[0] = new Float32Array(D); // h_{-1} = 0
+    /** @type {Float32Array[]} */
+    const hCand = new Array(T);
+    /** @type {Float32Array[]} */
+    const zGates = new Array(T);
+
+    for (let t = 0; t < T; t++) {
+      const x_t = seq[t];
+      const hPrev = hStates[t];
+      const z = new Float32Array(D);
+      const cand = new Float32Array(D);
+      const hNext = new Float32Array(D);
+
+      const hWhh = matmul(hPrev, this.Whh, 1, D, D);
+      const hWhz = isGru ? matmul(hPrev, this.Whz, 1, D, D) : null;
+
+      for (let j = 0; j < D; j++) {
+        const a = x_t * this.Wxh[j] + hWhh[j] + this.bh[j];
+        cand[j] = Math.tanh(a);
+        if (isGru && hWhz) {
+          const u = x_t * this.Wxz[j] + hWhz[j] + this.bz[j];
+          z[j] = ACTIVATIONS.sigmoid.fn(u);
+          hNext[j] = (1 - z[j]) * hPrev[j] + z[j] * cand[j];
+        } else {
+          z[j] = 1.0;
+          hNext[j] = cand[j];
+        }
+      }
+      zGates[t] = z;
+      hCand[t] = cand;
+      hStates[t + 1] = hNext;
+    }
+
+    // Readout at final step T - 1
+    const hFinal = hStates[T];
+    let logit = this.by;
+    for (let j = 0; j < D; j++) logit += hFinal[j] * this.Why[j];
+    const prob = Math.max(1e-6, Math.min(1 - 1e-6, ACTIVATIONS.sigmoid.fn(logit)));
+    const y = target >= 0.5 ? 1 : 0;
+    const loss = -(y * Math.log(prob) + (1 - y) * Math.log(1 - prob));
+    const dLogit = prob - y;
+
+    // Gradients
+    const dWxh = new Float32Array(D);
+    const dWhh = new Float32Array(D * D);
+    const dbh = new Float32Array(D);
+    const dWxz = new Float32Array(D);
+    const dWhz = new Float32Array(D * D);
+    const dbz = new Float32Array(D);
+    const dWhy = new Float32Array(D);
+    const dby = dLogit;
+
+    const dh = new Float32Array(D);
+    for (let j = 0; j < D; j++) {
+      dWhy[j] = hFinal[j] * dLogit;
+      dh[j] = dLogit * this.Why[j];
+    }
+
+    const temporalSteps = new Array(T);
+
+    // Unrolled Backpropagation Through Time (t = T - 1 down to 0)
+    for (let t = T - 1; t >= 0; t--) {
+      const x_t = seq[t];
+      const hPrev = hStates[t];
+      const hCur = hStates[t + 1];
+      const cand = hCand[t];
+      const z = zGates[t];
+
+      let gateSum = 0;
+      for (let j = 0; j < D; j++) gateSum += z[j];
+
+      temporalSteps[t] = {
+        t,
+        x: x_t,
+        hNorm: l2Norm(hCur) / Math.sqrt(D),
+        gateAvg: gateSum / D,
+        gradNorm: l2Norm(dh)
+      };
+
+      const dhPrev = new Float32Array(D);
+
+      for (let j = 0; j < D; j++) {
+        const dCand = isGru ? dh[j] * z[j] : dh[j];
+        const da = dCand * (1 - cand[j] * cand[j]);
+        dWxh[j] += x_t * da;
+        dbh[j] += da;
+
+        let du = 0;
+        if (isGru) {
+          const dz = dh[j] * (cand[j] - hPrev[j]);
+          du = dz * z[j] * (1 - z[j]);
+          dWxz[j] += x_t * du;
+          dbz[j] += du;
+          // Additive Constant Error Carousel bypass!
+          dhPrev[j] += dh[j] * (1 - z[j]);
+        }
+
+        for (let i = 0; i < D; i++) {
+          dWhh[i * D + j] += hPrev[i] * da;
+          dhPrev[i] += da * this.Whh[i * D + j];
+          if (isGru) {
+            dWhz[i * D + j] += hPrev[i] * du;
+            dhPrev[i] += du * this.Whz[i * D + j];
+          }
+        }
+      }
+      dh.set(dhPrev);
+    }
+
+    return {
+      prob,
+      loss,
+      temporalSteps,
+      grads: { dWxh, dWhh, dbh, dWxz, dWhz, dbz, dWhy, dby }
+    };
+  }
+
+  /**
+   * Trains one epoch across a batch of sequences using BPTT + gradient clipping.
+   */
+  trainEpoch(samples, lr = 0.08, clipNorm = 2.0) {
+    const D = this.hiddenDim;
+    const accWxh = new Float32Array(D);
+    const accWhh = new Float32Array(D * D);
+    const accBh = new Float32Array(D);
+    const accWxz = new Float32Array(D);
+    const accWhz = new Float32Array(D * D);
+    const accBz = new Float32Array(D);
+    const accWhy = new Float32Array(D);
+    let accBy = 0;
+
+    let totalLoss = 0;
+    let correct = 0;
+    const N = samples.length;
+    let lastTrace = null;
+
+    for (let n = 0; n < N; n++) {
+      const res = this.forwardAndBptt(samples[n].seq, samples[n].target);
+      lastTrace = res;
+      totalLoss += res.loss;
+      if ((res.prob >= 0.5 ? 1 : 0) === samples[n].target) correct++;
+
+      for (let i = 0; i < D; i++) {
+        accWxh[i] += res.grads.dWxh[i] / N;
+        accBh[i] += res.grads.dbh[i] / N;
+        accWxz[i] += res.grads.dWxz[i] / N;
+        accBz[i] += res.grads.dbz[i] / N;
+        accWhy[i] += res.grads.dWhy[i] / N;
+      }
+      for (let i = 0; i < D * D; i++) {
+        accWhh[i] += res.grads.dWhh[i] / N;
+        accWhz[i] += res.grads.dWhz[i] / N;
+      }
+      accBy += res.grads.dby / N;
+    }
+
+    // Global gradient norm clipping (essential for BPTT stability)
+    const totalNorm = Math.hypot(
+      l2Norm(accWxh),
+      l2Norm(accWhh),
+      l2Norm(accWxz),
+      l2Norm(accWhz),
+      l2Norm(accWhy)
+    );
+    const scale = totalNorm > clipNorm ? clipNorm / totalNorm : 1.0;
+
+    for (let i = 0; i < D; i++) {
+      this.Wxh[i] -= lr * scale * accWxh[i];
+      this.bh[i] -= lr * scale * accBh[i];
+      this.Wxz[i] -= lr * scale * accWxz[i];
+      this.bz[i] -= lr * scale * accBz[i];
+      this.Why[i] -= lr * scale * accWhy[i];
+    }
+    for (let i = 0; i < D * D; i++) {
+      this.Whh[i] -= lr * scale * accWhh[i];
+      this.Whz[i] -= lr * scale * accWhz[i];
+    }
+    this.by -= lr * scale * accBy;
+    this.stepCount++;
+
+    const steps = lastTrace ? lastTrace.temporalSteps : [];
+    const firstStepGrad = steps[0]?.gradNorm ?? 0;
+    const lastStepGrad = steps[steps.length - 1]?.gradNorm ?? 1;
+
+    return {
+      step: this.stepCount,
+      loss: totalLoss / N,
+      accuracy: correct / N,
+      temporalSteps: steps,
+      gradRetentionRatio: firstStepGrad / Math.max(1e-9, lastStepGrad)
+    };
+  }
+}
+
+// ============================================================================
+// 11. CHAPTER 4: VERY DEEP RESIDUAL NETWORKS (RESNETS, RMSNORM & INIT)
+// ============================================================================
+
+export class DeepResidualNetwork {
+  /**
+   * @param {{
+   *   depth?: number,
+   *   dim?: number,
+   *   residual?: boolean,
+   *   norm?: "rmsnorm" | "none",
+   *   initScheme?: "he" | "xavier" | "small" | "large",
+   *   activation?: keyof typeof ACTIVATIONS,
+   *   seed?: number
+   * }} [opts]
+   */
+  constructor(opts = {}) {
+    this.depth = opts.depth || 12;
+    this.dim = opts.dim || 8;
+    this.residual = opts.residual ?? true;
+    this.norm = opts.norm || "rmsnorm";
+    this.initScheme = opts.initScheme || "he";
+    this.activationName = opts.activation || "gelu";
+    this.rng = createRng(opts.seed || 2015);
+    this.stepCount = 0;
+
+    const D = this.dim;
+    let std = Math.sqrt(2.0 / D); // He initialization
+    if (this.initScheme === "xavier") std = Math.sqrt(1.0 / D);
+    else if (this.initScheme === "small") std = 0.22 / Math.sqrt(D);
+    else if (this.initScheme === "large") std = 2.1 / Math.sqrt(D);
+
+    this.Win = new Float32Array(2 * D);
+    for (let i = 0; i < this.Win.length; i++) this.Win[i] = this.rng.normal(0, Math.sqrt(1.0 / 2));
+
+    this.blocks = [];
+    for (let l = 0; l < this.depth; l++) {
+      const W = new Float32Array(D * D);
+      const b = new Float32Array(D);
+      const gamma = new Float32Array(D).fill(1.0);
+      // Residual branches scale slightly gentler on init so identity stream dominates early
+      const blockStd = this.residual && this.initScheme === "he" ? std * 0.7 : std;
+      for (let i = 0; i < W.length; i++) W[i] = this.rng.normal(0, blockStd);
+      this.blocks.push({
+        index: l + 1,
+        W,
+        b,
+        gamma,
+        dW: new Float32Array(D * D),
+        db: new Float32Array(D),
+        actRms: 0,
+        gradNorm: 0
+      });
+    }
+
+    this.Wout = new Float32Array(D);
+    this.bout = 0;
+    for (let i = 0; i < D; i++) this.Wout[i] = this.rng.normal(0, 1.0 / Math.sqrt(D));
+  }
+
+  /**
+   * Forward and analytical backward pass across all `depth` layers for sample (x1, x2) -> y.
+   */
+  forwardAndBackward(xInput = [-0.55, 0.55], yTarget = 1) {
+    const D = this.dim;
+    const L = this.depth;
+    const act = ACTIVATIONS[this.activationName] || ACTIVATIONS.gelu;
+    const useNorm = this.norm === "rmsnorm";
+    const useRes = this.residual;
+
+    const x0 = matmul(new Float32Array(xInput), this.Win, 1, 2, D);
+    for (let d = 0; d < D; d++) x0[d] = Math.tanh(x0[d]);
+
+    const states = [x0];
+    const blockCaches = [];
+
+    for (let l = 0; l < L; l++) {
+      const blk = this.blocks[l];
+      const hIn = states[l];
+      const hNorm = new Float32Array(D);
+      let invRms = 1.0;
+
+      if (useNorm) {
+        let sumSq = 0;
+        for (let d = 0; d < D; d++) sumSq += hIn[d] * hIn[d];
+        invRms = 1.0 / Math.sqrt(sumSq / D + 1e-5);
+        for (let d = 0; d < D; d++) hNorm[d] = hIn[d] * invRms * blk.gamma[d];
+      } else {
+        hNorm.set(hIn);
+      }
+
+      const z = matmul(hNorm, blk.W, 1, D, D);
+      const fOut = new Float32Array(D);
+      const hNext = new Float32Array(D);
+      for (let d = 0; d < D; d++) {
+        z[d] += blk.b[d];
+        fOut[d] = act.fn(z[d]);
+        hNext[d] = useRes ? hIn[d] + fOut[d] : fOut[d];
+      }
+
+      let rms = 0;
+      for (let d = 0; d < D; d++) rms += hNext[d] * hNext[d];
+      blk.actRms = Math.sqrt(rms / D);
+
+      states.push(hNext);
+      blockCaches.push({ hIn, hNorm, invRms, z, fOut });
+    }
+
+    const hFinal = states[L];
+    let logit = this.bout;
+    for (let d = 0; d < D; d++) logit += hFinal[d] * this.Wout[d];
+    const prob = Math.max(1e-6, Math.min(1 - 1e-6, ACTIVATIONS.sigmoid.fn(logit)));
+    const y = yTarget >= 0.5 ? 1 : 0;
+    const loss = -(y * Math.log(prob) + (1 - y) * Math.log(1 - prob));
+    const dLogit = prob - y;
+
+    const dWout = new Float32Array(D);
+    const dbout = dLogit;
+    let dh = new Float32Array(D);
+    for (let d = 0; d < D; d++) {
+      dWout[d] = hFinal[d] * dLogit;
+      dh[d] = dLogit * this.Wout[d];
+    }
+
+    // Backpropagate from layer L down to layer 1
+    for (let l = L - 1; l >= 0; l--) {
+      const blk = this.blocks[l];
+      const cache = blockCaches[l];
+      const dz = new Float32Array(D);
+      for (let d = 0; d < D; d++) {
+        dz[d] = dh[d] * act.grad(cache.z[d]);
+        blk.db[d] = dz[d];
+      }
+
+      const dhNorm = new Float32Array(D);
+      for (let i = 0; i < D; i++) {
+        let sum = 0;
+        for (let j = 0; j < D; j++) {
+          const g = cache.hNorm[i] * dz[j];
+          blk.dW[i * D + j] = g;
+          sum += dz[j] * blk.W[i * D + j];
+        }
+        dhNorm[i] = sum;
+      }
+      blk.gradNorm = l2Norm(blk.dW);
+
+      const dhBranch = new Float32Array(D);
+      if (useNorm) {
+        // Exact RMSNorm backward Jacobian
+        let dot = 0;
+        for (let d = 0; d < D; d++) {
+          const xHat = cache.hIn[d] * cache.invRms;
+          dot += dhNorm[d] * blk.gamma[d] * xHat;
+        }
+        const meanDot = dot / D;
+        for (let d = 0; d < D; d++) {
+          const xHat = cache.hIn[d] * cache.invRms;
+          dhBranch[d] = cache.invRms * (dhNorm[d] * blk.gamma[d] - xHat * meanDot);
+        }
+      } else {
+        dhBranch.set(dhNorm);
+      }
+
+      const dhPrev = new Float32Array(D);
+      for (let d = 0; d < D; d++) {
+        // Identity highway adds dh[d] directly when useRes === true!
+        dhPrev[d] = useRes ? dh[d] + dhBranch[d] : dhBranch[d];
+      }
+      dh = dhPrev;
+    }
+
+    const layerStats = this.blocks.map((b) => ({
+      layerIndex: b.index,
+      actRms: b.actRms,
+      gradNorm: b.gradNorm
+    }));
+
+    const firstGrad = layerStats[0]?.gradNorm ?? 0;
+    const lastGrad = layerStats[layerStats.length - 1]?.gradNorm ?? 1;
+
+    return {
+      prob,
+      loss,
+      layerStats,
+      firstToLastGradRatio: firstGrad / Math.max(1e-9, lastGrad),
+      dWout,
+      dbout
+    };
+  }
+
+  /**
+   * Executes a training step on a mini-batch of 2D samples.
+   */
+  trainStep(dataset, lr = 0.04) {
+    const { X, Y, count } = dataset;
+    const D = this.dim;
+    const N = Math.min(24, count);
+    let totalLoss = 0;
+    let correct = 0;
+    let lastProfile = null;
+
+    for (let i = 0; i < N; i++) {
+      const xSample = [X[i * 2], X[i * 2 + 1]];
+      const ySample = Y[i];
+      const res = this.forwardAndBackward(xSample, ySample);
+      lastProfile = res;
+      totalLoss += res.loss;
+      if ((res.prob >= 0.5 ? 1 : 0) === ySample) correct++;
+
+      for (const blk of this.blocks) {
+        const gNorm = blk.gradNorm;
+        const clip = gNorm > 2.0 ? 2.0 / gNorm : 1.0;
+        for (let k = 0; k < blk.W.length; k++) {
+          blk.W[k] -= (lr / N) * clip * blk.dW[k];
+        }
+        for (let d = 0; d < D; d++) {
+          blk.b[d] -= (lr / N) * clip * blk.db[d];
+        }
+      }
+      for (let d = 0; d < D; d++) {
+        this.Wout[d] -= (lr / N) * res.dWout[d];
+      }
+      this.bout -= (lr / N) * res.dbout;
+    }
+
+    this.stepCount++;
+    return {
+      step: this.stepCount,
+      loss: totalLoss / N,
+      accuracy: correct / N,
+      layerStats: lastProfile ? lastProfile.layerStats : [],
+      firstToLastGradRatio: lastProfile ? lastProfile.firstToLastGradRatio : 0
+    };
+  }
+}
 
 /**
  * Extensibility API: Registers a new neural network building block at runtime.
@@ -1713,7 +2819,7 @@ export function analyzeArchitecturePipeline(blockTypes, { seqLen = 16, dModel = 
     for (let i = 0; i < W.length; i++) W[i] = rng.normal(0, scale);
     let nextActs = matmul(acts, W, T, inD, outD);
 
-    if (type === "layernorm") {
+    if (type === "layernorm" || type === "residual_highway") {
       // Normalize each token row
       for (let t = 0; t < T; t++) {
         let meanSq = 0;
@@ -1745,11 +2851,11 @@ export function analyzeArchitecturePipeline(blockTypes, { seqLen = 16, dModel = 
 
   // Backward gradient flow sweep
   let gradNorm = 1.0;
-  const hasNorm = blockTypes.includes("layernorm");
+  const hasNorm = blockTypes.includes("layernorm") || blockTypes.includes("residual_highway");
   for (let i = stages.length - 1; i >= 0; i--) {
     const st = stages[i];
     stages[i].gradNorm = gradNorm;
-    if (st.type === "layernorm") {
+    if (st.type === "layernorm" || st.type === "residual_highway") {
       gradNorm = Math.min(1.5, Math.max(0.6, gradNorm * 1.02));
     } else if (st.type === "attention" || st.type === "mlp_block") {
       gradNorm *= hasNorm ? 0.96 : 0.78;

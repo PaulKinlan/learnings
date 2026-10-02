@@ -1,6 +1,9 @@
 // @ts-check
 import {
   getWasmBackend,
+  initWebGPUBackend,
+  getWebGPUStatus,
+  webgpuMatmulAsync,
   setBackendMode,
   getBackendMode,
   benchmarkBackends,
@@ -17,10 +20,14 @@ import {
   MicroDDPM,
   MaskedTextDiffusion,
   DecisionPointerHead,
+  generateTemporalSequenceBatch,
+  MicroRNN,
+  DeepResidualNetwork,
   BLOCK_REGISTRY,
   registerBlockType,
   analyzeArchitecturePipeline
 } from "./engine.js";
+import { HYPERPARAMETER_GUIDE, KERNEL_CODE_BLUEPRINTS } from "./curriculum.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -35,49 +42,162 @@ function heatClass(val, min = 0, max = 1) {
 }
 
 // ============================================================================
-// 0. KERNEL BAR (WASM vs JS)
+// 0. KERNEL BAR (WASM vs JS vs WebGPU) & SIDE-BY-SIDE CODE EXPLORERS
 // ============================================================================
 
 function initKernelBar() {
   const btnWasm = $("btn-kernel-wasm");
   const btnJs = $("btn-kernel-js");
+  const btnWebgpu = $("btn-kernel-webgpu");
   const btnBench = $("btn-bench-kernels");
   const readout = $("kernel-readout");
   const wb = getWasmBackend();
 
-  const updateReadout = (msg) => {
-    if (!readout) return;
-    const mode = getBackendMode();
-    readout.textContent = msg || (mode === "wasm"
-      ? `Raw WebAssembly (wasm32 f32 GEMM, ${wb.byteLength} bytes compiled in-memory) active`
-      : `Raw JavaScript (Float32Array triple-loop GEMM) active`);
+  const setPressed = (activeMode) => {
+    btnWasm?.setAttribute("aria-pressed", String(activeMode === "wasm"));
+    btnJs?.setAttribute("aria-pressed", String(activeMode === "js"));
+    btnWebgpu?.setAttribute("aria-pressed", String(activeMode === "webgpu"));
   };
 
-  if (btnWasm && btnJs) {
-    btnWasm.addEventListener("click", () => {
-      setBackendMode("wasm");
-      btnWasm.setAttribute("aria-pressed", "true");
-      btnJs.setAttribute("aria-pressed", "false");
-      updateReadout();
-    });
-    btnJs.addEventListener("click", () => {
-      setBackendMode("js");
-      btnWasm.setAttribute("aria-pressed", "false");
-      btnJs.setAttribute("aria-pressed", "true");
-      updateReadout();
-    });
-  }
+  const updateReadout = (msg) => {
+    if (!readout) return;
+    if (msg) {
+      readout.textContent = msg;
+      return;
+    }
+    const mode = getBackendMode();
+    if (mode === "wasm") {
+      readout.textContent = `Raw WebAssembly (wasm32 f32 GEMM, ${wb.byteLength} bytes compiled in-memory) active`;
+    } else if (mode === "webgpu") {
+      const st = getWebGPUStatus();
+      readout.textContent = `WebGPU Compute Mode (${st.adapterInfo}) · Sync inner loops backed by wasm32 GEMM`;
+    } else {
+      readout.textContent = `Raw JavaScript (Float32Array triple-loop GEMM) active`;
+    }
+  };
 
-  if (btnBench) {
-    btnBench.addEventListener("click", () => {
-      const res = benchmarkBackends(64, 30);
-      updateReadout(
-        `64×64 GEMM ×30: WASM ${res.wasmMs.toFixed(2)}ms (${res.wasmGflops.toFixed(2)} GFLOP/s) vs JS ${res.jsMs.toFixed(2)}ms (${res.jsGflops.toFixed(2)} GFLOP/s) · max Δ=${res.maxDiff.toExponential(1)}`
-      );
-    });
-  }
+  btnWasm?.addEventListener("click", () => {
+    setBackendMode("wasm");
+    setPressed("wasm");
+    updateReadout();
+  });
+
+  btnJs?.addEventListener("click", () => {
+    setBackendMode("js");
+    setPressed("js");
+    updateReadout();
+  });
+
+  btnWebgpu?.addEventListener("click", async () => {
+    setBackendMode("webgpu");
+    setPressed("webgpu");
+    const st = await initWebGPUBackend();
+    updateReadout(`WebGPU Compute Mode · ${st.adapterInfo}`);
+    // Also switch global code viewer to WebGPU tab so user sees the WGSL shader immediately
+    const wgslTab = /** @type {HTMLButtonElement | null} */ (
+      document.querySelector('[data-global-lang="webgpu"]')
+    );
+    wgslTab?.click();
+  });
+
+  btnBench?.addEventListener("click", async () => {
+    const res = benchmarkBackends(64, 30);
+    const A = new Float32Array(64 * 64).fill(0.5);
+    const B = new Float32Array(64 * 64).fill(0.25);
+    const t0 = performance.now();
+    await webgpuMatmulAsync(A, B, 64, 64, 64);
+    const gpuMs = performance.now() - t0;
+    const st = getWebGPUStatus();
+    const gpuLabel = st.available ? `WebGPU 1-dispatch ${gpuMs.toFixed(2)}ms` : `WebGPU fallback (${gpuMs.toFixed(2)}ms)`;
+    updateReadout(
+      `64×64 GEMM ×30: WASM ${res.wasmMs.toFixed(2)}ms (${res.wasmGflops.toFixed(2)} GFLOP/s) vs JS ${res.jsMs.toFixed(2)}ms (${res.jsGflops.toFixed(2)} GFLOP/s) · ${gpuLabel} · max Δ=${res.maxDiff.toExponential(1)}`
+    );
+  });
 
   updateReadout();
+}
+
+function initCodeExplorers() {
+  const opSelect = /** @type {HTMLSelectElement | null} */ ($("global-code-op"));
+  const summaryEl = $("global-code-summary");
+  const codeDisplay = $("global-code-display");
+  const langBtns = Array.from(document.querySelectorAll("[data-global-lang]"));
+  let currentLang = "js";
+
+  function renderGlobalCode() {
+    if (!opSelect || !codeDisplay) return;
+    const bp = KERNEL_CODE_BLUEPRINTS[opSelect.value] || KERNEL_CODE_BLUEPRINTS.gemm;
+    if (summaryEl) summaryEl.textContent = bp.summary;
+    codeDisplay.textContent = bp[currentLang] || bp.js;
+    langBtns.forEach((btn) => {
+      const lang = btn.getAttribute("data-global-lang");
+      const active = lang === currentLang;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-selected", String(active));
+    });
+  }
+
+  opSelect?.addEventListener("change", renderGlobalCode);
+  langBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      currentLang = btn.getAttribute("data-global-lang") || "js";
+      renderGlobalCode();
+    });
+  });
+  renderGlobalCode();
+
+  // Populate per-chapter inline code widgets (.section-code-widget[data-code-blueprint])
+  document.querySelectorAll(".section-code-widget[data-code-blueprint]").forEach((container) => {
+    const key = container.getAttribute("data-code-blueprint") || "gemm";
+    const bp = KERNEL_CODE_BLUEPRINTS[key];
+    if (!bp) return;
+
+    const details = document.createElement("details");
+    details.className = "chapter-code-details";
+    const summary = document.createElement("summary");
+    summary.textContent = `View First-Principles Code (Raw JS · Raw WASM WAT · WebGPU WGSL) — ${bp.title}`;
+    details.appendChild(summary);
+
+    const body = document.createElement("div");
+    body.className = "chapter-code-body";
+
+    const desc = document.createElement("p");
+    desc.className = "small";
+    desc.textContent = bp.summary;
+    body.appendChild(desc);
+
+    const tabBar = document.createElement("div");
+    tabBar.className = "code-lang-tabs";
+    const pre = document.createElement("pre");
+    pre.className = "kernel-code-pre";
+    const codeEl = document.createElement("code");
+    codeEl.textContent = bp.js;
+    pre.appendChild(codeEl);
+
+    const langs = [
+      { id: "js", label: "Raw JS (Float32Array)" },
+      { id: "wasm", label: "Raw WASM (WAT & Opcodes)" },
+      { id: "webgpu", label: "WebGPU (WGSL Compute Shader)" }
+    ];
+
+    const tabButtons = langs.map((l, idx) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = `code-lang-btn ${idx === 0 ? "active" : ""}`;
+      b.textContent = l.label;
+      b.addEventListener("click", () => {
+        codeEl.textContent = bp[l.id] || bp.js;
+        tabButtons.forEach((other) => other.classList.remove("active"));
+        b.classList.add("active");
+      });
+      tabBar.appendChild(b);
+      return b;
+    });
+
+    body.append(tabBar, pre);
+    details.appendChild(body);
+    container.replaceChildren(details);
+  });
 }
 
 // ============================================================================
@@ -144,6 +264,57 @@ function initMlpLab() {
     }
 
     drawDecisionBoundary();
+    computeAndRenderStepper();
+    renderHyperparameterExplainer();
+  }
+
+  function renderHyperparameterExplainer() {
+    const container = $("mlp-hyperparam-explainer");
+    if (!container) return;
+    container.replaceChildren();
+
+    const dsInfo = HYPERPARAMETER_GUIDE.datasets[dsSelect.value] || HYPERPARAMETER_GUIDE.datasets.xor;
+    const archInfo = HYPERPARAMETER_GUIDE.architectures[archSelect.value] || HYPERPARAMETER_GUIDE.architectures["2,4,4,1"];
+    const actInfo = HYPERPARAMETER_GUIDE.activations[actSelect.value] || HYPERPARAMETER_GUIDE.activations.gelu;
+    const optInfo = HYPERPARAMETER_GUIDE.optimizers[optSelect.value] || HYPERPARAMETER_GUIDE.optimizers.adamw;
+    const lrInfo = HYPERPARAMETER_GUIDE.learningRate(Number(lrInput.value));
+
+    const header = document.createElement("h4");
+    header.textContent = "Active Hyperparameter & Component Deep-Dive";
+    container.appendChild(header);
+
+    const items = [
+      { badge: "Manifold Dataset", title: dsInfo.title, eq: dsInfo.equation, body: `${dsInfo.topology} ${dsInfo.theory}` },
+      { badge: "Hidden Architecture", title: archInfo.title, eq: archInfo.params, body: archInfo.theory },
+      { badge: "Activation σ(z)", title: actInfo.title, eq: actInfo.equation, body: actInfo.theory },
+      { badge: "Optimizer", title: optInfo.title, eq: optInfo.equation, body: optInfo.theory },
+      { badge: "Learning Rate η", title: lrInfo.title, eq: lrInfo.equation, body: lrInfo.theory }
+    ];
+
+    for (const item of items) {
+      const card = document.createElement("div");
+      card.className = "hyperparam-card";
+
+      const top = document.createElement("div");
+      top.className = "hyperparam-card-top";
+      const badge = document.createElement("span");
+      badge.className = "hyperparam-badge";
+      badge.textContent = item.badge;
+      const strong = document.createElement("strong");
+      strong.textContent = item.title;
+      top.append(badge, strong);
+
+      const eq = document.createElement("code");
+      eq.className = "hyperparam-eq";
+      eq.textContent = item.eq;
+
+      const p = document.createElement("p");
+      p.className = "small";
+      p.textContent = item.body;
+
+      card.append(top, eq, p);
+      container.appendChild(card);
+    }
   }
 
   function drawDecisionBoundary() {
@@ -193,11 +364,635 @@ function initMlpLab() {
     }
   }
 
+  // ==========================================================================
+  // Interactive Network Node Graph & Step-by-Step Debugger Controller
+  // ==========================================================================
+  const stepperModeEl = /** @type {HTMLSelectElement | null} */ ($("stepper-mode"));
+  const stepperSampleEl = /** @type {HTMLSelectElement | null} */ ($("stepper-sample"));
+  const stepperSvg = /** @type {SVGSVGElement | null} */ (/** @type {any} */ ($("nn-stepper-svg")));
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
+  /** @type {any} */
+  let currentTrace = null;
+  let currentMicroStepIdx = 0;
+  let selectedNodeId = "L1N0";
+  /** @type {any} */
+  let autoPlayTimer = null;
+
+  function stopAutoPlay() {
+    if (autoPlayTimer) {
+      clearInterval(autoPlayTimer);
+      autoPlayTimer = null;
+    }
+    const playBtn = $("stepper-play-btn");
+    if (playBtn) playBtn.textContent = "⏯ Auto-Step";
+  }
+
+  function parseStepperSample() {
+    if (!stepperSampleEl) return { x: [-0.55, 0.55], y: 1 };
+    const parts = stepperSampleEl.value.split(",").map(Number);
+    return {
+      x: [parts[0] ?? -0.55, parts[1] ?? 0.55],
+      y: parts[2] ?? 1
+    };
+  }
+
+  function findNodeInTrace(trace, nodeId) {
+    if (!trace) return null;
+    for (const layerNodes of trace.nodesByLayer) {
+      for (const node of layerNodes) {
+        if (node.id === nodeId) return node;
+      }
+    }
+    return null;
+  }
+
+  function computeAndRenderStepper(opts = {}) {
+    if (!stepperSvg || !stepperModeEl) return;
+    const sample = parseStepperSample();
+    currentTrace = mlp.traceStep(sample.x, sample.y, {
+      lr: Number(lrInput.value),
+      optimizer: optSelect.value,
+      mode: /** @type {"train" | "inference"} */ (stepperModeEl.value)
+    });
+
+    if (opts.resetStep) {
+      currentMicroStepIdx = 0;
+    } else if (currentMicroStepIdx >= currentTrace.microSteps.length) {
+      currentMicroStepIdx = currentTrace.microSteps.length - 1;
+    }
+
+    if (!findNodeInTrace(currentTrace, selectedNodeId)) {
+      selectedNodeId = currentTrace.nodesByLayer[1]?.[0]?.id || "L0N0";
+    }
+
+    renderStepperUI();
+  }
+
+  function renderStepperUI() {
+    if (!currentTrace || !stepperSvg) return;
+    const step = currentTrace.microSteps[currentMicroStepIdx] || currentTrace.microSteps[0];
+
+    // 1. Render Micro-Step Tape
+    const tapeEl = $("stepper-tape");
+    if (tapeEl) {
+      tapeEl.replaceChildren();
+      currentTrace.microSteps.forEach((ms, idx) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.role = "tab";
+        const isCurrent = idx === currentMicroStepIdx;
+        const isDone = idx < currentMicroStepIdx;
+        btn.className = `stepper-pill phase-${ms.phase} ${isCurrent ? "active" : ""} ${isDone ? "done" : ""}`;
+        btn.setAttribute("aria-selected", String(isCurrent));
+        btn.textContent = ms.shortLabel;
+        btn.addEventListener("click", () => {
+          stopAutoPlay();
+          currentMicroStepIdx = idx;
+          const targetLayer = ms.activeLayer ?? 0;
+          const firstNode = currentTrace.nodesByLayer[targetLayer]?.[0];
+          if (firstNode) selectedNodeId = firstNode.id;
+          renderStepperUI();
+        });
+        tapeEl.appendChild(btn);
+      });
+    }
+
+    // 2. Render Stage Banner
+    const badgeEl = $("stepper-phase-badge");
+    if (badgeEl) {
+      badgeEl.textContent = step.phase.toUpperCase();
+      badgeEl.className = `stepper-phase-badge phase-${step.phase}`;
+    }
+    const titleEl = $("stepper-stage-title");
+    if (titleEl) titleEl.textContent = step.title;
+    const counterEl = $("stepper-pass-counter");
+    if (counterEl) {
+      counterEl.textContent = `Micro-step ${currentMicroStepIdx + 1} / ${currentTrace.microSteps.length} · Epoch ${mlp.stepCount}`;
+    }
+    const formulaEl = $("stepper-stage-formula");
+    if (formulaEl) formulaEl.textContent = step.formula;
+    const summaryEl = $("stepper-stage-summary");
+    if (summaryEl) summaryEl.textContent = step.summary;
+
+    // 3. Render SVG Graph & Node Inspector
+    renderStepperSvg(currentTrace, step);
+    renderNodeInspector(currentTrace, step);
+  }
+
+  function renderStepperSvg(trace, step) {
+    if (!stepperSvg) return;
+    stepperSvg.replaceChildren();
+
+    const W = 760;
+    const H = 400;
+    const numLayers = trace.nodesByLayer.length; // L + 1
+    const maxDim = Math.max(...trace.layerSizes);
+    const nodeRadius = maxDim <= 4 ? 22 : maxDim <= 8 ? 16 : 12;
+
+    // Background
+    const bg = document.createElementNS(SVG_NS, "rect");
+    bg.setAttribute("width", String(W));
+    bg.setAttribute("height", String(H));
+    bg.setAttribute("rx", "6");
+    bg.setAttribute("fill", "#0b192c");
+    stepperSvg.appendChild(bg);
+
+    // Compute (cx, cy) for every node
+    const padLeft = 80;
+    const padRight = 155;
+    const usableW = W - padLeft - padRight;
+    const topY = 64;
+    const botY = H - 28;
+    const availH = botY - topY;
+
+    /** @type {Array<Array<{ x: number, y: number, node: any }>>} */
+    const coords = [];
+    for (let l = 0; l < numLayers; l++) {
+      const layerNodes = trace.nodesByLayer[l];
+      const dim = layerNodes.length;
+      const cx = numLayers === 1 ? W / 2 : padLeft + (l / (numLayers - 1)) * usableW;
+      const stepY = dim === 1 ? 0 : Math.min(74, availH / (dim - 1));
+      const totalH = stepY * (dim - 1);
+      const startY = (topY + botY - totalH) / 2;
+
+      const col = [];
+      for (let j = 0; j < dim; j++) {
+        col.push({
+          x: cx,
+          y: startY + j * stepY,
+          node: layerNodes[j]
+        });
+      }
+      coords.push(col);
+
+      // Column Header Label
+      const isLayerActive = step.activeLayer === l || step.phase === "update";
+      const headerGroup = document.createElementNS(SVG_NS, "g");
+      const headerBg = document.createElementNS(SVG_NS, "rect");
+      headerBg.setAttribute("x", String(cx - 52));
+      headerBg.setAttribute("y", "10");
+      headerBg.setAttribute("width", "104");
+      headerBg.setAttribute("height", "24");
+      headerBg.setAttribute("rx", "12");
+      headerBg.setAttribute("fill", isLayerActive ? "#0284c7" : "#162e47");
+      headerBg.setAttribute("stroke", isLayerActive ? "#7dd3fc" : "#2b4c6f");
+      headerBg.setAttribute("stroke-width", "1");
+
+      const headerTxt = document.createElementNS(SVG_NS, "text");
+      headerTxt.setAttribute("x", String(cx));
+      headerTxt.setAttribute("y", "26");
+      headerTxt.setAttribute("text-anchor", "middle");
+      headerTxt.setAttribute("fill", isLayerActive ? "#ffffff" : "#cbd5e1");
+      headerTxt.setAttribute("font-size", "11");
+      headerTxt.setAttribute("font-weight", "700");
+      headerTxt.setAttribute("font-family", "ui-monospace, monospace");
+      headerTxt.textContent = l === 0
+        ? `L0 Input (${dim})`
+        : l === numLayers - 1
+          ? `L${l} Out (${dim})`
+          : `L${l} Hidden (${dim})`;
+
+      headerGroup.append(headerBg, headerTxt);
+      stepperSvg.appendChild(headerGroup);
+    }
+
+    // Draw Synapse Edges
+    const edgesGroup = document.createElementNS(SVG_NS, "g");
+    const edgeLabelsGroup = document.createElementNS(SVG_NS, "g");
+    const isUpdatePhase = step.phase === "update";
+
+    for (let l = 1; l < numLayers; l++) {
+      const isEdgeLayerActive = step.activeEdgeLayer === l - 1 || step.activeEdgeLayer === -2;
+      for (let j = 0; j < coords[l].length; j++) {
+        const dst = coords[l][j];
+        for (let i = 0; i < coords[l - 1].length; i++) {
+          const src = coords[l - 1][i];
+          const edge = dst.node.incoming[i];
+          const wVal = isUpdatePhase ? edge.wAfter : edge.wBefore;
+          const isSelectedEdge = selectedNodeId === dst.node.id || selectedNodeId === src.node.id;
+
+          let stroke = wVal >= 0 ? "#38bdf8" : "#fb7185";
+          let opacity = isSelectedEdge ? 0.85 : 0.28;
+          let width = 0.8 + Math.min(2.6, Math.abs(wVal)) * 1.4;
+
+          if (isEdgeLayerActive) {
+            opacity = 0.92;
+            width += 1.1;
+            if (step.phase === "forward") {
+              stroke = edge.contrib >= 0 ? "#38bdf8" : "#f43f5e";
+            } else if (step.phase === "backward") {
+              stroke = edge.dW >= 0 ? "#f59e0b" : "#ec4899";
+            } else if (isUpdatePhase) {
+              stroke = "#34d399";
+            }
+          }
+
+          const line = document.createElementNS(SVG_NS, "line");
+          line.setAttribute("x1", String(src.x));
+          line.setAttribute("y1", String(src.y));
+          line.setAttribute("x2", String(dst.x));
+          line.setAttribute("y2", String(dst.y));
+          line.setAttribute("stroke", stroke);
+          line.setAttribute("stroke-width", width.toFixed(2));
+          line.setAttribute("opacity", opacity.toFixed(2));
+          if (isEdgeLayerActive && (step.phase === "forward" || step.phase === "backward")) {
+            line.setAttribute("stroke-dasharray", "6 4");
+          }
+          edgesGroup.appendChild(line);
+
+          // Show inline weight/gradient badge on incoming edges of the selected node when layer is compact
+          if (selectedNodeId === dst.node.id && coords[l - 1].length <= 8) {
+            const mx = src.x + (dst.x - src.x) * 0.56;
+            const my = src.y + (dst.y - src.y) * 0.56;
+            const badgeText = step.phase === "backward"
+              ? `∇W=${edge.dW.toFixed(2)}`
+              : isUpdatePhase
+                ? `W=${edge.wAfter.toFixed(2)}`
+                : `W=${edge.wBefore.toFixed(2)}`;
+
+            const lblBg = document.createElementNS(SVG_NS, "rect");
+            lblBg.setAttribute("x", String(mx - 28));
+            lblBg.setAttribute("y", String(my - 8));
+            lblBg.setAttribute("width", "56");
+            lblBg.setAttribute("height", "15");
+            lblBg.setAttribute("rx", "3");
+            lblBg.setAttribute("fill", "#081424");
+            lblBg.setAttribute("stroke", stroke);
+            lblBg.setAttribute("stroke-width", "0.8");
+            lblBg.setAttribute("opacity", "0.92");
+
+            const lblTxt = document.createElementNS(SVG_NS, "text");
+            lblTxt.setAttribute("x", String(mx));
+            lblTxt.setAttribute("y", String(my + 3));
+            lblTxt.setAttribute("text-anchor", "middle");
+            lblTxt.setAttribute("fill", "#e2e8f0");
+            lblTxt.setAttribute("font-size", "9");
+            lblTxt.setAttribute("font-family", "ui-monospace, monospace");
+            lblTxt.textContent = badgeText;
+
+            edgeLabelsGroup.append(lblBg, lblTxt);
+          }
+        }
+      }
+    }
+    stepperSvg.appendChild(edgesGroup);
+    stepperSvg.appendChild(edgeLabelsGroup);
+
+    // Draw Neuron Nodes
+    const nodesGroup = document.createElementNS(SVG_NS, "g");
+    for (let l = 0; l < numLayers; l++) {
+      const isLayerActive = step.activeLayer === l || isUpdatePhase;
+      for (let j = 0; j < coords[l].length; j++) {
+        const { x, y, node } = coords[l][j];
+        const isSelected = node.id === selectedNodeId;
+
+        const g = document.createElementNS(SVG_NS, "g");
+        g.setAttribute("class", "svg-node");
+        g.setAttribute("role", "button");
+        g.setAttribute("tabindex", "0");
+        g.setAttribute(
+          "aria-label",
+          `Node ${node.label} in layer ${l}: activation ${node.a.toFixed(3)}, gradient delta ${node.delta.toFixed(3)}`
+        );
+
+        // Selection or active halo
+        if (isSelected || isLayerActive) {
+          const halo = document.createElementNS(SVG_NS, "circle");
+          halo.setAttribute("cx", String(x));
+          halo.setAttribute("cy", String(y));
+          halo.setAttribute("r", String(nodeRadius + 4));
+          halo.setAttribute("fill", "none");
+          halo.setAttribute(
+            "stroke",
+            isSelected
+              ? "#facc15"
+              : step.phase === "backward"
+                ? "#fb7185"
+                : isUpdatePhase
+                  ? "#34d399"
+                  : "#38bdf8"
+          );
+          halo.setAttribute("stroke-width", isSelected ? "3" : "2");
+          g.appendChild(halo);
+        }
+
+        // Node Circle Fill based on activation sign/magnitude
+        const circle = document.createElementNS(SVG_NS, "circle");
+        circle.setAttribute("cx", String(x));
+        circle.setAttribute("cy", String(y));
+        circle.setAttribute("r", String(nodeRadius));
+        const actVal = node.a;
+        const fill = actVal >= 0
+          ? (actVal > 0.45 ? "#0284c7" : "#1e3a5f")
+          : "#881337";
+        circle.setAttribute("fill", fill);
+        circle.setAttribute("stroke", isSelected ? "#fef08a" : "#94a3b8");
+        circle.setAttribute("stroke-width", isSelected ? "2.2" : "1.2");
+        g.appendChild(circle);
+
+        // Node text labels
+        if (nodeRadius >= 16) {
+          const nameTxt = document.createElementNS(SVG_NS, "text");
+          nameTxt.setAttribute("x", String(x));
+          nameTxt.setAttribute("y", String(y - 3));
+          nameTxt.setAttribute("text-anchor", "middle");
+          nameTxt.setAttribute("fill", "#bae6fd");
+          nameTxt.setAttribute("font-size", "9.5");
+          nameTxt.setAttribute("font-weight", "700");
+          nameTxt.setAttribute("font-family", "ui-monospace, monospace");
+          nameTxt.textContent = node.label;
+
+          const valTxt = document.createElementNS(SVG_NS, "text");
+          valTxt.setAttribute("x", String(x));
+          valTxt.setAttribute("y", String(y + 9));
+          valTxt.setAttribute("text-anchor", "middle");
+          valTxt.setAttribute("fill", "#ffffff");
+          valTxt.setAttribute("font-size", "9.5");
+          valTxt.setAttribute("font-family", "ui-monospace, monospace");
+          valTxt.textContent = step.phase === "backward"
+            ? `δ${node.delta >= 0 ? "+" : ""}${node.delta.toFixed(2)}`
+            : node.a.toFixed(2);
+
+          g.append(nameTxt, valTxt);
+        } else {
+          const valTxt = document.createElementNS(SVG_NS, "text");
+          valTxt.setAttribute("x", String(x));
+          valTxt.setAttribute("y", String(y + 3));
+          valTxt.setAttribute("text-anchor", "middle");
+          valTxt.setAttribute("fill", "#ffffff");
+          valTxt.setAttribute("font-size", "8.5");
+          valTxt.setAttribute("font-family", "ui-monospace, monospace");
+          valTxt.textContent = node.a.toFixed(2);
+          g.appendChild(valTxt);
+        }
+
+        const selectThisNode = () => {
+          selectedNodeId = node.id;
+          renderStepperSvg(trace, step);
+          renderNodeInspector(trace, step);
+        };
+        g.addEventListener("click", selectThisNode);
+        g.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            selectThisNode();
+          }
+        });
+
+        nodesGroup.appendChild(g);
+      }
+    }
+    stepperSvg.appendChild(nodesGroup);
+
+    // Output Readout & Loss Summary Box on Right of Output Node
+    const outCoord = coords[numLayers - 1][0];
+    if (outCoord) {
+      const boxX = outCoord.x + 34;
+      const boxY = Math.max(54, Math.min(H - 130, outCoord.y - 54));
+      const summaryGroup = document.createElementNS(SVG_NS, "g");
+
+      const boxRect = document.createElementNS(SVG_NS, "rect");
+      boxRect.setAttribute("x", String(boxX));
+      boxRect.setAttribute("y", String(boxY));
+      boxRect.setAttribute("width", "114");
+      boxRect.setAttribute("height", "108");
+      boxRect.setAttribute("rx", "6");
+      boxRect.setAttribute("fill", "#10253e");
+      boxRect.setAttribute("stroke", isUpdatePhase ? "#34d399" : "#38bdf8");
+      boxRect.setAttribute("stroke-width", "1.2");
+      summaryGroup.appendChild(boxRect);
+
+      const shownPred = isUpdatePhase ? trace.predAfter : trace.predBefore;
+      const shownLoss = isUpdatePhase ? trace.lossAfter : trace.lossBefore;
+      const lines = [
+        { label: isUpdatePhase ? "ŷ (after)" : "ŷ (pred)", val: shownPred.toFixed(4), color: "#38bdf8" },
+        { label: "Target y", val: String(trace.y), color: "#f8fafc" },
+        { label: "BCE Loss", val: shownLoss.toFixed(4), color: "#fbbf24" },
+        { label: "δ (ŷ − y)", val: (trace.predBefore - trace.y).toFixed(4), color: "#fb7185" }
+      ];
+
+      lines.forEach((item, idx) => {
+        const txt = document.createElementNS(SVG_NS, "text");
+        txt.setAttribute("x", String(boxX + 8));
+        txt.setAttribute("y", String(boxY + 22 + idx * 23));
+        txt.setAttribute("fill", item.color);
+        txt.setAttribute("font-size", "10");
+        txt.setAttribute("font-family", "ui-monospace, monospace");
+        txt.textContent = `${item.label}: ${item.val}`;
+        summaryGroup.appendChild(txt);
+      });
+
+      stepperSvg.appendChild(summaryGroup);
+    }
+  }
+
+  function renderNodeInspector(trace, step) {
+    const pillsEl = $("stepper-node-pills");
+    const detailEl = $("stepper-node-detail");
+    if (!pillsEl || !detailEl) return;
+
+    // 1. Node selector pills
+    pillsEl.replaceChildren();
+    for (const layerNodes of trace.nodesByLayer) {
+      for (const node of layerNodes) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `node-select-pill ${node.id === selectedNodeId ? "active" : ""}`;
+        btn.setAttribute("aria-pressed", String(node.id === selectedNodeId));
+        btn.textContent = node.label;
+        btn.addEventListener("click", () => {
+          selectedNodeId = node.id;
+          renderStepperSvg(trace, step);
+          renderNodeInspector(trace, step);
+        });
+        pillsEl.appendChild(btn);
+      }
+    }
+
+    // 2. Detailed Node & Synapse Table
+    const node = findNodeInTrace(trace, selectedNodeId) || trace.nodesByLayer[0][0];
+    detailEl.replaceChildren();
+
+    const header = document.createElement("div");
+    header.className = "inspector-node-header";
+    const title = document.createElement("strong");
+    title.textContent = node.role === "input"
+      ? `Node ${node.label} · Input Feature (Layer 0)`
+      : node.role === "output"
+        ? `Node ${node.label} · Output Readout (Layer ${node.layerIndex}, ${node.activationFn})`
+        : `Node ${node.label} · Hidden Neuron (Layer ${node.layerIndex}, ${node.activationFn})`;
+    header.appendChild(title);
+    detailEl.appendChild(header);
+
+    const kpiGrid = document.createElement("div");
+    kpiGrid.className = "inspector-kpi-grid";
+    const kpis = node.role === "input"
+      ? [
+          { k: "Input Value x", v: node.a.toFixed(4) },
+          { k: "Input Sensitivity ∂L/∂x", v: node.delta.toFixed(4) }
+        ]
+      : [
+          { k: "Pre-act z", v: node.z.toFixed(4) },
+          { k: `Act a = ${node.activationFn}(z)`, v: node.a.toFixed(4) },
+          { k: "Local Deriv σ'(z)", v: node.actDeriv.toFixed(4) },
+          { k: "Error Signal δ = ∂L/∂z", v: node.delta.toFixed(4) },
+          { k: "Bias b (before → after)", v: `${node.bBefore.toFixed(3)} → ${node.bAfter.toFixed(3)}` },
+          { k: "Bias Grad ∂L/∂b", v: node.db.toFixed(4) }
+        ];
+
+    for (const item of kpis) {
+      const cell = document.createElement("div");
+      cell.className = "inspector-kpi";
+      const lbl = document.createElement("span");
+      lbl.className = "inspector-kpi-label";
+      lbl.textContent = item.k;
+      const val = document.createElement("span");
+      val.className = "inspector-kpi-val";
+      val.textContent = item.v;
+      cell.append(lbl, val);
+      kpiGrid.appendChild(cell);
+    }
+    detailEl.appendChild(kpiGrid);
+
+    if (node.incoming && node.incoming.length > 0) {
+      const tblWrap = document.createElement("div");
+      tblWrap.className = "table-scroll";
+      const tbl = document.createElement("table");
+      tbl.className = "attn-table synapse-table";
+      const thead = document.createElement("thead");
+      const htr = document.createElement("tr");
+      ["From", "a_prev", "W", "a·W", "∂L/∂W", "W_new"].forEach((col) => {
+        const th = document.createElement("th");
+        th.textContent = col;
+        htr.appendChild(th);
+      });
+      thead.appendChild(htr);
+      tbl.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      for (const edge of node.incoming) {
+        const tr = document.createElement("tr");
+        [
+          edge.fromLabel,
+          edge.aPrev.toFixed(3),
+          edge.wBefore.toFixed(3),
+          edge.contrib.toFixed(3),
+          edge.dW.toFixed(4),
+          edge.wAfter.toFixed(3)
+        ].forEach((valStr) => {
+          const td = document.createElement("td");
+          td.textContent = valStr;
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      }
+      tbl.appendChild(tbody);
+      tblWrap.appendChild(tbl);
+      detailEl.appendChild(tblWrap);
+    } else {
+      const note = document.createElement("p");
+      note.className = "small";
+      note.textContent = "Input layer node: receives external coordinate feature directly. Click a Hidden (h) or Output (ŷ) node to inspect incoming synapse weights and gradients.";
+      detailEl.appendChild(note);
+    }
+  }
+
+  if (stepperModeEl && stepperSampleEl) {
+    stepperModeEl.addEventListener("change", () => {
+      stopAutoPlay();
+      computeAndRenderStepper({ resetStep: true });
+    });
+    stepperSampleEl.addEventListener("change", () => {
+      stopAutoPlay();
+      computeAndRenderStepper({ resetStep: false });
+    });
+  }
+
+  $("stepper-reset-btn")?.addEventListener("click", () => {
+    stopAutoPlay();
+    currentMicroStepIdx = 0;
+    selectedNodeId = "L0N0";
+    renderStepperUI();
+  });
+
+  $("stepper-prev-btn")?.addEventListener("click", () => {
+    stopAutoPlay();
+    if (!currentTrace) return;
+    currentMicroStepIdx = Math.max(0, currentMicroStepIdx - 1);
+    const ms = currentTrace.microSteps[currentMicroStepIdx];
+    const firstNode = currentTrace.nodesByLayer[ms.activeLayer ?? 0]?.[0];
+    if (firstNode) selectedNodeId = firstNode.id;
+    renderStepperUI();
+  });
+
+  function stepForwardOne() {
+    if (!currentTrace) return;
+    if (currentMicroStepIdx < currentTrace.microSteps.length - 1) {
+      currentMicroStepIdx++;
+      const ms = currentTrace.microSteps[currentMicroStepIdx];
+      const firstNode = currentTrace.nodesByLayer[ms.activeLayer ?? 0]?.[0];
+      if (firstNode) selectedNodeId = firstNode.id;
+      renderStepperUI();
+    } else if (currentTrace.mode === "train") {
+      // Commit weight update at end of pass and start next pass
+      mlp.commitTrace(currentTrace);
+      currentMicroStepIdx = 0;
+      selectedNodeId = "L0N0";
+      renderMlpState();
+    } else {
+      currentMicroStepIdx = 0;
+      selectedNodeId = "L0N0";
+      renderStepperUI();
+    }
+  }
+
+  $("stepper-next-btn")?.addEventListener("click", () => {
+    stopAutoPlay();
+    stepForwardOne();
+  });
+
+  $("stepper-play-btn")?.addEventListener("click", () => {
+    if (autoPlayTimer) {
+      stopAutoPlay();
+      return;
+    }
+    const playBtn = $("stepper-play-btn");
+    if (playBtn) playBtn.textContent = "⏸ Pause Auto-Step";
+    autoPlayTimer = setInterval(() => {
+      if (!currentTrace) return;
+      if (currentMicroStepIdx < currentTrace.microSteps.length - 1) {
+        stepForwardOne();
+      } else {
+        stopAutoPlay();
+      }
+    }, 600);
+  });
+
+  $("stepper-commit-btn")?.addEventListener("click", () => {
+    stopAutoPlay();
+    if (!currentTrace) return;
+    mlp.commitTrace(currentTrace);
+    renderMlpState();
+    if (currentTrace && currentTrace.mode === "train") {
+      currentMicroStepIdx = currentTrace.microSteps.length - 1;
+      renderStepperUI();
+    }
+  });
+
   lrInput.addEventListener("input", () => {
     lrVal.textContent = Number(lrInput.value).toFixed(3);
+    computeAndRenderStepper();
+    renderHyperparameterExplainer();
+  });
+
+  optSelect.addEventListener("change", () => {
+    computeAndRenderStepper();
+    renderHyperparameterExplainer();
   });
 
   dsSelect.addEventListener("change", () => {
+    stopAutoPlay();
     dataset = generate2DDataset(dsSelect.value, 120, 42);
     mlp = createMlp();
     renderMlpState();
@@ -205,12 +1000,15 @@ function initMlpLab() {
 
   [archSelect, actSelect].forEach((sel) => {
     sel.addEventListener("change", () => {
+      stopAutoPlay();
       mlp = createMlp();
+      selectedNodeId = "L1N0";
       renderMlpState();
     });
   });
 
   $("mlp-reset-btn").addEventListener("click", () => {
+    stopAutoPlay();
     mlp = createMlp();
     renderMlpState();
   });
@@ -224,6 +1022,7 @@ function initMlpLab() {
   });
 
   $("mlp-train-btn").addEventListener("click", async () => {
+    stopAutoPlay();
     const btn = /** @type {HTMLButtonElement} */ ($("mlp-train-btn"));
     btn.disabled = true;
     const yielder = createYieldController(50);
@@ -246,8 +1045,22 @@ function initMlpLab() {
     const x1 = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
     const x2 = 1 - ((ev.clientY - rect.top) / rect.height) * 2;
     const p = mlp.predictPoint(x1, x2);
+    const inferredY = p >= 0.5 ? 1 : 0;
     $("mlp-probe-readout").textContent =
-      `Probe (${x1.toFixed(2)}, ${x2.toFixed(2)}) → P(Class 1) = ${(p * 100).toFixed(1)}% (${p >= 0.5 ? "Blue Class 1" : "Red Class 0"})`;
+      `Probe (${x1.toFixed(2)}, ${x2.toFixed(2)}) → P(Class 1) = ${(p * 100).toFixed(1)}% (${inferredY === 1 ? "Blue Class 1" : "Red Class 0"})`;
+
+    if (stepperSampleEl) {
+      let customOpt = /** @type {HTMLOptionElement | null} */ (stepperSampleEl.querySelector('option[data-custom="1"]'));
+      if (!customOpt) {
+        customOpt = document.createElement("option");
+        customOpt.setAttribute("data-custom", "1");
+        stepperSampleEl.appendChild(customOpt);
+      }
+      customOpt.value = `${x1.toFixed(3)},${x2.toFixed(3)},${inferredY}`;
+      customOpt.textContent = `Canvas Probe: x = (${x1.toFixed(2)}, ${x2.toFixed(2)}) → y = ${inferredY}`;
+      stepperSampleEl.value = customOpt.value;
+      computeAndRenderStepper({ resetStep: false });
+    }
   });
 
   // Pre-train 25 steps so user sees an active boundary on load
@@ -388,6 +1201,172 @@ function initCnnLab() {
   for (let e = 0; e < 18; e++) initStats = cnn.trainEpoch(samples, 0.08);
   buildPixelGrid();
   renderCnnForward(initStats);
+}
+
+// ============================================================================
+// 2B. RECURRENT NEURAL NETWORKS (RNN / GRU) & BPTT LAB
+// ============================================================================
+
+function initRnnLab() {
+  const cellSelect = /** @type {HTMLSelectElement | null} */ ($("rnn-cell-type"));
+  const lenSelect = /** @type {HTMLSelectElement | null} */ ($("rnn-seq-len"));
+  const taskSelect = /** @type {HTMLSelectElement | null} */ ($("rnn-task"));
+  const stripEl = $("rnn-temporal-strip");
+  if (!cellSelect || !lenSelect || !taskSelect || !stripEl) return;
+
+  let seqLen = parseInt(lenSelect.value, 10) || 8;
+  let batch = generateTemporalSequenceBatch(taskSelect.value, seqLen, 28, 303);
+  let rnn = createRnn();
+
+  function createRnn() {
+    seqLen = parseInt(lenSelect.value, 10) || 8;
+    batch = generateTemporalSequenceBatch(taskSelect.value, seqLen, 28, 303);
+    return new MicroRNN({
+      hiddenDim: 10,
+      cellType: /** @type {"rnn" | "gru"} */ (cellSelect.value),
+      seed: 1997
+    });
+  }
+
+  function renderRnn(stats) {
+    if (!stats) return;
+    $("rnn-epoch").textContent = String(stats.step);
+    $("rnn-loss").textContent = stats.loss.toFixed(4);
+    $("rnn-acc").textContent = `${(stats.accuracy * 100).toFixed(1)}%`;
+    $("rnn-grad-ratio").textContent = `${(stats.gradRetentionRatio * 100).toFixed(1)}%`;
+
+    stripEl.replaceChildren();
+    const maxGrad = Math.max(1e-4, ...stats.temporalSteps.map((s) => s.gradNorm));
+    stats.temporalSteps.forEach((s) => {
+      const row = document.createElement("div");
+      row.className = "grad-row";
+      const label = document.createElement("span");
+      const roleTag = s.t === 0 ? "Trigger x₀" : s.t === stats.temporalSteps.length - 1 ? "Query" : "Distractor";
+      label.textContent = `t=${s.t} (${roleTag}, z̄=${s.gateAvg.toFixed(2)})`;
+      const meter = document.createElement("meter");
+      meter.min = 0;
+      meter.max = maxGrad;
+      meter.value = s.gradNorm;
+      const val = document.createElement("span");
+      val.className = "number";
+      val.textContent = `‖∂L/∂h_${s.t}‖=${s.gradNorm.toFixed(4)}`;
+      row.append(label, meter, val);
+      stripEl.appendChild(row);
+    });
+  }
+
+  function resetAndWarmup() {
+    rnn = createRnn();
+    let st = null;
+    for (let e = 0; e < 22; e++) st = rnn.trainEpoch(batch, 0.12);
+    renderRnn(st);
+  }
+
+  [cellSelect, lenSelect, taskSelect].forEach((el) => {
+    el.addEventListener("change", resetAndWarmup);
+  });
+
+  $("rnn-train-btn")?.addEventListener("click", async () => {
+    const btn = /** @type {HTMLButtonElement} */ ($("rnn-train-btn"));
+    btn.disabled = true;
+    const yielder = createYieldController(50);
+    let st = null;
+    for (let e = 0; e < 35; e++) {
+      st = rnn.trainEpoch(batch, 0.12);
+      if (e % 7 === 6 || e === 34) renderRnn(st);
+      await yielder.maybeYield();
+    }
+    btn.disabled = false;
+  });
+
+  $("rnn-reset-btn")?.addEventListener("click", () => {
+    rnn = createRnn();
+    const st = rnn.trainEpoch(batch, 0.0001);
+    renderRnn(st);
+  });
+
+  resetAndWarmup();
+}
+
+// ============================================================================
+// 2C. VERY DEEP RESIDUAL NETWORKS (RESNETS, RMSNORM & INIT) LAB
+// ============================================================================
+
+function initDeepResNetLab() {
+  const depthSelect = /** @type {HTMLSelectElement | null} */ ($("resnet-depth"));
+  const skipSelect = /** @type {HTMLSelectElement | null} */ ($("resnet-skip"));
+  const normSelect = /** @type {HTMLSelectElement | null} */ ($("resnet-norm"));
+  const initSelect = /** @type {HTMLSelectElement | null} */ ($("resnet-init"));
+  const barsEl = $("resnet-depth-bars");
+  if (!depthSelect || !skipSelect || !normSelect || !initSelect || !barsEl) return;
+
+  const dataset = generate2DDataset("xor", 48, 77);
+  let net = createNet();
+
+  function createNet() {
+    return new DeepResidualNetwork({
+      depth: parseInt(depthSelect.value, 10) || 12,
+      dim: 8,
+      residual: skipSelect.value === "residual",
+      norm: /** @type {"rmsnorm" | "none"} */ (normSelect.value),
+      initScheme: /** @type {"he" | "xavier" | "small" | "large"} */ (initSelect.value),
+      seed: 2015
+    });
+  }
+
+  function renderResNet(stats) {
+    if (!stats) return;
+    $("resnet-step").textContent = String(stats.step);
+    $("resnet-loss").textContent = stats.loss.toFixed(4);
+    $("resnet-acc").textContent = `${(stats.accuracy * 100).toFixed(1)}%`;
+    $("resnet-grad-ratio").textContent = `${(stats.firstToLastGradRatio * 100).toFixed(1)}%`;
+
+    barsEl.replaceChildren();
+    const maxGrad = Math.max(0.05, ...stats.layerStats.map((s) => s.gradNorm));
+    stats.layerStats.forEach((s) => {
+      const row = document.createElement("div");
+      row.className = "grad-row";
+      const label = document.createElement("span");
+      label.textContent = `Block L${s.layerIndex} (RMS=${s.actRms.toFixed(2)})`;
+      const meter = document.createElement("meter");
+      meter.min = 0;
+      meter.max = maxGrad;
+      meter.value = Math.min(maxGrad, s.gradNorm);
+      const val = document.createElement("span");
+      val.className = "number";
+      val.textContent = `‖∇W‖=${s.gradNorm.toFixed(4)}`;
+      row.append(label, meter, val);
+      barsEl.appendChild(row);
+    });
+  }
+
+  function resetAndProbe() {
+    net = createNet();
+    let st = null;
+    for (let i = 0; i < 8; i++) st = net.trainStep(dataset, 0.05);
+    renderResNet(st);
+  }
+
+  [depthSelect, skipSelect, normSelect, initSelect].forEach((el) => {
+    el.addEventListener("change", resetAndProbe);
+  });
+
+  $("resnet-train-btn")?.addEventListener("click", async () => {
+    const btn = /** @type {HTMLButtonElement} */ ($("resnet-train-btn"));
+    btn.disabled = true;
+    const yielder = createYieldController(50);
+    let st = null;
+    for (let i = 0; i < 25; i++) {
+      st = net.trainStep(dataset, 0.05);
+      if (i % 5 === 4 || i === 24) renderResNet(st);
+      await yielder.maybeYield();
+    }
+    btn.disabled = false;
+  });
+
+  $("resnet-reset-btn")?.addEventListener("click", resetAndProbe);
+
+  resetAndProbe();
 }
 
 // ============================================================================
@@ -856,8 +1835,11 @@ function initBlockBuilder() {
 export function initNeuralNetworksApp() {
   if (typeof document === "undefined") return;
   initKernelBar();
+  initCodeExplorers();
   initMlpLab();
   initCnnLab();
+  initRnnLab();
+  initDeepResNetLab();
   initTransformerLab();
   initDiffusionLab();
   initDecisionLab();

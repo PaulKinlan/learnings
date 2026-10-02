@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {
   getWasmBackend,
   jsMatmul,
+  WGSL_GEMM_SHADER,
+  getWebGPUStatus,
+  webgpuMatmulAsync,
   benchmarkBackends,
   setBackendMode,
   generate2DDataset,
@@ -15,10 +18,14 @@ import {
   MicroDDPM,
   MaskedTextDiffusion,
   DecisionPointerHead,
+  generateTemporalSequenceBatch,
+  MicroRNN,
+  DeepResidualNetwork,
   BLOCK_REGISTRY,
   registerBlockType,
   analyzeArchitecturePipeline
 } from '../site/neural-networks/engine.js';
+import { HYPERPARAMETER_GUIDE, KERNEL_CODE_BLUEPRINTS } from '../site/neural-networks/curriculum.js';
 
 test('Raw WebAssembly f32 GEMM kernel compiles in-memory and matches Float32Array GEMM', () => {
   const wb = getWasmBackend();
@@ -135,3 +142,101 @@ test('DecisionPointerHead and extensible Block Registry work end-to-end', () => 
   assert.ok(analysis.totalParams > 0);
   assert.ok(analysis.totalFlops > 0);
 });
+
+test('MLPNetwork.traceStep and commitTrace produce node-level forward, backward, and weight update traces', () => {
+  const mlp = new MLPNetwork([2, 4, 4, 1], { activation: 'gelu', seed: 101 });
+  const traceTrain = mlp.traceStep([-0.55, 0.55], 1, { lr: 0.08, optimizer: 'adamw', mode: 'train' });
+
+  assert.equal(traceTrain.nodesByLayer.length, 4, 'Should have 4 node layers (L0..L3)');
+  assert.equal(traceTrain.nodesByLayer[0].length, 2);
+  assert.equal(traceTrain.nodesByLayer[1].length, 4);
+  assert.equal(traceTrain.nodesByLayer[2].length, 4);
+  assert.equal(traceTrain.nodesByLayer[3].length, 1);
+  assert.equal(traceTrain.microSteps.length, 9, '2-hidden-layer training trace has 9 micro-steps');
+  assert.ok(traceTrain.lossAfter < traceTrain.lossBefore, `Single-sample update should reduce sample loss (${traceTrain.lossBefore} -> ${traceTrain.lossAfter})`);
+
+  const committed = mlp.commitTrace(traceTrain);
+  assert.equal(committed.step, 1);
+  assert.ok(Math.abs(mlp.predictPoint(-0.55, 0.55) - traceTrain.predAfter) < 1e-5);
+
+  const traceInfer = mlp.traceStep([-0.55, 0.55], 1, { mode: 'inference' });
+  assert.equal(traceInfer.microSteps.length, 5, '2-hidden-layer inference trace has 5 micro-steps');
+});
+
+test('MicroRNN (Elman RNN vs Gated GRU) trains via BPTT and GRU retains long-horizon gradients', () => {
+  const batch = generateTemporalSequenceBatch('memory_first', 10, 24, 303);
+  const gru = new MicroRNN({ hiddenDim: 10, cellType: 'gru', seed: 1997 });
+  const vanilla = new MicroRNN({ hiddenDim: 10, cellType: 'rnn', seed: 1997 });
+
+  const gruInit = gru.trainEpoch(batch, 0.12);
+  const vanInit = vanilla.trainEpoch(batch, 0.12);
+  assert.equal(gruInit.temporalSteps.length, 10);
+  assert.ok(
+    gruInit.gradRetentionRatio > vanInit.gradRetentionRatio,
+    `GRU should retain higher t=0 gradient ratio than Vanilla RNN (${gruInit.gradRetentionRatio} vs ${vanInit.gradRetentionRatio})`
+  );
+
+  let gruLast = gruInit;
+  for (let e = 0; e < 30; e++) {
+    gruLast = gru.trainEpoch(batch, 0.12);
+  }
+  assert.ok(gruLast.loss < gruInit.loss, `GRU BPTT loss should decrease (${gruInit.loss} -> ${gruLast.loss})`);
+});
+
+test('DeepResidualNetwork preserves Layer 1 gradient flow at 16 layers with Residual Highway + RMSNorm', () => {
+  const ds = generate2DDataset('xor', 32, 77);
+  const resNet = new DeepResidualNetwork({
+    depth: 16,
+    dim: 8,
+    residual: true,
+    norm: 'rmsnorm',
+    initScheme: 'he',
+    seed: 2015
+  });
+  const plainSmallNet = new DeepResidualNetwork({
+    depth: 16,
+    dim: 8,
+    residual: false,
+    norm: 'none',
+    initScheme: 'small',
+    seed: 2015
+  });
+
+  const resProfile = resNet.forwardAndBackward([-0.55, 0.55], 1);
+  const plainProfile = plainSmallNet.forwardAndBackward([-0.55, 0.55], 1);
+
+  assert.equal(resProfile.layerStats.length, 16);
+  assert.ok(
+    resProfile.layerStats[0].gradNorm > plainProfile.layerStats[0].gradNorm * 100,
+    `16-layer ResNet Layer 1 grad (${resProfile.layerStats[0].gradNorm}) should be orders of magnitude stronger than plain unnormalized stack (${plainProfile.layerStats[0].gradNorm})`
+  );
+
+  const firstStep = resNet.trainStep(ds, 0.05);
+  let lastStep = firstStep;
+  for (let i = 0; i < 15; i++) {
+    lastStep = resNet.trainStep(ds, 0.05);
+  }
+  assert.ok(lastStep.loss < firstStep.loss, `16-layer ResNet loss should decrease (${firstStep.loss} -> ${lastStep.loss})`);
+});
+
+test('WebGPU WGSL compute shader, fallback matmul, and curriculum blueprints are complete', async () => {
+  assert.ok(WGSL_GEMM_SHADER.includes('@compute @workgroup_size(8, 8, 1)'));
+  const A = new Float32Array([1, 2, 3, 4]);
+  const B = new Float32Array([5, 6, 7, 8]);
+  const C = await webgpuMatmulAsync(A, B, 2, 2, 2);
+  assert.deepEqual(Array.from(C), [19, 22, 43, 50]);
+  const status = getWebGPUStatus();
+  assert.equal(status.checked, true);
+
+  // Verify curriculum hyperparameter guide and all 8 kernel code blueprints (js, wasm, webgpu)
+  assert.ok(HYPERPARAMETER_GUIDE.datasets.xor.title.includes('XOR'));
+  assert.ok(HYPERPARAMETER_GUIDE.learningRate(0.05).title.includes('Sweet Spot'));
+  for (const key of ['gemm', 'mlp_backprop', 'conv2d', 'rnn_bptt', 'deep_resnet', 'attention', 'diffusion', 'decision_head']) {
+    const bp = KERNEL_CODE_BLUEPRINTS[key];
+    assert.ok(bp, `Missing blueprint for ${key}`);
+    assert.ok(bp.js.length > 50, `${key}.js should be populated`);
+    assert.ok(bp.wasm.length > 50, `${key}.wasm should be populated`);
+    assert.ok(bp.webgpu.length > 50, `${key}.webgpu should be populated`);
+  }
+});
+
