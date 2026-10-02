@@ -60,18 +60,28 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
 ## Build & Test
 
-_Add your build and test commands here_
+This repository has zero npm dependencies and no build step (`site/` is deployed directly to GitHub Pages).
 
 ```bash
-# Example:
-# npm install
-# npm test
+npm start                # Start local static server + loopback API relay (scripts/serve.mjs)
+npm test                 # Run Node standard-library test suite (node --test tests/*.test.js)
+npm run test:browser     # Run headless Chromium CDP integration checks (tests/browser.mjs)
+npm run test:on-device   # Run real in-browser LiteRT.js + ONNX Runtime Web smoke checks (tests/on-device.mjs)
 ```
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+- `site/index.html` & `site/style.css`: Top-level Learnings Hub and shared zero-dependency stylesheet.
+- `site/decision-models/`: Field guide, interactive decision lab, prompt-based playground (`window.Classifier` polyfill), 37-entry use-case catalogue, and on-device inference engines (`laya-engine.js` via LiteRT.js and `kev-engine.js` via ONNX Runtime Web).
+- `site/neural-networks/`: Interactive first-principles Neural Network lab (pure `Float32Array` autograd + raw WebAssembly GEMM kernel) covering Perceptrons/MLPs/Backprop, CNNs, Transformers & Self-Attention, Continuous Image & Discrete Masked Text Diffusion, Decision Pointer Heads, and a composable Block Builder.
+- `site/celld/`: Interactive architecture deep-dive and simulator for `celld` (SQLite/LTX cell engine) and Cloudflare Durable Object fleet architecture (CAS epoch fencing, `fleet` vs `bucket` durability, load balancing, and fleet-wide usage accounting & querying).
+- `site/opt-chronicles/`: Interactive logbook and cluster failure simulator for Meta AI's OPT-175B training run.
+- `scripts/serve.mjs`: Zero-dependency loopback HTTP server and strict same-origin JSON API relay (`/api/jev`, `/api/openai`, `/api/claude`).
+- `tests/`: Node `node:test` unit suites (`*.test.js`) and zero-dependency WebSocket CDP browser drivers (`tests/lib/cdp.mjs`, `tests/browser.mjs`, `tests/on-device.mjs`).
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+- **Strict CSP Everywhere**: Every HTML page must include a `<meta http-equiv="Content-Security-Policy">` with `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'`. Never use inline `<script>`, inline `style="..."` attributes, or inline event handlers (`onclick=...`).
+- **No Unaudited Dependencies**: Keep `package.json` free of runtime or test framework dependencies; any browser WASM/runtime vendor bundles live in `site/vendor/` and are documented in `site/vendor/NOTICE.md`.
+- **Untrusted DOM Rendering**: Render model or user outputs using `document.createElement` and `textContent`, never `innerHTML` with untrusted strings.
+- **Accessibility**: Include `<a class="skip" href="#main">Skip to content</a>`, `<main id="main">`, visible `:focus-visible` outlines, keyboard handlers (`Enter`/`Space`) on custom interactive controls, and `44px` minimum touch targets.

@@ -42,8 +42,11 @@ const SPECIAL_TOKEN_FILES = ["special_tokens_map.json", "added_tokens.json"];
  */
 export async function loadKev({ onProgress = null, urls = {} } = {}) {
   const urlFor = (file) => urls[file] ?? `https://huggingface.co/${REPO}/resolve/main/${file}`;
+  const notify = (stage, loaded = 0, total = 0, file = stage) => {
+    onProgress?.({ stage, file, loaded, total, received: loaded }, loaded, total, file);
+  };
 
-  onProgress?.("tokenizer", 0, 0);
+  notify("tokenizer", 0, 0, "tokenizer.json");
   const [tokenizerJson, config] = await Promise.all([
     fetch(urlFor("tokenizer.json")).then((r) => r.text()),
     fetch(urlFor("config.json")).then((r) => r.json()),
@@ -51,7 +54,7 @@ export async function loadKev({ onProgress = null, urls = {} } = {}) {
   const tokenizer = new Tokenizer(JSON.parse(tokenizerJson), {});
   const ids = readDelimiterIds(config?.kev);
 
-  onProgress?.("weights", 0, 0);
+  notify("weights", 0, 0, "onnx/model_q4.onnx_data");
   const onnxUrl = urls["onnx/model_q4.onnx"] ?? `https://huggingface.co/${REPO}/resolve/main/onnx/model_q4.onnx`;
   const onnxDataUrl = urls["onnx/model_q4.onnx_data"] ?? `https://huggingface.co/${REPO}/resolve/main/onnx/model_q4.onnx_data`;
   const t0 = performance.now();

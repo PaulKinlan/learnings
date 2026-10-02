@@ -60,12 +60,7 @@ window.__kev = { done: false, results: [], error: null, stage: 'starting', passe
   try {
     window.__kev.stage = 'loading';
     const session = await loadKev({
-      urls: {
-        'tokenizer.json': 'http://127.0.0.1:43359/kev-staging/tokenizer.json',
-        'config.json': 'http://127.0.0.1:43359/kev-staging/config.json',
-        'onnx/model_q4.onnx': 'http://127.0.0.1:43359/kev-staging/onnx/model_q4.onnx',
-        'onnx/model_q4.onnx_data': 'http://127.0.0.1:43359/kev-staging/onnx/model_q4.onnx_data',
-      },
+      ...(globalThis.__KEV_URLS ? { urls: globalThis.__KEV_URLS } : {}),
       onProgress: ({ file, loaded, total }) => {
         window.__kev.stage = `weights ${(loaded / 1048576).toFixed(0)} of ${(total / 1048576).toFixed(0)} MB · ${file}`;
       },

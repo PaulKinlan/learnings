@@ -10,7 +10,7 @@ export async function serve(){
   if(req.headers.host!==host){res.writeHead(403);res.end('Use the printed loopback URL.');return;}
   if(pathname.startsWith('/api/')){
    if(req.method!=='POST'||req.headers.origin!==`http://${host}`||!req.headers['content-type']?.startsWith('application/json')||!Object.hasOwn(upstreams,pathname)){res.writeHead(403);res.end('Relay requires same-origin JSON POST to a fixed provider route.');return;}
-   const chunks=[];for await(const chunk of req)chunks.push(chunk);
+   const chunks=[];let total=0;for await(const chunk of req){total+=chunk.length;if(total>1048576){res.writeHead(413);res.end('Payload too large');return;}chunks.push(chunk);}
    const body=Buffer.concat(chunks).toString('utf8');JSON.parse(body);
    const headers={'Content-Type':'application/json'};
    if(pathname==='/api/claude'){headers['x-api-key']=req.headers['x-api-key']??'';headers['anthropic-version']='2023-06-01';}else headers.Authorization=req.headers.authorization??'';

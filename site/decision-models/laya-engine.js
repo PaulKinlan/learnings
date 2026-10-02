@@ -55,6 +55,12 @@ const CHECKPOINTS = {
       tokenizer: "tokenizer.json", // 34,363,188 bytes
       calibration: "laya_ml_calibration.json",
     },
+    localFiles: {
+      SHA256SUMS: "ml-SHA256SUMS",
+      act: "laya_ml_act_head_fp32.tflite",
+      tokenizer: "ml-tokenizer.json",
+      calibration: "laya_ml_calibration.json",
+    },
   },
   english: {
     repo: EN_REPO,
@@ -70,6 +76,11 @@ const CHECKPOINTS = {
       act: "laya_act_head_fp32.tflite",
       tokenizer: "tokenizer.json",
       calibration: null, // temperatures are the upstream config's (see laya/rl_agent_config.json)
+    },
+    localFiles: {
+      SHA256SUMS: "en-SHA256SUMS",
+      act: "laya_act_head_fp32.tflite",
+      tokenizer: "en-tokenizer.json",
     },
     disabled: "LiteRT.js wasm32 compile OOM measured 2026-09-28 (see module comment)",
   },
@@ -165,14 +176,16 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
   onProgress?.("runtime", 0, 0);
   await litert();
 
-  const urlFor = (file) => urls[file] ?? `https://huggingface.co/${spec.repo}/resolve/main/${file}`;
-  const sums = parseSha256Sums(
-    await fetch(urls.SHA256SUMS ?? `https://huggingface.co/${spec.repo}/raw/main/SHA256SUMS`).then((r) => r.text()),
-  );
+  const localMap = spec.localFiles ?? {};
+  const urlFor = (key, file) =>
+    urls[file] ??
+    (localMap[key] ? new URL(localMap[key], LAYA_DIR).href : `https://huggingface.co/${spec.repo}/resolve/main/${file}`);
+  const sumsUrl = urls.SHA256SUMS ?? (localMap.SHA256SUMS ? new URL(localMap.SHA256SUMS, LAYA_DIR).href : `https://huggingface.co/${spec.repo}/raw/main/SHA256SUMS`);
+  const sums = parseSha256Sums(await fetch(sumsUrl).then((r) => r.text()));
 
   onProgress?.("tokenizer", 0, 0);
   const tokenizer = new Tokenizer(
-    JSON.parse(await (await fetch(urlFor(spec.files.tokenizer))).text()),
+    JSON.parse(await (await fetch(urlFor("tokenizer", spec.files.tokenizer))).text()),
     {},
   );
 
@@ -180,21 +193,24 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
   // filename, so test overrides pointing at a different variant are verified by their
   // own published hash, never the default file's.
   const basename = (url) => String(url).split("/").pop().split("?")[0];
+  const mainUrl = urlFor("main", spec.files.main);
+  const actUrl = urlFor("act", spec.files.act);
   const fetchJobs = {
-    main: fetchBytes(urlFor(spec.files.main), {
+    main: fetchBytes(mainUrl, {
       onProgress: (received, total) => onProgress?.("weights", received, total),
-      sha256: sums[basename(urlFor(spec.files.main))],
+      sha256: sums[basename(mainUrl)],
       label: `${spec.repo}/${spec.files.main}`,
     }),
-    act: fetchBytes(urlFor(spec.files.act), {
-      sha256: sums[basename(urlFor(spec.files.act))],
+    act: fetchBytes(actUrl, {
+      sha256: sums[basename(actUrl)],
       label: `${spec.repo}/${spec.files.act}`,
     }),
   };
   if (spec.files.embeddings) {
-    fetchJobs.embeddings = fetchBytes(urlFor(spec.files.embeddings), {
+    const embUrl = urlFor("embeddings", spec.files.embeddings);
+    fetchJobs.embeddings = fetchBytes(embUrl, {
       onProgress: (received, total) => onProgress?.("embedding-table", received, total),
-      sha256: sums[basename(urlFor(spec.files.embeddings))],
+      sha256: sums[basename(embUrl)],
       label: `${spec.repo}/${spec.files.embeddings} (host-side token table)`,
     });
   }
@@ -222,7 +238,7 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
   }
 
   const calibrationUrl = spec.files.calibration
-    ? urlFor(spec.files.calibration)
+    ? urlFor("calibration", spec.files.calibration)
     : new URL("rl_agent_config.json", LAYA_DIR).href;
   const calibrationJson = await (await fetch(calibrationUrl)).json();
   // The fitted calibration is the contract's production default. The publisher's saved

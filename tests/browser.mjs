@@ -1,14 +1,18 @@
 import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
 import {mkdir,writeFile} from 'node:fs/promises';
-import {resolve} from 'node:path';
+import {basename,resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {launch} from './lib/cdp.mjs';
 import {serve} from '../scripts/serve.mjs';
+const repoRoot=fileURLToPath(new URL('..',import.meta.url));
+const commit=execFileSync('git',['rev-parse','--short=12','HEAD'],{cwd:repoRoot,encoding:'utf8'}).trim();
+const defaultEvidence=resolve(repoRoot,'..','cap-evidence','learnings',`${basename(repoRoot)}-${commit}`,'browser');
 const local=process.env.TEST_URL?null:await serve(),base=process.env.TEST_URL??local.url;
-const out=resolve(process.env.EVIDENCE_DIR??'../cap-evidence/learnings/browser');await mkdir(out,{recursive:true});
+const out=resolve(process.env.EVIDENCE_DIR??defaultEvidence);await mkdir(out,{recursive:true});
 const p=await launch({width:1440,height:1000}),checks=[];
 const check=(n,c)=>{assert.ok(c,n);checks.push(n);};
-async function key(key){for(const type of ['keyDown','keyUp'])await p.send('Input.dispatchKeyEvent',{type,key});}
-async function select(id,index){await p.click('#'+id);await key('Home');for(let i=0;i<index;i++)await key('ArrowDown');await key('Enter');}
+async function select(id,index){await p.evaluateWithGesture((selId,idx)=>{const el=document.getElementById(selId);el.focus();el.selectedIndex=idx;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));},id,index);}
 try{
  await p.goto(base+'decision-models/lab.html');await p.waitFor(()=>document.querySelector('#demo-title').textContent.length>0);
  check('default provider is Laya',await p.evaluate(()=>document.querySelector('#provider').value==='laya'&&document.querySelector('#provider-note').textContent.includes('LiteRT.js')));
@@ -55,7 +59,7 @@ try{
  await select('provider',2);await p.click('#run');await p.waitFor(()=>document.querySelector('#status').textContent.includes('key first'));check('missing Jev key fails before request',true);
  await select('provider',0);await select('example',0);await p.click('#run');await p.waitFor(()=>document.querySelector('#answers').children.length>0);
  await p.evaluate(()=>scrollTo(0,0));await p.screenshot(out+'/desktop-lab.png',{fullPage:true});
- await p.emulateViewport({width:390,height:844,mobile:true,scale:1});check('lab no mobile horizontal overflow',await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await p.screenshot(out+'/mobile-lab.png',{fullPage:true});
+ await p.emulateViewport({width:390,height:844,mobile:true,scale:1});check('lab no mobile horizontal overflow',await p.evaluate(()=>innerWidth===390&&document.documentElement.scrollWidth<=innerWidth));await p.screenshot(out+'/mobile-lab.png',{fullPage:true});
  const resources=await p.evaluate(()=>performance.getEntriesByType('resource').map(x=>x.name));check('reading and local mode load only same-origin assets',resources.every(u=>new URL(u).origin===new URL(base).origin));
  await p.goto(base+'decision-models/adaptation.html');await p.waitFor(()=>document.querySelector('#labelled-examples').value.length>0);
  await p.evaluate(()=>{
@@ -65,15 +69,24 @@ try{
  });
  await p.click('#compare');await p.waitFor(()=>document.querySelector('#comparison tbody')!==null);
  check('paired adaptation displays two arms',await p.evaluate(()=>document.querySelectorAll('#comparison tbody tr').length===2));
- check('adaptation no document overflow',await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ check('adaptation no document overflow',await p.evaluate(()=>innerWidth===390&&document.documentElement.scrollWidth<=innerWidth));
  await p.screenshot(out+'/mobile-adaptation.png',{fullPage:true});
  await p.goto(base+'decision-models/playground.html');await p.waitFor(()=>document.querySelector('#engine')!==null);
  check('playground offers Laya, Kev and Jev',await p.evaluate(()=>Array.from(document.querySelectorAll('#engine option')).map(o=>o.value).join(',')==='laya,kev,jev'));
  check('playground has window.Classifier polyfill installed',await p.evaluate(()=>typeof window.Classifier==='function'));
  await p.screenshot(out+'/desktop-playground.png',{fullPage:true});
  await p.goto(base+'decision-models/architecture.html');await p.waitFor(()=>document.querySelector('#cost-shape').textContent.includes('Illustrative'));const before=await p.evaluate(()=>document.querySelector('#cost-shape').textContent);await p.type('#tokens','200');check('architecture calculator responds to input',await p.evaluate(()=>document.querySelector('#cost-shape').textContent)!==before);
- await p.goto(base+'decision-models/catalogue.html');check('catalogue contains 37 concrete entries',await p.evaluate(()=>document.querySelectorAll('tbody tr').length===37));check('catalogue no mobile document overflow',await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ await p.goto(base+'decision-models/catalogue.html');check('catalogue contains 37 concrete entries',await p.evaluate(()=>document.querySelectorAll('tbody tr').length===37));check('catalogue no mobile document overflow',await p.evaluate(()=>innerWidth===390&&document.documentElement.scrollWidth<=innerWidth));
+ await p.goto(base+'neural-networks/');await p.waitFor(()=>document.querySelector('#mlp-epoch').textContent!=='0');
+ check('neural-networks WASM GEMM kernel and interactive trainers render',await p.evaluate(()=>document.querySelector('#kernel-readout').textContent.includes('WebAssembly')&&document.querySelectorAll('#builder-stack .block-item').length===6));
+ check('neural-networks no mobile document overflow',await p.evaluate(()=>innerWidth===390&&document.documentElement.scrollWidth<=innerWidth));
+ await p.goto(base+'celld/');await p.waitFor(()=>document.querySelector('#cas-bucket-state').textContent.includes('ownership.json'));
+ await p.click('#btn-cas-partition');await p.click('#btn-cas-zombie');
+ check('celld CAS epoch fencing simulator rejects zombie write',await p.evaluate(()=>document.querySelector('#cas-log').textContent.includes('FENCED 412')));
+ check('celld no mobile document overflow',await p.evaluate(()=>innerWidth===390&&document.documentElement.scrollWidth<=innerWidth));
+ await p.goto(base+'opt-chronicles/');await p.waitFor(()=>document.querySelectorAll('.event-row').length>10);
+ check('opt-chronicles timeline and simulator render under strict CSP',await p.evaluate(()=>document.querySelector('#res-days').textContent.includes('days')));
  await p.goto(base+'decision-models/');check('report explicit CORS and browser-inference limitations',await p.evaluate(()=>document.body.textContent.includes('HTTP 400')&&document.body.textContent.includes('Run it in this tab')));
  await p.emulateViewport({width:1440,height:1000,mobile:false,scale:1});await p.screenshot(out+'/desktop-report.png',{fullPage:true});
- const receipt={at:new Date().toISOString(),base,checks,resources,qualification:'UI behavior and synthetic transport fixtures only. No paid model inference, local Kev weights, or training run.'};await writeFile(out+'/receipt.json',JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt,null,2));
+ const receipt={at:new Date().toISOString(),commit,base,checks,resources,qualification:'UI behavior and synthetic transport fixtures only. No paid model inference, local Kev weights, or training run.'};await writeFile(out+'/receipt.json',JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt,null,2));
 }finally{await p.close();if(local)await new Promise(r=>local.server.close(r));}

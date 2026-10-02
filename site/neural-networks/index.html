@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; worker-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>Neural Networks From First Principles: Raw WASM &amp; JS Autograd | Learnings</title>
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="./nn.css">
+  <meta name="description" content="Interactive first-principles guide and live training workbench for neural networks built in raw WebAssembly and Float32Array JS: Backpropagation, Feedforward MLPs, CNNs, Transformers, Image &amp; Text Diffusion, Decision Pointer Heads, and a Plug-and-Play Architecture Builder.">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header>
+    <a href="../index.html">← Learnings Hub</a>
+    <nav aria-label="Main navigation">
+      <a href="#mlp-backprop">1. Backprop &amp; MLPs</a>
+      <a href="#cnn-lab">2. CNNs</a>
+      <a href="#transformer-lab">3. Transformers</a>
+      <a href="#diffusion-lab">4. Diffusion (Img &amp; Text)</a>
+      <a href="#decision-lab">5. Decision Heads</a>
+      <a href="#block-builder">6. Block Builder</a>
+      <a href="#first-principles-guide">7. Code &amp; Math Guide</a>
+      <a href="../celld/">celld &amp; DOs</a>
+      <a href="../decision-models/">Decision Models</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="nn-hero">
+      <h1>Neural Networks From First Principles</h1>
+      <p class="lead">
+        Every model on this page trains and runs inference live in your browser with zero external ML libraries—powered by an in-memory compiled <strong>Raw WebAssembly (<code>wasm32</code> <code>f32.mul</code>/<code>f32.add</code> GEMM kernel)</strong> and a <strong>Raw JavaScript (<code>Float32Array</code>)</strong> autograd engine. Walk through the history of neural architectures, inspect live gradients, and snap building blocks together.
+      </p>
+
+      <div class="kernel-bar" role="region" aria-label="Compute backend selector and benchmark">
+        <div class="kernel-bar-controls">
+          <strong>Active Compute Kernel:</strong>
+          <button type="button" id="btn-kernel-wasm" class="kernel-pill" aria-pressed="true">Raw WebAssembly (wasm32 GEMM)</button>
+          <button type="button" id="btn-kernel-js" class="kernel-pill" aria-pressed="false">Raw JS (Float32Array)</button>
+          <button type="button" id="btn-bench-kernels" class="secondary">Benchmark WASM vs JS</button>
+        </div>
+        <div id="kernel-readout" class="kernel-readout" aria-live="polite">
+          WASM GEMM active · 0 external dependencies
+        </div>
+      </div>
+    </section>
+
+    <!-- Historical Era Navigation -->
+    <nav class="era-timeline" aria-label="Historical evolution of neural networks">
+      <a class="era-card" href="#mlp-backprop">
+        <span class="era-year">1958 → 1986</span>
+        <span class="era-title">Perceptrons &amp; Backprop</span>
+        <span class="era-sub">Rosenblatt, Rumelhart, Hinton · Chain rule &amp; hidden representations</span>
+      </a>
+      <a class="era-card" href="#cnn-lab">
+        <span class="era-year">1989 → 2012</span>
+        <span class="era-title">Convolutional Nets</span>
+        <span class="era-sub">LeNet to AlexNet · Spatial weight sharing &amp; translation invariance</span>
+      </a>
+      <a class="era-card" href="#transformer-lab">
+        <span class="era-year">2017 → Present</span>
+        <span class="era-title">Transformers</span>
+        <span class="era-sub">Vaswani et al. · Scaled dot-product self-attention &amp; parallel context</span>
+      </a>
+      <a class="era-card" href="#diffusion-lab">
+        <span class="era-year">2020 → Present</span>
+        <span class="era-title">Diffusion (Image &amp; Text)</span>
+        <span class="era-sub">DDPM &amp; Masked Discrete Diffusion · Iterative score &amp; token denoising</span>
+      </a>
+      <a class="era-card" href="#decision-lab">
+        <span class="era-year">2025 → Present</span>
+        <span class="era-title">Decision Pointer Heads</span>
+        <span class="era-sub">Jev, Kev &amp; Laya · Single-pass option marker readout &amp; calibrated gates</span>
+      </a>
+      <a class="era-card" href="#block-builder">
+        <span class="era-year">Modular Frontier</span>
+        <span class="era-title">Plug &amp; Play Workbench</span>
+        <span class="era-sub">Compose custom stacks, register new blocks (SSM/Mamba), inspect FLOPs</span>
+      </a>
+    </nav>
+
+    <!-- CHAPTER 1: PERCEPTRONS, FEEDFORWARD MLPs & BACKPROPAGATION -->
+    <section id="mlp-backprop" class="nn-section">
+      <h2>1. Perceptrons, Feedforward MLPs &amp; Backpropagation (1958–1986)</h2>
+      <p>
+        Marvin Minsky and Seymour Papert showed in 1969 that a single-layer Perceptron (<code>[2, 1]</code>) can only draw a flat linear hyperplane—making non-linearly separable problems like <strong>XOR</strong> impossible. Adding hidden layers with non-linear activations warps the input space so a linear readout can separate arbitrary manifolds, trained end-to-end via reverse-mode automatic differentiation (<strong>Backpropagation</strong>).
+      </p>
+      <div class="equation-box">
+        Forward: z<sup>(l)</sup> = a<sup>(l−1)</sup>W<sup>(l)</sup> + b<sup>(l)</sup>, &nbsp; a<sup>(l)</sup> = σ(z<sup>(l)</sup>) &nbsp;|&nbsp;
+        Backward: δ<sup>(l)</sup> = (δ<sup>(l+1)</sup>(W<sup>(l+1)</sup>)<sup>T</sup>) ⊙ σ'(z<sup>(l)</sup>), &nbsp; ∇<sub>W<sup>(l)</sup></sub>L = (a<sup>(l−1)</sup>)<sup>T</sup>δ<sup>(l)</sup>
+      </div>
+
+      <div class="nn-grid">
+        <div class="nn-panel">
+          <h3>Interactive Trainer &amp; Hyperparameters</h3>
+          <div class="fields">
+            <div>
+              <label for="mlp-dataset">2D Manifold Dataset</label>
+              <select id="mlp-dataset">
+                <option value="xor">XOR Parity (Classic Non-Linear)</option>
+                <option value="circle">Concentric Ring vs Core</option>
+                <option value="spiral">Two-Arm Archimedean Spiral</option>
+                <option value="moons">Interleaving Half-Moons</option>
+              </select>
+            </div>
+            <div>
+              <label for="mlp-arch">Hidden Layer Architecture</label>
+              <select id="mlp-arch">
+                <option value="2,8,8,1">2 → 8 → 8 → 1 (2 Hidden Layers)</option>
+                <option value="2,12,12,1">2 → 12 → 12 → 1 (Wide MLP)</option>
+                <option value="2,6,6,6,1">2 → 6 → 6 → 6 → 1 (Deep 3-Layer)</option>
+                <option value="2,1">2 → 1 (Single Perceptron — Fails XOR!)</option>
+              </select>
+            </div>
+            <div>
+              <label for="mlp-act">Activation Function σ(z)</label>
+              <select id="mlp-act">
+                <option value="gelu">GELU (Smooth Modern Default)</option>
+                <option value="relu">ReLU max(0, z)</option>
+                <option value="tanh">Tanh(z)</option>
+                <option value="sigmoid">Sigmoid (Observe Vanishing Gradients)</option>
+              </select>
+            </div>
+            <div>
+              <label for="mlp-opt">Optimizer</label>
+              <select id="mlp-opt">
+                <option value="adamw">AdamW (Adaptive Moments + Decay)</option>
+                <option value="momentum">SGD + Momentum (β=0.9)</option>
+                <option value="sgd">Vanilla SGD</option>
+              </select>
+            </div>
+          </div>
+
+          <label for="mlp-lr">Learning Rate η: <output id="mlp-lr-val" for="mlp-lr">0.050</output></label>
+          <input type="range" id="mlp-lr" min="0.005" max="0.20" step="0.005" value="0.05">
+
+          <div class="actions">
+            <button type="button" id="mlp-train-btn">Train 80 Epochs</button>
+            <button type="button" id="mlp-step-btn" class="secondary">Step 1 Epoch</button>
+            <button type="button" id="mlp-reset-btn" class="secondary">Reset Weights</button>
+          </div>
+
+          <div class="metrics-strip">
+            <div class="metric-box">
+              <div class="metric-label">Epoch</div>
+              <div id="mlp-epoch" class="metric-val">0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">BCE Loss</div>
+              <div id="mlp-loss" class="metric-val">—</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Accuracy</div>
+              <div id="mlp-acc" class="metric-val">—</div>
+            </div>
+          </div>
+
+          <h4>Per-Layer Gradient Norms ‖∇<sub>W</sub>L‖<sub>2</sub> (Backprop Signal Flow)</h4>
+          <div id="mlp-grad-bars" class="grad-bars" aria-live="polite"></div>
+        </div>
+
+        <div class="nn-panel">
+          <h3>Live Decision Boundary &amp; Point Probe</h3>
+          <div class="canvas-frame">
+            <canvas id="mlp-canvas" class="decision-canvas" width="240" height="240" aria-label="2D decision boundary canvas"></canvas>
+            <div id="mlp-probe-readout" class="kernel-readout">Click anywhere on the canvas to run live forward inference.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CHAPTER 2: CONVOLUTIONAL NEURAL NETWORKS (CNNs) -->
+    <section id="cnn-lab" class="nn-section">
+      <h2>2. Convolutional Neural Networks: Spatial Priors &amp; Weight Sharing (1989–2012)</h2>
+      <p>
+        Flattening an image into a dense MLP throws away 2D spatial topology and explodes parameter count. <strong>Convolutional Neural Networks (CNNs)</strong> slide small learnable filters (here four <code>3×3</code> kernels) across the input, sharing weights across every pixel location and pooling local maxima for translation invariance.
+      </p>
+      <div class="equation-box">
+        (I ∗ K)<sub>r,c</sub> = b + ∑<sub>u=0..2</sub> ∑<sub>v=0..2</sub> I<sub>r+u, c+v</sub> · K<sub>u,v</sub> &nbsp;→&nbsp; ReLU &nbsp;→&nbsp; MaxPool2D(2×2) &nbsp;→&nbsp; Linear(36 → 4)
+      </div>
+
+      <div class="nn-grid">
+        <div class="nn-panel">
+          <h3>Draw or Load an 8×8 Glyph &amp; Train Kernels</h3>
+          <p class="small">Click cells to toggle pixels, or load a preset pattern to inspect how each 3×3 filter responds.</p>
+          <div class="actions">
+            <button type="button" class="secondary" data-glyph-preset="0">Preset: Vertical |</button>
+            <button type="button" class="secondary" data-glyph-preset="1">Preset: Horizontal —</button>
+            <button type="button" class="secondary" data-glyph-preset="2">Preset: Diagonal /</button>
+            <button type="button" class="secondary" data-glyph-preset="3">Preset: Box □</button>
+          </div>
+
+          <div id="cnn-pixel-grid" class="pixel-grid-8" role="group" aria-label="8 by 8 drawable pixel grid"></div>
+
+          <div class="actions">
+            <button type="button" id="cnn-train-btn">Train CNN (30 Epochs)</button>
+            <button type="button" id="cnn-reset-btn" class="secondary">Reset Kernels</button>
+          </div>
+
+          <div class="metrics-strip">
+            <div class="metric-box">
+              <div class="metric-label">CNN Epoch</div>
+              <div id="cnn-epoch" class="metric-val">0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">CE Loss</div>
+              <div id="cnn-loss" class="metric-val">—</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Train Accuracy</div>
+              <div id="cnn-acc" class="metric-val">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="nn-panel">
+          <h3>Live Learned 3×3 Kernels, 6×6 Feature Maps &amp; Class Probabilities</h3>
+          <div id="cnn-probs" aria-live="polite"></div>
+          <div id="cnn-feature-maps" class="feature-maps-row"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CHAPTER 3: TRANSFORMERS & SELF-ATTENTION -->
+    <section id="transformer-lab" class="nn-section">
+      <h2>3. Transformers &amp; Scaled Dot-Product Self-Attention (2017–Present)</h2>
+      <p>
+        Recurrent networks compressed history through a sequential bottleneck. The <strong>Transformer</strong> replaced recurrence with <strong>Multi-Head Self-Attention</strong>, letting every token position project Query (<code>Q</code>), Key (<code>K</code>), and Value (<code>V</code>) vectors and route information directly across any distance in <code>O(1)</code> sequential depth.
+      </p>
+      <div class="equation-box">
+        Attention(Q, K, V) = softmax((Q K<sup>T</sup>) / √d<sub>k</sub> + M) V
+      </div>
+
+      <div class="nn-grid">
+        <div class="nn-panel">
+          <h3>Train a Micro-Transformer on Algorithmic Sequence Tasks</h3>
+          <div class="fields">
+            <div>
+              <label for="tf-task">Sequence Algorithmic Task</label>
+              <select id="tf-task">
+                <option value="reverse">Reverse Sequence ([A,B,C,D] → [D,C,B,A])</option>
+                <option value="copy">Identity Copy ([A,B,C,D] → [A,B,C,D])</option>
+                <option value="sort">Sort Tokens Ascending</option>
+              </select>
+            </div>
+            <div>
+              <label for="tf-mask">Attention Mask M</label>
+              <select id="tf-mask">
+                <option value="bidirectional">Bidirectional (Full Context)</option>
+                <option value="causal">Causal Lower-Triangular Mask (j ≤ i)</option>
+              </select>
+            </div>
+          </div>
+
+          <label for="tf-input-seq">Probe Input Sequence (4 Tokens from A–H)</label>
+          <input type="text" id="tf-input-seq" value="A B C D">
+
+          <div class="actions">
+            <button type="button" id="tf-train-btn">Train Transformer (40 Epochs)</button>
+            <button type="button" id="tf-reset-btn" class="secondary">Reset Transformer</button>
+          </div>
+
+          <div class="metrics-strip">
+            <div class="metric-box">
+              <div class="metric-label">Epoch</div>
+              <div id="tf-epoch" class="metric-val">0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Token CE Loss</div>
+              <div id="tf-loss" class="metric-val">—</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Token Accuracy</div>
+              <div id="tf-acc" class="metric-val">—</div>
+            </div>
+          </div>
+
+          <div id="tf-pred-banner" class="status" aria-live="polite"></div>
+        </div>
+
+        <div class="nn-panel">
+          <h3>Live Multi-Head Attention Heatmaps (Head 1 &amp; Head 2)</h3>
+          <p class="small">Notice how training on <strong>Reverse</strong> causes the attention matrix to light up along the <em>anti-diagonal</em>, whereas <strong>Copy</strong> concentrates weight on the <em>main diagonal</em>.</p>
+          <div id="tf-attn-heads" class="attn-heads-wrap"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CHAPTER 4: DIFFUSION MODELS (IMAGE DDPM & DISCRETE MASKED TEXT DIFFUSION) -->
+    <section id="diffusion-lab" class="nn-section">
+      <h2>4. Diffusion Models: Continuous Image DDPM &amp; Discrete Masked Text Diffusion</h2>
+      <p>
+        Instead of predicting outputs in one shot, <strong>Diffusion Models</strong> define a known forward corruption process that destroys structure—either by adding Gaussian noise to continuous pixels (<strong>DDPM</strong>) or masking discrete tokens to <code>[MASK]</code> (<strong>Masked Diffusion Language Models / MDLM</strong>)—and train a neural network to invert the corruption step by step.
+      </p>
+      <div class="equation-box">
+        Image DDPM: x<sub>t</sub> = √ᾱ<sub>t</sub> x<sub>0</sub> + √(1 − ᾱ<sub>t</sub>) ε, &nbsp; L = ‖ε − ε<sub>θ</sub>(x<sub>t</sub>, t)‖² &nbsp;|&nbsp;
+        Text MDLM: q(x<sub>t</sub> | x<sub>0</sub>) masks tokens w.p. γ(t)=t/T; reverse unmasks top-confidence positions in parallel.
+      </div>
+
+      <div class="nn-grid">
+        <!-- Continuous Image/Sprite DDPM -->
+        <div class="nn-panel">
+          <h3>Part A: Continuous 2D Pixel Sprite DDPM</h3>
+          <div class="fields">
+            <div>
+              <label for="ddpm-target">Target 6×6 Pixel Sprite x<sub>0</sub></label>
+              <select id="ddpm-target">
+                <option value="smiley">Smiley Icon</option>
+                <option value="cross">Plus Cross</option>
+                <option value="diamond">Hollow Diamond</option>
+              </select>
+            </div>
+            <div>
+              <label for="ddpm-step-slider">Inspect Reverse Step t: <output id="ddpm-step-val" for="ddpm-step-slider">0 (Denoised x₀)</output></label>
+              <input type="range" id="ddpm-step-slider" min="0" max="16" step="1" value="0">
+            </div>
+          </div>
+
+          <div class="actions">
+            <button type="button" id="ddpm-train-btn">Train Noise Predictor ε_θ (60 Steps)</button>
+            <button type="button" id="ddpm-sample-btn" class="secondary">Sample New Reverse Trajectory</button>
+          </div>
+
+          <div class="metrics-strip">
+            <div class="metric-box">
+              <div class="metric-label">Train Step</div>
+              <div id="ddpm-epoch" class="metric-val">0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Noise MSE Loss</div>
+              <div id="ddpm-loss" class="metric-val">—</div>
+            </div>
+          </div>
+
+          <div id="ddpm-strip" class="diffusion-strip" aria-live="polite"></div>
+        </div>
+
+        <!-- Discrete Masked Text Diffusion -->
+        <div class="nn-panel">
+          <h3>Part B: Discrete Masked Text Diffusion (Parallel Unmasking)</h3>
+          <div>
+            <label for="text-diff-prompt">Target Sequence Seed</label>
+            <select id="text-diff-prompt">
+              <option value="0">NEURAL NETS LEARN FROM RAW GRADIENTS</option>
+              <option value="1">DIFFUSION UNMASKS TOKENS IN PARALLEL STEPS</option>
+              <option value="2">ATTENTION ROUTES CONTEXT ACROSS ALL POSITIONS</option>
+              <option value="3">DECISION HEADS CALIBRATE CHOICE AND GATE</option>
+            </select>
+          </div>
+
+          <div class="actions">
+            <button type="button" id="text-diff-train-btn">Train Bidirectional Text Denoiser (45 Steps)</button>
+            <button type="button" id="text-diff-sample-btn" class="secondary">Run Parallel Unmasking</button>
+          </div>
+
+          <div class="metrics-strip">
+            <div class="metric-box">
+              <div class="metric-label">Denoiser Step</div>
+              <div id="text-diff-epoch" class="metric-val">0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Masked CE Loss</div>
+              <div id="text-diff-loss" class="metric-val">—</div>
+            </div>
+          </div>
+
+          <div id="text-diff-trajectory" class="text-diff-steps" aria-live="polite"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CHAPTER 5: DECISION MODELS & POINTER HEADS -->
+    <section id="decision-lab" class="nn-section">
+      <h2>5. Decision Models &amp; Single-Pass Pointer Readout Heads</h2>
+      <p>
+        Autoregressive generation is poorly suited for software branches that need calibrated probabilities over fixed choices and a principled right to abstain. As explored in our <a href="../decision-models/">Decision Models report</a> (Jev, Kev, Laya), a <strong>Decision Pointer Head</strong> projects the final hidden state <code>h<sub>last</sub></code> against option-delimiter hidden states <code>H<sub>‹0›..‹K−1›</sub></code> in a single forward pass, applies temperature scaling <code>T</code>, and gates execution via an entropy-aware abstention head.
+      </p>
+      <div class="equation-box">
+        z<sub>k</sub> = (W<sub>q</sub> h<sub>last</sub>)<sup>T</sup> (W<sub>k</sub> h<sub>‹k›</sub>) / (√d · T), &nbsp;
+        Confidence = 1 − H(p) / ln(K), &nbsp;
+        Gate ∈ {act, review}
+      </div>
+
+      <div class="nn-grid">
+        <div class="nn-panel">
+          <h3>Single-Pass Option Pointer &amp; Calibration Controls</h3>
+          <div>
+            <label for="dec-scenario">Incident Routing Scenario</label>
+            <select id="dec-scenario">
+              <option value="clear">High-Signal Match: ECC Memory Fault on Node 42</option>
+              <option value="ambiguous">Ambiguous Symptom: Slow Checkpoint Sync + Packet Jitter</option>
+              <option value="ood">Out-of-Distribution Input: Unfamiliar Sensor Payload</option>
+            </select>
+          </div>
+
+          <label for="dec-temp">Calibration Temperature T: <output id="dec-temp-val" for="dec-temp">1.00</output></label>
+          <input type="range" id="dec-temp" min="0.25" max="2.50" step="0.05" value="1.00">
+
+          <label for="dec-gate">Abstention Gate Threshold τ: <output id="dec-gate-val" for="dec-gate">0.55</output></label>
+          <input type="range" id="dec-gate" min="0.10" max="0.95" step="0.05" value="0.55">
+        </div>
+
+        <div class="nn-panel">
+          <h3>Calibrated Option Distribution &amp; Gate Decision</h3>
+          <div id="dec-output" aria-live="polite"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CHAPTER 6: EXTENSIBLE PLUG-AND-PLAY ARCHITECTURE BUILDER -->
+    <section id="block-builder" class="nn-section">
+      <h2>6. Extensible Plug-and-Play Neural Architecture Workbench</h2>
+      <p>
+        Modern foundation models are modular compositions of reusable primitives. Click any block below to append it to your live neural pipeline, inspect how tensor shapes, parameter counts, FLOPs, and forward/backward norms evolve across layers, or dynamically register a brand-new architecture block (such as <strong>Selective State-Space / Mamba SSM</strong> or <strong>Sparse Mixture-of-Experts Router</strong>) via <code>registerBlockType()</code>.
+      </p>
+
+      <div class="nn-panel">
+        <h3>Add Building Block to Pipeline</h3>
+        <div id="builder-palette" class="builder-palette" role="group" aria-label="Available neural network building blocks"></div>
+
+        <div class="actions">
+          <button type="button" id="btn-register-ssm" class="secondary">+ Register Custom Block: Mamba Selective SSM</button>
+          <button type="button" id="btn-register-moe" class="secondary">+ Register Custom Block: Sparse MoE Top-2 Router</button>
+          <button type="button" id="btn-reset-pipeline" class="secondary">Reset to Default Transformer-Decision Stack</button>
+        </div>
+
+        <div class="metrics-strip">
+          <div class="metric-box">
+            <div class="metric-label">Pipeline Depth</div>
+            <div id="builder-depth" class="metric-val">0 blocks</div>
+          </div>
+          <div class="metric-box">
+            <div class="metric-label">Total Parameters</div>
+            <div id="builder-params" class="metric-val">0</div>
+          </div>
+          <div class="metric-box">
+            <div class="metric-label">FLOPs / Sequence</div>
+            <div id="builder-flops" class="metric-val">0</div>
+          </div>
+          <div class="metric-box">
+            <div class="metric-label">Input Gradient Norm</div>
+            <div id="builder-grad" class="metric-val">—</div>
+          </div>
+        </div>
+
+        <div id="builder-stack" class="block-stack" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <!-- CHAPTER 7: FIRST-PRINCIPLES FIELD GUIDE, ARCHITECTURE MATRIX & CODE BLUEPRINTS -->
+    <section id="first-principles-guide" class="nn-section">
+      <h2>7. First-Principles Reference: Architecture Matrix, Raw WASM GEMM &amp; Autograd Code</h2>
+      <div class="reading">
+        <aside class="toc" aria-label="Reference contents">
+          <a href="#arch-matrix">Architecture Matrix</a>
+          <a href="#wasm-gemm-code">Raw WASM GEMM Kernel</a>
+          <a href="#backprop-code">Analytical Backprop</a>
+          <a href="#attn-grad-code">Attention Jacobian</a>
+          <a href="#diffusion-math">Image &amp; Text Diffusion</a>
+          <a href="#plugin-api-code">Plugin Block API</a>
+        </aside>
+
+        <article class="article">
+          <h3 id="arch-matrix">Historical Evolution &amp; Inductive Bias Matrix</h3>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Era &amp; Family</th>
+                  <th>Core Primitive</th>
+                  <th>Inductive Bias</th>
+                  <th>Compute &amp; Memory Scaling</th>
+                  <th>What It Solved &amp; Where It Breaks</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Perceptron (1958)</strong></td>
+                  <td><code>y = step(w·x + b)</code></td>
+                  <td>Single linear hyperplane</td>
+                  <td><code>O(D)</code></td>
+                  <td>Solved linearly separable classification; fails on XOR and non-convex manifolds.</td>
+                </tr>
+                <tr>
+                  <td><strong>Feedforward MLP + Backprop (1986)</strong></td>
+                  <td><code>A = σ(XW + b)</code></td>
+                  <td>Universal function approximation over flat vectors</td>
+                  <td><code>O(L · D²)</code></td>
+                  <td>Learns arbitrary non-linear features via chain rule; lacks spatial or sequential invariance.</td>
+                </tr>
+                <tr>
+                  <td><strong>Convolutional Nets (1989–2012)</strong></td>
+                  <td><code>(I ∗ K)<sub>r,c</sub></code> + Pooling</td>
+                  <td>2D locality &amp; translation equivariance</td>
+                  <td><code>O(H · W · C<sub>in</sub> · C<sub>out</sub> · k²)</code></td>
+                  <td>Dramatically reduces parameters on grids/images; fixed local receptive field per layer.</td>
+                </tr>
+                <tr>
+                  <td><strong>Transformers (2017)</strong></td>
+                  <td><code>softmax(QK<sup>T</sup>/√d<sub>k</sub>)V</code></td>
+                  <td>Dynamic all-to-all token routing</td>
+                  <td><code>O(T² · D + T · D²)</code></td>
+                  <td>Parallelizes sequence training &amp; eliminates recurrent bottlenecks; quadratic <code>O(T²)</code> KV-cache growth.</td>
+                </tr>
+                <tr>
+                  <td><strong>Continuous Image DDPM (2020)</strong></td>
+                  <td><code>ε<sub>θ</sub>(√ᾱ<sub>t</sub>x<sub>0</sub> + √(1−ᾱ<sub>t</sub>)ε, t)</code></td>
+                  <td>Iterative score/noise field reversal</td>
+                  <td><code>O(S · FLOPs<sub>backbone</sub>)</code> over <code>S</code> steps</td>
+                  <td>Stable high-dimensional distribution synthesis without adversarial collapse; requires multiple denoising steps.</td>
+                </tr>
+                <tr>
+                  <td><strong>Discrete Masked Text Diffusion (2024)</strong></td>
+                  <td><code>p<sub>θ</sub>(x<sub>0</sub> | x<sub>t</sub>)</code> over <code>[MASK]</code></td>
+                  <td>Bidirectional parallel token refinement</td>
+                  <td><code>O(S · T² · D)</code> with <code>S ≪ T</code></td>
+                  <td>Generates and edits tokens in parallel by confidence instead of strict left-to-right decoding.</td>
+                </tr>
+                <tr>
+                  <td><strong>Decision Pointer Heads (2025)</strong></td>
+                  <td><code>(W<sub>q</sub>h<sub>last</sub>)<sup>T</sup>(W<sub>k</sub>h<sub>‹k›</sub>)/T</code></td>
+                  <td>Bounded option scoring + calibrated abstention</td>
+                  <td>Single forward pass <code>O(T · D²)</code></td>
+                  <td>Eliminates multi-token JSON generation for classification/routing; cannot invent free-form prose.</td>
+                </tr>
+                <tr>
+                  <td><strong>Selective SSM / Mamba &amp; Sparse MoE</strong></td>
+                  <td><code>h<sub>t</sub> = Ā(x<sub>t</sub>)h<sub>t−1</sub> + B̄(x<sub>t</sub>)x<sub>t</sub></code></td>
+                  <td>Input-dependent linear recurrence / conditional capacity</td>
+                  <td><code>O(T · D)</code> state scan; active parameter sparsity</td>
+                  <td>Linear-time long context and massive parameter capacity at fixed FLOPs per token.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3 id="wasm-gemm-code">How the In-Memory Raw WebAssembly (<code>wasm32</code>) GEMM Kernel Works</h3>
+          <p>
+            In <code>site/neural-networks/engine.js</code>, <code>buildWasmGemmBytes()</code> constructs a valid 183-byte WebAssembly binary module directly in a <code>Uint8Array</code>—with zero external `.wasm` files or C/Rust compilers. Both JavaScript and WebAssembly share a contiguous <code>WebAssembly.Memory</code> buffer viewed as a <code>Float32Array</code>:
+          </p>
+          <pre><code>;; Disassembly of the in-memory compiled gemm_f32(aPtr, bPtr, cPtr, M, K, N) kernel
+(func $gemm_f32 (export "gemm_f32")
+  (param $aPtr i32) (param $bPtr i32) (param $cPtr i32)
+  (param $M i32) (param $K i32) (param $N i32)
+  (local $i i32) (local $j i32) (local $k i32) (local $sum f32)
+  ;; Triple nested loop over M × N × K reading/writing linear memory in 4-byte f32 strides:
+  ;; sum += f32.load(aPtr + ((i * K + k) &lt;&lt; 2)) * f32.load(bPtr + ((k * N + j) &lt;&lt; 2))
+  ;; f32.store(cPtr + ((i * N + j) &lt;&lt; 2), sum)
+)</code></pre>
+
+          <h3 id="backprop-code">Reverse-Mode Autograd &amp; Decoupled AdamW Update</h3>
+          <p>
+            Every neural network training loop follows four exact steps: (1) forward pass caching intermediate pre-activations <code>z<sup>(l)</sup></code> and activations <code>a<sup>(l)</sup></code>, (2) loss evaluation at the output head, (3) reverse-mode chain-rule propagation of <code>δ<sup>(l)</sup> = ∂L / ∂z<sup>(l)</sup></code>, and (4) parameter update:
+          </p>
+          <pre><code>// Output layer gradient for Sigmoid + Binary Cross-Entropy simplifies to (p - y) / N
+for (let i = 0; i &lt; N; i++) dZ[i] = (probs[i] - Y[i]) / N;
+
+// Backpropagate through hidden layers l = L-1 ... 0
+for (let l = layers.length - 1; l &gt;= 0; l--) {
+  // 1. Parameter gradients: dW = prevA^T · dZ, db = sum(dZ)
+  // 2. Propagate error to previous layer: dPrevZ = (dZ · W^T) * activationGrad(prevZ)
+  // 3. Decoupled AdamW update:
+  m = beta1 * m + (1 - beta1) * g;
+  v = beta2 * v + (1 - beta2) * (g * g);
+  w = w * (1 - lr * weightDecay) - lr * (mHat / (Math.sqrt(vHat) + 1e-8));
+}</code></pre>
+
+          <h3 id="attn-grad-code">Backpropagating Through Scaled Dot-Product Self-Attention</h3>
+          <p>
+            In <code>MicroTransformer.trainEpoch()</code>, gradients flow backward from the output logits through the residual stream into the attention value projection <code>V</code> and attention weight matrix <code>A = softmax(QK<sup>T</sup> / √d<sub>k</sub>)</code>. Because each row of <code>A</code> is a probability distribution summing to 1, its Jacobian couples all columns in that row:
+          </p>
+          <pre><code>// Softmax row Jacobian: dScore[i, j] = A[i, j] * (dA[i, j] - sum_m(A[i, m] * dA[i, m])) / sqrt(d_k)
+let rowDot = 0;
+for (let j = 0; j &lt; T; j++) rowDot += W[i * T + j] * dW[i * T + j];
+for (let j = 0; j &lt; T; j++) {
+  if (causal &amp;&amp; j &gt; i) continue;
+  const dScore = W[i * T + j] * (dW[i * T + j] - rowDot) * invSqrtDh;
+  for (let d = 0; d &lt; Dh; d++) {
+    dQ[i * D + hOffset + d] += dScore * K[j * D + hOffset + d];
+    dK[j * D + hOffset + d] += dScore * Q[i * D + hOffset + d];
+  }
+}</code></pre>
+
+          <h3 id="diffusion-math">Continuous Image DDPM vs Discrete Masked Text Diffusion</h3>
+          <p>
+            Both continuous and discrete diffusion invert a known forward corruption schedule:
+          </p>
+          <ul>
+            <li>
+              <strong>Continuous DDPM (<code>MicroDDPM</code>):</strong> Defines variance schedule <code>β<sub>1</sub>…β<sub>T</sub></code>, <code>α<sub>t</sub> = 1 − β<sub>t</sub></code>, and cumulative signal retention <code>ᾱ<sub>t</sub> = ∏<sub>s=1..t</sub> α<sub>s</sub></code>. Any timestep <code>t</code> can be sampled in closed form via <code>x<sub>t</sub> = √ᾱ<sub>t</sub> x<sub>0</sub> + √(1 − ᾱ<sub>t</sub>) ε</code> with <code>ε ~ N(0, I)</code>. The network minimizes <code>‖ε − ε<sub>θ</sub>(x<sub>t</sub>, t)‖²</code>, and generation iterates backward from <code>x<sub>T</sub> ~ N(0, I)</code> to <code>x<sub>0</sub></code>:
+              <div class="equation-box">x<sub>t−1</sub> = (1 / √α<sub>t</sub>) · (x<sub>t</sub> − (β<sub>t</sub> / √(1 − ᾱ<sub>t</sub>)) · ε<sub>θ</sub>(x<sub>t</sub>, t)) + σ<sub>t</sub> z</div>
+            </li>
+            <li>
+              <strong>Discrete Masked Text Diffusion (<code>MaskedTextDiffusion</code>):</strong> Replaces Gaussian noise with an absorbing <code>[MASK]</code> token. At noise level <code>γ(t) = t / T</code>, each token transitions independently to <code>[MASK]</code> with probability <code>γ(t)</code>. A bidirectional model predicts clean token categorical distributions <code>p<sub>θ</sub>(x<sub>0</sub><sup>(i)</sup> | x<sub>t</sub>)</code> across all masked slots simultaneously. During inference, the sampler unmasks the highest-confidence positions in parallel at each step—allowing islands of certainty across the sentence to crystallize simultaneously.
+            </li>
+          </ul>
+
+          <h3 id="plugin-api-code">Extending the Workbench with <code>registerBlockType()</code></h3>
+          <p>
+            You can register new neural network paradigms into <code>BLOCK_REGISTRY</code> from the browser console or module code at any time:
+          </p>
+          <pre><code>import { registerBlockType } from "./engine.js";
+
+registerBlockType({
+  type: "griffin_rg_lru",
+  label: "Real-Gated Linear Recurrent Unit (RG-LRU)",
+  category: "recurrent",
+  description: "Diagonal gated linear recurrence with hardware-efficient scan.",
+  computeStats(shape) {
+    return {
+      outShape: { ...shape },
+      params: 3 * shape.d * shape.d,
+      flops: 6 * shape.t * shape.d * shape.d
+    };
+  }
+});</code></pre>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Part of the <a href="../index.html">Learnings Hub</a> · Zero-dependency Raw WebAssembly &amp; Float32Array Neural Network Workbench.</p>
+  </footer>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -207,7 +207,7 @@ export function pyRound(value, ndigits = 4) {
   return neg ? -result : result;
 }
 
-function choiceConfidence(p, K) {
+export function choiceConfidence(p, K) {
   if (K < 2) return 1;
   const entropy = -p.reduce((acc, v) => acc + v * Math.log(Math.min(Math.max(v, 1e-12), 1)), 0) / Math.log(K);
   return Math.min(Math.max(1 - entropy, 0), 1);

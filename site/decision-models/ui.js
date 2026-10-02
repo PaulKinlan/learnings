@@ -1,5 +1,6 @@
 import { decide, gate } from './core.js';
 import { loadLaya } from './laya-engine.js';
+import { choiceConfidence } from './laya-pack.js';
 import { loadKev } from './kev-engine.js';
 import {
   choose as kevChoose,
@@ -46,7 +47,7 @@ export function setupSettings(onChange = () => {}) {
 
     if (note) {
       note.textContent = p === 'laya'
-        ? 'Laya runs on-device in this tab via LiteRT.js (mmBERT-base). Weights download once (~680 MB total); zero data leaves your browser.'
+        ? 'Laya runs on-device in this tab via LiteRT.js (mmBERT-base). Weights download once (~650 MB total); zero data leaves your browser.'
         : p === 'kev'
         ? 'Kev runs on-device in this tab via ONNX Runtime Web. Weights download once (~375 MB); zero data leaves your browser.'
         : 'Jev sends state and questions directly to api.typesafe.ai with your API key. Incurs provider usage.';
@@ -117,7 +118,7 @@ export async function runSpec(spec, signal, onProgress = null) {
   if (cfg.provider === 'kev') {
     if (!kevSession) {
       kevSession = await loadKev({
-        onProgress: (info) => onProgress?.('weights', info?.loaded || 0, info?.total || 0),
+        onProgress: (info) => onProgress?.(info?.stage || 'weights', info?.loaded || 0, info?.total || 0),
         ...(globalThis.__KEV_URLS ? { urls: globalThis.__KEV_URLS } : {})
       });
     }
@@ -154,14 +155,14 @@ export async function runSpec(spec, signal, onProgress = null) {
           type: 'choice',
           choice: labels[best],
           probabilities: Object.fromEntries(labels.map((l, o) => [l, dist[o]])),
-          confidence: dist[best]
+          confidence: choiceConfidence(dist, labels.length)
         };
       } else if (q.type === 'score') {
         answers[id] = {
           type: 'score',
           score: kevExpectedLevel(dist),
           probabilities: Object.fromEntries(q.criteria.map((_, o) => [String(o), dist[o]])),
-          confidence: Math.max(...dist)
+          confidence: choiceConfidence(dist, q.criteria.length)
         };
       } else {
         const pYes = kevNoulProbability(dist);

@@ -264,10 +264,13 @@ export function initChronicles() {
 function setupEventListeners() {
   // Phase Filters
   document.querySelectorAll("[data-phase-filter]").forEach(btn => {
-    btn.addEventListener("click", (e) => {
-      document.querySelectorAll("[data-phase-filter]").forEach(b => b.classList.remove("active"));
-      // @ts-ignore
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("[data-phase-filter]").forEach(b => {
+        b.classList.remove("active");
+        b.setAttribute("aria-pressed", "false");
+      });
       btn.classList.add("active");
+      btn.setAttribute("aria-pressed", "true");
       // @ts-ignore
       activePhaseFilter = btn.dataset.phaseFilter;
       applyFilters();
@@ -276,10 +279,13 @@ function setupEventListeners() {
 
   // Category Filters
   document.querySelectorAll("[data-cat-filter]").forEach(btn => {
-    btn.addEventListener("click", (e) => {
-      document.querySelectorAll("[data-cat-filter]").forEach(b => b.classList.remove("active"));
-      // @ts-ignore
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("[data-cat-filter]").forEach(b => {
+        b.classList.remove("active");
+        b.setAttribute("aria-pressed", "false");
+      });
       btn.classList.add("active");
+      btn.setAttribute("aria-pressed", "true");
       // @ts-ignore
       activeCategoryFilter = btn.dataset.catFilter;
       applyFilters();
@@ -346,13 +352,13 @@ function renderSelectedEvent() {
   container.innerHTML = `
     <div class="inspector-meta">
       <span class="badge ${catBadgeClass}">${ev.category.toUpperCase()}</span>
-      <span style="font-weight:700; color:var(--ink);">${ev.date}</span>
-      <span style="color:var(--muted); font-size:0.9rem;">Tokens: ${ev.tokens} (${ev.step} steps)</span>
+      <span class="inspector-date">${ev.date}</span>
+      <span class="inspector-tokens">Tokens: ${ev.tokens} (${ev.step} steps)</span>
     </div>
-    <h3 style="margin:0 0 0.6rem 0; font-size:1.4rem;">${ev.title}</h3>
-    <p style="margin:0 0 1rem 0; font-size:1.05rem;">${ev.summary}</p>
+    <h3 class="inspector-title">${ev.title}</h3>
+    <p class="inspector-summary">${ev.summary}</p>
     <div class="log-quote"><strong>Excerpt from Logbook:</strong>\n"${ev.quote}"</div>
-    <div style="font-size:0.9rem; color:var(--muted);"><strong style="color:var(--ink);">Key Impact:</strong> ${ev.impact}</div>
+    <div class="inspector-impact"><strong class="inspector-impact-label">Key Impact:</strong> ${ev.impact}</div>
   `;
 }
 
@@ -362,7 +368,7 @@ function renderEventList() {
 
   const filtered = getFilteredEvents();
   if (filtered.length === 0) {
-    listEl.innerHTML = `<div style="padding:2rem; text-align:center; color:var(--muted);">No matching logbook entries found. Try clearing filters.</div>`;
+    listEl.innerHTML = `<div class="event-empty">No matching logbook entries found. Try clearing filters.</div>`;
     return;
   }
 
@@ -378,14 +384,14 @@ function renderEventList() {
     }[ev.category] || "badge-tune";
 
     return `
-      <div class="event-row ${isActive}" data-id="${ev.id}">
-        <div style="font-weight:700; font-size:0.88rem;">${ev.date}</div>
+      <div class="event-row ${isActive}" role="button" tabindex="0" aria-pressed="${ev.id === selectedEventId}" data-id="${ev.id}">
+        <div class="event-row-date">${ev.date}</div>
         <div class="event-category"><span class="badge ${catBadgeClass}">${ev.category}</span></div>
         <div>
-          <strong style="color:var(--ink); font-size:0.95rem;">${ev.title}</strong>
-          <div style="font-size:0.84rem; color:var(--muted); text-overflow:ellipsis; overflow:hidden; white-space:nowrap; max-width:480px;">${ev.summary}</div>
+          <strong class="event-row-title">${ev.title}</strong>
+          <div class="event-row-summary">${ev.summary}</div>
         </div>
-        <div style="font-size:0.8rem; color:var(--muted); font-variant-numeric:tabular-nums;">${ev.tokens}</div>
+        <div class="event-row-tokens">${ev.tokens}</div>
       </div>
     `;
   }).join("");
@@ -394,6 +400,14 @@ function renderEventList() {
     row.addEventListener("click", () => {
       // @ts-ignore
       selectEvent(row.dataset.id);
+    });
+    row.addEventListener("keydown", (e) => {
+      // @ts-ignore
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        // @ts-ignore
+        selectEvent(row.dataset.id);
+      }
     });
   });
 }
@@ -458,7 +472,7 @@ function renderTimelineSVG() {
     const markerY = baselineY + yOffset;
 
     return `
-      <g class="event-marker ${isSelected ? 'selected' : ''}" data-id="${ev.id}" opacity="${opacity}">
+      <g class="event-marker ${isSelected ? 'selected' : ''}" role="button" tabindex="0" aria-label="${ev.date}: ${ev.title}" data-id="${ev.id}" opacity="${opacity}">
         <line x1="${x}" y1="${baselineY}" x2="${x}" y2="${markerY}" stroke="${color}" stroke-width="${isSelected ? 2.5 : 1.2}" stroke-dasharray="${isSelected ? 'none' : '2,2'}" />
         <circle cx="${x}" cy="${markerY}" r="${radius}" fill="${color}" stroke="${isSelected ? '#fff' : 'none'}" stroke-width="2" />
         <text x="${x}" y="${markerY + (yOffset > 0 ? 16 : -10)}" font-size="10" font-weight="${isSelected ? '750' : '600'}" fill="${isSelected ? '#0e2b44' : '#486581'}" text-anchor="middle">
@@ -478,11 +492,19 @@ function renderTimelineSVG() {
     ${markersSVG}
   `;
 
-  // Attach click handlers to SVG markers
+  // Attach click and keyboard handlers to SVG markers
   svg.querySelectorAll(".event-marker").forEach(g => {
     g.addEventListener("click", () => {
       // @ts-ignore
       selectEvent(g.dataset.id);
+    });
+    g.addEventListener("keydown", (e) => {
+      // @ts-ignore
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        // @ts-ignore
+        selectEvent(g.dataset.id);
+      }
     });
   });
 }

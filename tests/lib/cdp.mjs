@@ -21,6 +21,7 @@ const BROWSERS = [
   "/usr/bin/chromium-browser",
   "/usr/bin/google-chrome-stable",
   "/usr/bin/google-chrome",
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
 ].filter(Boolean);
 
 export async function launch({ width = 1000, height = 800, profile = null, fakeMedia = false } = {}) {
@@ -140,18 +141,17 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
    * A device viewport: width, height, DPR-downscaled touch device. Used for the mobile half of a UI
    * check, because "it pushes the page on a phone" is not a claim a desktop window can falsify.
    */
+  let activeViewport = null;
+
   page.emulateViewport = async ({ width, height, mobile = true, scale = 2 }) => {
-    await page.send("Emulation.setDeviceMetricsOverride", {
-      width,
-      height,
-      deviceScaleFactor: scale,
-      mobile,
-    });
+    activeViewport = { width, height, deviceScaleFactor: scale, mobile };
+    await page.send("Emulation.setDeviceMetricsOverride", activeViewport);
     if (mobile) await page.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
     await sleep(150);
   };
 
   page.clearViewport = async () => {
+    activeViewport = null;
     await page.send("Emulation.clearDeviceMetricsOverride");
     await sleep(100);
   };
@@ -171,7 +171,14 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
     const { data } = await page.send("Page.captureScreenshot", params);
     const { writeFileSync } = await import("node:fs");
     writeFileSync(filePath, Buffer.from(data, "base64"));
-    if (fullPage) await page.send("Emulation.clearDeviceMetricsOverride");
+    if (fullPage) {
+      if (activeViewport) {
+        await page.send("Emulation.setDeviceMetricsOverride", activeViewport);
+      } else {
+        await page.send("Emulation.clearDeviceMetricsOverride");
+      }
+      await sleep(100);
+    }
     return filePath;
   };
 
@@ -247,15 +254,10 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
    */
   page.type = async (selector, text) => {
     await page.click(selector);
-    for (const type of ["keyDown", "keyUp"]) {
-      await page.send("Input.dispatchKeyEvent", {
-        type,
-        modifiers: 2, // Ctrl
-        key: "a",
-        code: "KeyA",
-        windowsVirtualKeyCode: 65,
-      });
-    }
+    await page.evaluate((sel) => {
+      const el = /** @type {HTMLInputElement | HTMLTextAreaElement | null} */ (document.querySelector(sel));
+      if (el && typeof el.select === "function") el.select();
+    }, selector);
     await page.send("Input.insertText", { text });
     await sleep(80);
   };
