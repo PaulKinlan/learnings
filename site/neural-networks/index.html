@@ -217,7 +217,7 @@
         <div class="nn-panel">
           <h3>Live Decision Boundary &amp; Point Probe</h3>
           <div class="canvas-frame">
-            <canvas id="mlp-canvas" class="decision-canvas" width="240" height="240" aria-label="2D decision boundary canvas"></canvas>
+            <canvas id="mlp-canvas" class="decision-canvas" width="320" height="320" aria-label="2D decision boundary canvas"></canvas>
             <div id="mlp-probe-readout" class="kernel-readout">Click anywhere on the canvas to run live forward inference &amp; load the sample into the Network Graph below.</div>
           </div>
 
@@ -234,6 +234,14 @@
             <p class="small">
               Inspect every neuron node (<code>z</code>, <code>a</code>, <code>b</code>, <code>δ</code>) and weighted synapse (<code>W</code>, <code>∂L/∂W</code>, <code>ΔW</code>) in the active network above. Step forward and backward through each micro-stage of <strong>Forward Inference</strong>, <strong>BCE Loss Evaluation</strong>, <strong>Reverse-Mode Backpropagation</strong>, and <strong>Optimizer Weight Updates</strong>—and click any node in the graph to inspect its exact arithmetic.
             </p>
+          </div>
+          <div class="stepper-size-control">
+            <label for="stepper-graph-size">Graph Canvas Scale</label>
+            <select id="stepper-graph-size">
+              <option value="large">Large Stage (520px Height)</option>
+              <option value="theatre">Extra-Large Theatre (680px Height)</option>
+              <option value="compact">Compact (380px Height)</option>
+            </select>
           </div>
         </div>
 
@@ -281,10 +289,10 @@
         </div>
 
         <div class="stepper-body-grid">
-          <!-- Left: Interactive SVG Network Graph -->
+          <!-- Full-Width Interactive SVG Network Graph Stage -->
           <div class="stepper-graph-card">
-            <div class="stepper-svg-container">
-              <svg id="nn-stepper-svg" class="nn-stepper-svg" viewBox="0 0 760 400" role="img" aria-label="Interactive neural network node and synapse graph"></svg>
+            <div id="stepper-svg-wrap" class="stepper-svg-container scale-large">
+              <svg id="nn-stepper-svg" class="nn-stepper-svg" viewBox="0 0 1120 560" role="img" aria-label="Interactive neural network node and synapse graph"></svg>
             </div>
             <div class="stepper-legend">
               <span class="legend-item"><span class="legend-swatch swatch-pos"></span> Positive weight / signal (W &gt; 0)</span>
@@ -295,9 +303,9 @@
             </div>
           </div>
 
-          <!-- Right: Selected Node & Incoming Synapses Inspector -->
+          <!-- Full-Width Selected Node & Incoming Synapses Inspector -->
           <div class="stepper-inspector-card">
-            <h4>Neuron &amp; Synapse Inspector (Click any node in graph)</h4>
+            <h4>Neuron &amp; Synapse Inspector (Click any node in graph above)</h4>
             <div id="stepper-node-pills" class="stepper-node-pills" role="group" aria-label="Select neuron node to inspect"></div>
             <div id="stepper-node-detail" class="stepper-node-detail" aria-live="polite"></div>
           </div>
@@ -412,7 +420,7 @@
           </li>
           <li>
             <strong>The Gated Solution — LSTM (Hochreiter &amp; Schmidhuber, 1997) &amp; GRU (Cho et al., 2014):</strong>
-            Instead of overwriting <code>h<sub>t</sub></code> through a multiplicative matrix + saturating <code>tanh</code> at every step, <strong>Long Short-Term Memory (LSTM)</strong> and the <strong>Gated Recurrent Unit (GRU)</strong> introduce a learnable sigmoid <strong>Update / Forget Gate</strong> <code>z<sub>t</sub> = σ(W<sub>xz</sub>x<sub>t</sub> + W<sub>hz</sub>h<sub>t−1</sub> + b<sub>z</sub>) ∈ (0, 1)</code> that interpolates <em>additively</em> between the old state and the new candidate state: <code>h<sub>t</sub> = (1 − z<sub>t</sub>) ⊙ h<sub>t−1</sub> + z<sub>t</sub> ⊙ h̃<sub>t</sub></code>. When the gate remains closed (<code>z<sub>t</sub> → 0</code>) across distractor tokens, <code>∂h<sub>t</sub>/∂h<sub>t−1</sub> ≈ I</code>—forming a <strong>Constant Error Carousel</strong> that carries both the memory of <code>x<sub>0</sub></code> forward and the error gradient <code>∂L<sub>T</sub>/∂h<sub>0</sub></code> backward across puluhan or hundreds of timesteps without attenuation!
+            Instead of overwriting <code>h<sub>t</sub></code> through a multiplicative matrix + saturating <code>tanh</code> at every step, <strong>Long Short-Term Memory (LSTM)</strong> and the <strong>Gated Recurrent Unit (GRU)</strong> introduce a learnable sigmoid <strong>Update / Forget Gate</strong> <code>z<sub>t</sub> = σ(W<sub>xz</sub>x<sub>t</sub> + W<sub>hz</sub>h<sub>t−1</sub> + b<sub>z</sub>) ∈ (0, 1)</code> that interpolates <em>additively</em> between the old state and the new candidate state: <code>h<sub>t</sub> = (1 − z<sub>t</sub>) ⊙ h<sub>t−1</sub> + z<sub>t</sub> ⊙ h̃<sub>t</sub></code>. When the gate remains closed (<code>z<sub>t</sub> → 0</code>) across distractor tokens, <code>∂h<sub>t</sub>/∂h<sub>t−1</sub> ≈ I</code>—forming a <strong>Constant Error Carousel</strong> that carries both the memory of <code>x<sub>0</sub></code> forward and the error gradient <code>∂L<sub>T</sub>/∂h<sub>0</sub></code> backward across dozens or hundreds of timesteps without attenuation!
           </li>
         </ul>
       </div>

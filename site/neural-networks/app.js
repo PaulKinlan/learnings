@@ -484,26 +484,28 @@ function initMlpLab() {
     if (!stepperSvg) return;
     stepperSvg.replaceChildren();
 
-    const W = 760;
-    const H = 400;
     const numLayers = trace.nodesByLayer.length; // L + 1
     const maxDim = Math.max(...trace.layerSizes);
-    const nodeRadius = maxDim <= 4 ? 22 : maxDim <= 8 ? 16 : 12;
+    const W = 1120;
+    const H = maxDim >= 10 ? 680 : maxDim >= 8 ? 620 : 560;
+    stepperSvg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+
+    const nodeRadius = maxDim <= 4 ? 34 : maxDim <= 8 ? 25 : 19;
 
     // Background
     const bg = document.createElementNS(SVG_NS, "rect");
     bg.setAttribute("width", String(W));
     bg.setAttribute("height", String(H));
-    bg.setAttribute("rx", "6");
-    bg.setAttribute("fill", "#0b192c");
+    bg.setAttribute("rx", "8");
+    bg.setAttribute("fill", "#081424");
     stepperSvg.appendChild(bg);
 
     // Compute (cx, cy) for every node
-    const padLeft = 80;
-    const padRight = 155;
+    const padLeft = 115;
+    const padRight = 275;
     const usableW = W - padLeft - padRight;
-    const topY = 64;
-    const botY = H - 28;
+    const topY = 86;
+    const botY = H - 44;
     const availH = botY - topY;
 
     /** @type {Array<Array<{ x: number, y: number, node: any }>>} */
@@ -512,7 +514,7 @@ function initMlpLab() {
       const layerNodes = trace.nodesByLayer[l];
       const dim = layerNodes.length;
       const cx = numLayers === 1 ? W / 2 : padLeft + (l / (numLayers - 1)) * usableW;
-      const stepY = dim === 1 ? 0 : Math.min(74, availH / (dim - 1));
+      const stepY = dim === 1 ? 0 : Math.min(115, availH / (dim - 1));
       const totalH = stepY * (dim - 1);
       const startY = (topY + botY - totalH) / 2;
 
@@ -526,32 +528,32 @@ function initMlpLab() {
       }
       coords.push(col);
 
-      // Column Header Label
+      // Column Header Pill
       const isLayerActive = step.activeLayer === l || step.phase === "update";
       const headerGroup = document.createElementNS(SVG_NS, "g");
       const headerBg = document.createElementNS(SVG_NS, "rect");
-      headerBg.setAttribute("x", String(cx - 52));
-      headerBg.setAttribute("y", "10");
-      headerBg.setAttribute("width", "104");
-      headerBg.setAttribute("height", "24");
-      headerBg.setAttribute("rx", "12");
-      headerBg.setAttribute("fill", isLayerActive ? "#0284c7" : "#162e47");
-      headerBg.setAttribute("stroke", isLayerActive ? "#7dd3fc" : "#2b4c6f");
-      headerBg.setAttribute("stroke-width", "1");
+      headerBg.setAttribute("x", String(cx - 78));
+      headerBg.setAttribute("y", "14");
+      headerBg.setAttribute("width", "156");
+      headerBg.setAttribute("height", "34");
+      headerBg.setAttribute("rx", "17");
+      headerBg.setAttribute("fill", isLayerActive ? "#0369a1" : "#152c46");
+      headerBg.setAttribute("stroke", isLayerActive ? "#bae6fd" : "#3b5978");
+      headerBg.setAttribute("stroke-width", isLayerActive ? "1.8" : "1.2");
 
       const headerTxt = document.createElementNS(SVG_NS, "text");
       headerTxt.setAttribute("x", String(cx));
-      headerTxt.setAttribute("y", "26");
+      headerTxt.setAttribute("y", "36");
       headerTxt.setAttribute("text-anchor", "middle");
-      headerTxt.setAttribute("fill", isLayerActive ? "#ffffff" : "#cbd5e1");
-      headerTxt.setAttribute("font-size", "11");
-      headerTxt.setAttribute("font-weight", "700");
+      headerTxt.setAttribute("fill", "#ffffff");
+      headerTxt.setAttribute("font-size", "13.5");
+      headerTxt.setAttribute("font-weight", "800");
       headerTxt.setAttribute("font-family", "ui-monospace, monospace");
       headerTxt.textContent = l === 0
-        ? `L0 Input (${dim})`
+        ? `L0 · Input (${dim})`
         : l === numLayers - 1
-          ? `L${l} Out (${dim})`
-          : `L${l} Hidden (${dim})`;
+          ? `L${l} · Output (${dim})`
+          : `L${l} · Hidden (${dim})`;
 
       headerGroup.append(headerBg, headerTxt);
       stepperSvg.appendChild(headerGroup);
@@ -573,16 +575,16 @@ function initMlpLab() {
           const isSelectedEdge = selectedNodeId === dst.node.id || selectedNodeId === src.node.id;
 
           let stroke = wVal >= 0 ? "#38bdf8" : "#fb7185";
-          let opacity = isSelectedEdge ? 0.85 : 0.28;
-          let width = 0.8 + Math.min(2.6, Math.abs(wVal)) * 1.4;
+          let opacity = isSelectedEdge ? 0.94 : 0.42;
+          let width = 1.2 + Math.min(2.8, Math.abs(wVal)) * 1.6;
 
           if (isEdgeLayerActive) {
-            opacity = 0.92;
-            width += 1.1;
+            opacity = 0.96;
+            width += 1.4;
             if (step.phase === "forward") {
-              stroke = edge.contrib >= 0 ? "#38bdf8" : "#f43f5e";
+              stroke = edge.contrib >= 0 ? "#38bdf8" : "#fb7185";
             } else if (step.phase === "backward") {
-              stroke = edge.dW >= 0 ? "#f59e0b" : "#ec4899";
+              stroke = edge.dW >= 0 ? "#fbbf24" : "#f472b6";
             } else if (isUpdatePhase) {
               stroke = "#34d399";
             }
@@ -597,37 +599,39 @@ function initMlpLab() {
           line.setAttribute("stroke-width", width.toFixed(2));
           line.setAttribute("opacity", opacity.toFixed(2));
           if (isEdgeLayerActive && (step.phase === "forward" || step.phase === "backward")) {
-            line.setAttribute("stroke-dasharray", "6 4");
+            line.setAttribute("stroke-dasharray", "8 5");
           }
           edgesGroup.appendChild(line);
 
           // Show inline weight/gradient badge on incoming edges of the selected node when layer is compact
           if (selectedNodeId === dst.node.id && coords[l - 1].length <= 8) {
-            const mx = src.x + (dst.x - src.x) * 0.56;
-            const my = src.y + (dst.y - src.y) * 0.56;
+            const frac = coords[l - 1].length > 2 ? (0.42 + (i % 2) * 0.20) : 0.52;
+            const mx = src.x + (dst.x - src.x) * frac;
+            const my = src.y + (dst.y - src.y) * frac;
             const badgeText = step.phase === "backward"
-              ? `∇W=${edge.dW.toFixed(2)}`
+              ? `∇W=${edge.dW >= 0 ? "+" : ""}${edge.dW.toFixed(2)}`
               : isUpdatePhase
-                ? `W=${edge.wAfter.toFixed(2)}`
-                : `W=${edge.wBefore.toFixed(2)}`;
+                ? `W=${edge.wAfter >= 0 ? "+" : ""}${edge.wAfter.toFixed(2)}`
+                : `W=${edge.wBefore >= 0 ? "+" : ""}${edge.wBefore.toFixed(2)}`;
 
             const lblBg = document.createElementNS(SVG_NS, "rect");
-            lblBg.setAttribute("x", String(mx - 28));
-            lblBg.setAttribute("y", String(my - 8));
-            lblBg.setAttribute("width", "56");
-            lblBg.setAttribute("height", "15");
-            lblBg.setAttribute("rx", "3");
-            lblBg.setAttribute("fill", "#081424");
+            lblBg.setAttribute("x", String(mx - 44));
+            lblBg.setAttribute("y", String(my - 12));
+            lblBg.setAttribute("width", "88");
+            lblBg.setAttribute("height", "24");
+            lblBg.setAttribute("rx", "5");
+            lblBg.setAttribute("fill", "#06101e");
             lblBg.setAttribute("stroke", stroke);
-            lblBg.setAttribute("stroke-width", "0.8");
-            lblBg.setAttribute("opacity", "0.92");
+            lblBg.setAttribute("stroke-width", "1.4");
+            lblBg.setAttribute("opacity", "0.97");
 
             const lblTxt = document.createElementNS(SVG_NS, "text");
             lblTxt.setAttribute("x", String(mx));
-            lblTxt.setAttribute("y", String(my + 3));
+            lblTxt.setAttribute("y", String(my + 4.5));
             lblTxt.setAttribute("text-anchor", "middle");
-            lblTxt.setAttribute("fill", "#e2e8f0");
-            lblTxt.setAttribute("font-size", "9");
+            lblTxt.setAttribute("fill", "#ffffff");
+            lblTxt.setAttribute("font-size", "12");
+            lblTxt.setAttribute("font-weight", "700");
             lblTxt.setAttribute("font-family", "ui-monospace, monospace");
             lblTxt.textContent = badgeText;
 
@@ -661,7 +665,7 @@ function initMlpLab() {
           const halo = document.createElementNS(SVG_NS, "circle");
           halo.setAttribute("cx", String(x));
           halo.setAttribute("cy", String(y));
-          halo.setAttribute("r", String(nodeRadius + 4));
+          halo.setAttribute("r", String(nodeRadius + 6));
           halo.setAttribute("fill", "none");
           halo.setAttribute(
             "stroke",
@@ -673,42 +677,45 @@ function initMlpLab() {
                   ? "#34d399"
                   : "#38bdf8"
           );
-          halo.setAttribute("stroke-width", isSelected ? "3" : "2");
+          halo.setAttribute("stroke-width", isSelected ? "3.5" : "2.4");
           g.appendChild(halo);
         }
 
-        // Node Circle Fill based on activation sign/magnitude
+        // Node Circle Fill based on activation sign/magnitude (WCAG AA/AAA contrast for #ffffff text)
         const circle = document.createElementNS(SVG_NS, "circle");
         circle.setAttribute("cx", String(x));
         circle.setAttribute("cy", String(y));
         circle.setAttribute("r", String(nodeRadius));
         const actVal = node.a;
         const fill = actVal >= 0
-          ? (actVal > 0.45 ? "#0284c7" : "#1e3a5f")
-          : "#881337";
+          ? (actVal > 0.45 ? "#0369a1" : "#16324f")
+          : "#9f1239";
         circle.setAttribute("fill", fill);
-        circle.setAttribute("stroke", isSelected ? "#fef08a" : "#94a3b8");
-        circle.setAttribute("stroke-width", isSelected ? "2.2" : "1.2");
+        circle.setAttribute("stroke", isSelected ? "#fef08a" : "#bae6fd");
+        circle.setAttribute("stroke-width", isSelected ? "2.8" : "1.6");
         g.appendChild(circle);
 
-        // Node text labels
-        if (nodeRadius >= 16) {
+        // Node text labels (high-contrast white text)
+        if (nodeRadius >= 24) {
+          const fontSizeTop = nodeRadius >= 32 ? "13.5" : "11.5";
+          const fontSizeBot = nodeRadius >= 32 ? "12.5" : "11";
           const nameTxt = document.createElementNS(SVG_NS, "text");
           nameTxt.setAttribute("x", String(x));
-          nameTxt.setAttribute("y", String(y - 3));
+          nameTxt.setAttribute("y", String(y - 4));
           nameTxt.setAttribute("text-anchor", "middle");
-          nameTxt.setAttribute("fill", "#bae6fd");
-          nameTxt.setAttribute("font-size", "9.5");
-          nameTxt.setAttribute("font-weight", "700");
+          nameTxt.setAttribute("fill", "#ffffff");
+          nameTxt.setAttribute("font-size", fontSizeTop);
+          nameTxt.setAttribute("font-weight", "800");
           nameTxt.setAttribute("font-family", "ui-monospace, monospace");
           nameTxt.textContent = node.label;
 
           const valTxt = document.createElementNS(SVG_NS, "text");
           valTxt.setAttribute("x", String(x));
-          valTxt.setAttribute("y", String(y + 9));
+          valTxt.setAttribute("y", String(y + 13));
           valTxt.setAttribute("text-anchor", "middle");
-          valTxt.setAttribute("fill", "#ffffff");
-          valTxt.setAttribute("font-size", "9.5");
+          valTxt.setAttribute("fill", "#f8fafc");
+          valTxt.setAttribute("font-size", fontSizeBot);
+          nameTxt.setAttribute("font-weight", "700");
           valTxt.setAttribute("font-family", "ui-monospace, monospace");
           valTxt.textContent = step.phase === "backward"
             ? `δ${node.delta >= 0 ? "+" : ""}${node.delta.toFixed(2)}`
@@ -718,10 +725,11 @@ function initMlpLab() {
         } else {
           const valTxt = document.createElementNS(SVG_NS, "text");
           valTxt.setAttribute("x", String(x));
-          valTxt.setAttribute("y", String(y + 3));
+          valTxt.setAttribute("y", String(y + 4));
           valTxt.setAttribute("text-anchor", "middle");
           valTxt.setAttribute("fill", "#ffffff");
-          valTxt.setAttribute("font-size", "8.5");
+          valTxt.setAttribute("font-size", "11");
+          valTxt.setAttribute("font-weight", "700");
           valTxt.setAttribute("font-family", "ui-monospace, monospace");
           valTxt.textContent = node.a.toFixed(2);
           g.appendChild(valTxt);
@@ -748,36 +756,37 @@ function initMlpLab() {
     // Output Readout & Loss Summary Box on Right of Output Node
     const outCoord = coords[numLayers - 1][0];
     if (outCoord) {
-      const boxX = outCoord.x + 34;
-      const boxY = Math.max(54, Math.min(H - 130, outCoord.y - 54));
+      const boxX = outCoord.x + nodeRadius + 24;
+      const boxY = Math.max(70, Math.min(H - 170, outCoord.y - 76));
       const summaryGroup = document.createElementNS(SVG_NS, "g");
 
       const boxRect = document.createElementNS(SVG_NS, "rect");
       boxRect.setAttribute("x", String(boxX));
       boxRect.setAttribute("y", String(boxY));
-      boxRect.setAttribute("width", "114");
-      boxRect.setAttribute("height", "108");
-      boxRect.setAttribute("rx", "6");
-      boxRect.setAttribute("fill", "#10253e");
-      boxRect.setAttribute("stroke", isUpdatePhase ? "#34d399" : "#38bdf8");
-      boxRect.setAttribute("stroke-width", "1.2");
+      boxRect.setAttribute("width", "218");
+      boxRect.setAttribute("height", "152");
+      boxRect.setAttribute("rx", "8");
+      boxRect.setAttribute("fill", "#0f243c");
+      boxRect.setAttribute("stroke", isUpdatePhase ? "#34d399" : "#7dd3fc");
+      boxRect.setAttribute("stroke-width", "1.8");
       summaryGroup.appendChild(boxRect);
 
       const shownPred = isUpdatePhase ? trace.predAfter : trace.predBefore;
       const shownLoss = isUpdatePhase ? trace.lossAfter : trace.lossBefore;
       const lines = [
-        { label: isUpdatePhase ? "ŷ (after)" : "ŷ (pred)", val: shownPred.toFixed(4), color: "#38bdf8" },
-        { label: "Target y", val: String(trace.y), color: "#f8fafc" },
-        { label: "BCE Loss", val: shownLoss.toFixed(4), color: "#fbbf24" },
-        { label: "δ (ŷ − y)", val: (trace.predBefore - trace.y).toFixed(4), color: "#fb7185" }
+        { label: isUpdatePhase ? "ŷ (after)" : "ŷ (pred)", val: shownPred.toFixed(4), color: "#7dd3fc" },
+        { label: "Target y", val: String(trace.y), color: "#ffffff" },
+        { label: "BCE Loss", val: shownLoss.toFixed(4), color: "#fde047" },
+        { label: "δ (ŷ − y)", val: (trace.predBefore - trace.y).toFixed(4), color: "#fda4af" }
       ];
 
       lines.forEach((item, idx) => {
         const txt = document.createElementNS(SVG_NS, "text");
-        txt.setAttribute("x", String(boxX + 8));
-        txt.setAttribute("y", String(boxY + 22 + idx * 23));
+        txt.setAttribute("x", String(boxX + 14));
+        txt.setAttribute("y", String(boxY + 34 + idx * 32));
         txt.setAttribute("fill", item.color);
-        txt.setAttribute("font-size", "10");
+        txt.setAttribute("font-size", "13.5");
+        txt.setAttribute("font-weight", "700");
         txt.setAttribute("font-family", "ui-monospace, monospace");
         txt.textContent = `${item.label}: ${item.val}`;
         summaryGroup.appendChild(txt);
@@ -825,6 +834,9 @@ function initMlpLab() {
     header.appendChild(title);
     detailEl.appendChild(header);
 
+    const splitWrap = document.createElement("div");
+    splitWrap.className = "inspector-detail-split";
+
     const kpiGrid = document.createElement("div");
     kpiGrid.className = "inspector-kpi-grid";
     const kpis = node.role === "input"
@@ -853,7 +865,7 @@ function initMlpLab() {
       cell.append(lbl, val);
       kpiGrid.appendChild(cell);
     }
-    detailEl.appendChild(kpiGrid);
+    splitWrap.appendChild(kpiGrid);
 
     if (node.incoming && node.incoming.length > 0) {
       const tblWrap = document.createElement("div");
@@ -862,7 +874,7 @@ function initMlpLab() {
       tbl.className = "attn-table synapse-table";
       const thead = document.createElement("thead");
       const htr = document.createElement("tr");
-      ["From", "a_prev", "W", "a·W", "∂L/∂W", "W_new"].forEach((col) => {
+      ["From Synapse", "a_prev", "Weight W", "Signal a·W", "Grad ∂L/∂W", "Updated W_new"].forEach((col) => {
         const th = document.createElement("th");
         th.textContent = col;
         htr.appendChild(th);
@@ -889,13 +901,24 @@ function initMlpLab() {
       }
       tbl.appendChild(tbody);
       tblWrap.appendChild(tbl);
-      detailEl.appendChild(tblWrap);
+      splitWrap.appendChild(tblWrap);
     } else {
       const note = document.createElement("p");
       note.className = "small";
       note.textContent = "Input layer node: receives external coordinate feature directly. Click a Hidden (h) or Output (ŷ) node to inspect incoming synapse weights and gradients.";
-      detailEl.appendChild(note);
+      splitWrap.appendChild(note);
     }
+
+    detailEl.appendChild(splitWrap);
+  }
+
+  const graphSizeSelect = /** @type {HTMLSelectElement | null} */ ($("stepper-graph-size"));
+  const svgWrapEl = $("stepper-svg-wrap");
+  if (graphSizeSelect && svgWrapEl) {
+    graphSizeSelect.addEventListener("change", () => {
+      svgWrapEl.classList.remove("scale-compact", "scale-large", "scale-theatre");
+      svgWrapEl.classList.add(`scale-${graphSizeSelect.value}`);
+    });
   }
 
   if (stepperModeEl && stepperSampleEl) {
