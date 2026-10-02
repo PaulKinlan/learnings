@@ -28,6 +28,15 @@ import {
   analyzeArchitecturePipeline
 } from "./engine.js";
 import { HYPERPARAMETER_GUIDE, KERNEL_CODE_BLUEPRINTS } from "./curriculum.js";
+import {
+  createCnnStepper,
+  createRnnStepper,
+  createResNetStepper,
+  createTransformerStepper,
+  createDiffusionStepper,
+  createDecisionStepper,
+  createBuilderStepper
+} from "./steppers.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -1187,7 +1196,10 @@ function initCnnLab() {
         fmapContainer.appendChild(card);
       }
     }
+    cnnStepper?.refresh();
   }
+
+  let cnnStepper = null;
 
   document.querySelectorAll("[data-glyph-preset]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -1223,6 +1235,7 @@ function initCnnLab() {
   let initStats = null;
   for (let e = 0; e < 18; e++) initStats = cnn.trainEpoch(samples, 0.08);
   buildPixelGrid();
+  cnnStepper = createCnnStepper($("cnn-stepper"), () => ({ cnn, currentImg }));
   renderCnnForward(initStats);
 }
 
@@ -1240,6 +1253,8 @@ function initRnnLab() {
   let seqLen = parseInt(lenSelect.value, 10) || 8;
   let batch = generateTemporalSequenceBatch(taskSelect.value, seqLen, 28, 303);
   let rnn = createRnn();
+  let lastRnnStats = null;
+  let rnnStepper = null;
 
   function createRnn() {
     seqLen = parseInt(lenSelect.value, 10) || 8;
@@ -1253,6 +1268,7 @@ function initRnnLab() {
 
   function renderRnn(stats) {
     if (!stats) return;
+    lastRnnStats = stats;
     $("rnn-epoch").textContent = String(stats.step);
     $("rnn-loss").textContent = stats.loss.toFixed(4);
     $("rnn-acc").textContent = `${(stats.accuracy * 100).toFixed(1)}%`;
@@ -1276,6 +1292,7 @@ function initRnnLab() {
       row.append(label, meter, val);
       stripEl.appendChild(row);
     });
+    rnnStepper?.refresh();
   }
 
   function resetAndWarmup() {
@@ -1309,6 +1326,7 @@ function initRnnLab() {
   });
 
   resetAndWarmup();
+  rnnStepper = createRnnStepper($("rnn-stepper"), () => ({ rnn, batch, lastStats: lastRnnStats }));
 }
 
 // ============================================================================
@@ -1325,6 +1343,8 @@ function initDeepResNetLab() {
 
   const dataset = generate2DDataset("xor", 48, 77);
   let net = createNet();
+  let lastResStats = null;
+  let resnetStepper = null;
 
   function createNet() {
     return new DeepResidualNetwork({
@@ -1339,6 +1359,7 @@ function initDeepResNetLab() {
 
   function renderResNet(stats) {
     if (!stats) return;
+    lastResStats = stats;
     $("resnet-step").textContent = String(stats.step);
     $("resnet-loss").textContent = stats.loss.toFixed(4);
     $("resnet-acc").textContent = `${(stats.accuracy * 100).toFixed(1)}%`;
@@ -1361,6 +1382,7 @@ function initDeepResNetLab() {
       row.append(label, meter, val);
       barsEl.appendChild(row);
     });
+    resnetStepper?.refresh();
   }
 
   function resetAndProbe() {
@@ -1390,6 +1412,7 @@ function initDeepResNetLab() {
   $("resnet-reset-btn")?.addEventListener("click", resetAndProbe);
 
   resetAndProbe();
+  resnetStepper = createResNetStepper($("resnet-stepper"), () => ({ net, lastStats: lastResStats }));
 }
 
 // ============================================================================
@@ -1404,6 +1427,7 @@ function initTransformerLab() {
 
   let batch = generateSequenceBatch(taskSelect.value, 4, 28, 99);
   let tf = createTf();
+  let tfStepper = null;
 
   function createTf() {
     return new MicroTransformer({
@@ -1484,6 +1508,7 @@ function initTransformerLab() {
         headsContainer.appendChild(box);
       });
     }
+    tfStepper?.refresh();
   }
 
   [taskSelect, maskSelect].forEach((sel) => {
@@ -1520,6 +1545,7 @@ function initTransformerLab() {
 
   let initSt = null;
   for (let e = 0; e < 28; e++) initSt = tf.trainEpoch(batch, 0.12);
+  tfStepper = createTransformerStepper($("transformer-stepper"), () => ({ tf, tokenIds: parseProbeTokens() }));
   renderTransformer(initSt);
 }
 
@@ -1535,6 +1561,7 @@ function initDiffusionLab() {
 
   let ddpm = new MicroDDPM({ dim: 36, steps: 16, hiddenDim: 48, seed: 512 });
   let trajectory = [];
+  let diffStepper = null;
 
   function renderDdpm(stats = null, seed = 808) {
     if (stats) {
@@ -1543,6 +1570,7 @@ function initDiffusionLab() {
     }
     trajectory = ddpm.sampleTrajectory(seed);
     renderDdpmSnapshots();
+    diffStepper?.refresh();
   }
 
   function renderDdpmSnapshots() {
@@ -1634,6 +1662,7 @@ function initDiffusionLab() {
       });
       container.appendChild(row);
     }
+    diffStepper?.refresh();
   }
 
   textPromptSelect.addEventListener("change", () => renderTextDiffusion());
@@ -1661,6 +1690,13 @@ function initDiffusionLab() {
   let initTextSt = null;
   for (let i = 0; i < 35; i++) initTextSt = textDiff.trainStep(null, 0.2);
   renderTextDiffusion(initTextSt);
+
+  diffStepper = createDiffusionStepper($("diffusion-stepper"), () => ({
+    ddpm,
+    trajectory,
+    textDiff,
+    textPromptIdx: parseInt(textPromptSelect.value, 10) || 0
+  }));
 }
 
 // ============================================================================
@@ -1693,6 +1729,9 @@ function initDecisionLab() {
     ood: new Float32Array([0.02, -0.04, 0.01, 0.03, -0.02, 0.01, -0.01, 0.02])
   };
 
+  let decStepper = null;
+  let lastDecState = null;
+
   function update() {
     const T = Number(tempInput.value);
     const tau = Number(gateInput.value);
@@ -1701,6 +1740,7 @@ function initDecisionLab() {
 
     const stateVec = stateScenarios[scenSelect.value] || stateScenarios.clear;
     const res = head.decide(stateVec, optionVecs, { temperature: T, gateThreshold: tau });
+    lastDecState = { stateVec, optionVecs, optionLabels, T, tau, res };
 
     const out = $("dec-output");
     if (!out) return;
@@ -1726,10 +1766,12 @@ function initDecisionLab() {
       row.append(name, meter, val);
       out.appendChild(row);
     });
+    decStepper?.refresh();
   }
 
   [scenSelect, tempInput, gateInput].forEach((el) => el.addEventListener("input", update));
   update();
+  decStepper = createDecisionStepper($("decision-stepper"), () => lastDecState);
 }
 
 // ============================================================================
@@ -1742,6 +1784,7 @@ function initBlockBuilder() {
   if (!paletteEl || !stackEl) return;
 
   let pipeline = ["embedding", "layernorm", "attention", "layernorm", "mlp_block", "decision_head"];
+  let builderStepper = null;
 
   function renderPalette() {
     paletteEl.replaceChildren();
@@ -1804,6 +1847,7 @@ function initBlockBuilder() {
       item.append(titleCol, paramCol, flopCol, actCol, gradCol, removeBtn);
       stackEl.appendChild(item);
     });
+    builderStepper?.refresh();
   }
 
   $("btn-register-ssm").addEventListener("click", () => {
@@ -1853,6 +1897,7 @@ function initBlockBuilder() {
 
   renderPalette();
   renderPipeline();
+  builderStepper = createBuilderStepper($("builder-stepper"), () => pipeline);
 }
 
 export function initNeuralNetworksApp() {
