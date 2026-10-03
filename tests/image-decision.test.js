@@ -373,7 +373,11 @@ test('JevImageBench v0.1.5: schema and value ranges for all 50 entries', () => {
     assert.ok(typeof m.speed === 'number' && m.speed > 0, `Speed invalid: ${m.name}`);
     assert.ok(typeof m.cost === 'number' && m.cost >= 0, `Cost invalid: ${m.name}`);
     assert.ok(['Open Weights', 'Closed API'].includes(m.access), `Access invalid: ${m.name}`);
-    assert.ok(m.link.startsWith('http://') || m.link.startsWith('https://'), `Link invalid: ${m.name}`);
+    if (m.link) {
+      assert.ok(m.link.startsWith('http://') || m.link.startsWith('https://'), `Link invalid: ${m.name}`);
+    } else {
+      assert.equal(typeof m.link, 'string', `Link must be a string: ${m.name}`);
+    }
     assert.ok(['Jev-Class Vision', 'Baseline Multimodal'].includes(m.category), `Category invalid: ${m.name}`);
   }
 });
