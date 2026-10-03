@@ -7,7 +7,7 @@ import {
   ACTIVATIONS, numericalDerivative, gradientThroughDepth,
   PERCEPTRON_DATASETS, perceptronOutput, trainPerceptron, xorTwoLayer,
   softmax, entropy, crossEntropy, softmaxCrossEntropyGrad, expectedCalibrationError, mse,
-  SURFACES, makeOptimizer, optimizePath,
+  SURFACES, OPTIMIZERS, RACE_LEARNING_RATES, makeOptimizer, optimizePath,
   Value, buildTinyNetwork, TINY_NET_DEFAULTS, singleNeuronChainRule,
   conv2d, conv2dOutputSize, conv2dMulti, zeroPad, maxPool2d, relu2d, KERNEL_PRESETS,
   scaledDotProductAttention, matmul, layerNorm, rmsNorm, rope, dot, moeRoute,
@@ -122,6 +122,54 @@ test('every optimizer reduces the loss on the bowl and on Rosenbrock', () => {
 test('plain SGD from the default start settles in the local (right-hand) well of the double well', () => {
   const r = optimizePath('doubleWell', 'sgd', { lr: 0.05, steps: 500 });
   assert.ok(r.path.at(-1).x > 0.9 && r.path.at(-1).x < 1.0, `ended at x=${r.path.at(-1).x}`);
+});
+
+test('the gradient-descent race shows what the chapter says it shows', () => {
+  const race = (surface, opt) => optimizePath(surface, opt, { lr: RACE_LEARNING_RATES[surface][opt], steps: 300 });
+  const gap = (surface, r) => r.path.at(-1).loss - SURFACES[surface].f(...SURFACES[surface].minimum);
+  // Bowl: all six reach the minimum; SGD zig-zags across the steep direction on the way.
+  for (const opt of Object.keys(OPTIMIZERS)) {
+    const r = race('bowl', opt);
+    assert.equal(r.diverged, false, `bowl ${opt}`);
+    assert.ok(gap('bowl', r) < 1e-6, `bowl ${opt} gap ${gap('bowl', r)}`);
+  }
+  const sgdBowl = race('bowl', 'sgd').path;
+  assert.ok(Math.sign(sgdBowl[1].y) !== Math.sign(sgdBowl[2].y), 'SGD zig-zags in y on the bowl');
+  // Rosenbrock: SGD and momentum get closest; Adam and AdamW crawl; RMSProp lags; AdaGrad stalls.
+  for (const opt of ['sgd', 'momentum']) assert.ok(gap('rosenbrock', race('rosenbrock', opt)) < 0.01, opt);
+  for (const opt of ['adam', 'adamw']) {
+    const g = gap('rosenbrock', race('rosenbrock', opt));
+    assert.ok(g > 0.01 && g < 1, `${opt} gap ${g}`);
+  }
+  const ada = gap('rosenbrock', race('rosenbrock', 'adagrad'));
+  const rms = gap('rosenbrock', race('rosenbrock', 'rmsprop'));
+  assert.ok(ada > 1 && rms > 1 && rms < ada, `adagrad ${ada}, rmsprop ${rms}`);
+  assert.ok(optimizePath('rosenbrock', 'sgd', { lr: 0.005, steps: 300 }).diverged, 'SGD at 0.005 blows up in the valley');
+  // Double well: only momentum crosses the hump into the deeper well.
+  for (const opt of Object.keys(OPTIMIZERS)) {
+    const x = race('doubleWell', opt).path.at(-1).x;
+    if (opt === 'momentum') assert.ok(x < -0.9, `momentum ended at x=${x}`);
+    else assert.ok(x > 0.9, `${opt} ended at x=${x}`);
+  }
+  // The stability demo: on the bowl λmax = 10, so the limit is η < 0.2.
+  assert.ok(optimizePath('bowl', 'sgd', { lr: 0.19, steps: 300 }).path.at(-1).loss < 1e-6);
+  assert.ok(optimizePath('bowl', 'sgd', { lr: 0.21, steps: 300 }).diverged);
+});
+
+test('double well has a shallower local minimum; Rosenbrock is ~2,500x more curved across than along at (1, 1)', () => {
+  const dw = SURFACES.doubleWell;
+  const [lx, ly] = dw.localMinimum;
+  assert.ok(Math.hypot(...dw.grad(lx, ly)) < 1e-3);
+  assert.ok(dw.f(lx, ly) > dw.f(...dw.minimum));
+  // Hessian at (1, 1) is [[802, -400], [-400, 200]]: eigenvalues ~1001.6 and ~0.4
+  const h = 1e-4, g = SURFACES.rosenbrock.grad;
+  const hxx = (g(1 + h, 1)[0] - g(1 - h, 1)[0]) / (2 * h);
+  const hyy = (g(1, 1 + h)[1] - g(1, 1 - h)[1]) / (2 * h);
+  const hxy = (g(1, 1 + h)[0] - g(1, 1 - h)[0]) / (2 * h);
+  const mean = (hxx + hyy) / 2, r = Math.hypot((hxx - hyy) / 2, hxy);
+  const ratio = (mean + r) / (mean - r);
+  assert.ok(ratio > 2400 && ratio < 2600, `curvature ratio ${ratio}`);
+  close(2 / (mean + r), 0.002, 1e-4);
 });
 
 test('AdamW decays weights even with zero gradient; Adam does not (decoupled weight decay)', () => {

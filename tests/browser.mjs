@@ -79,6 +79,10 @@ try{
  await p.goto(base+'decision-models/catalogue.html');check('catalogue contains 37 concrete entries',await p.evaluate(()=>document.querySelectorAll('tbody tr').length===37));check('catalogue no mobile document overflow',await p.evaluate(()=>innerWidth===390&&document.documentElement.scrollWidth<=innerWidth));
  await p.goto(base+'neural-networks/');await p.waitFor(()=>document.querySelectorAll('#nn-stack > li[data-slug]').length>0);
  check('neural-networks chapter hub renders the chapter stack and native MathML without overflow',await p.evaluate(()=>document.querySelectorAll('#nn-stack > li[data-slug]').length>=15&&document.querySelectorAll('main math').length>=3&&innerWidth===390&&document.documentElement.scrollWidth<=innerWidth));
+ await p.goto(base+'neural-networks/gradient-descent.html');await p.waitFor(()=>document.querySelectorAll('#gd-results tr').length===6);
+ check('gradient-descent race draws six optimisers, sidebar marks the chapter, MathML renders, no mobile overflow',await p.evaluate(()=>document.querySelectorAll('#gd-results tr').length===6&&document.querySelector('[data-chapter-nav] a[aria-current="page"]')!==null&&document.querySelectorAll('main math').length>=8&&innerWidth===390&&document.documentElement.scrollWidth<=innerWidth));
+ await p.click('#gd-compare');await p.waitFor(()=>document.querySelectorAll('#gd-results tr').length===2);
+ check('gradient-descent stability demo: eta 0.19 reaches the minimum and 0.21 diverges',await p.evaluate(()=>{const r=[...document.querySelectorAll('#gd-results tr')].map((t)=>t.textContent);return r[0].includes('Reached')&&r[1].includes('Diverged');}));
  await p.goto(base+'neural-networks/lab.html');await p.waitFor(()=>document.querySelector('#mlp-epoch').textContent!=='0');
  check('neural-networks WASM GEMM kernel and interactive trainers render',await p.evaluate(()=>document.querySelector('#kernel-readout').textContent.includes('WebAssembly')&&document.querySelectorAll('#builder-stack .block-item').length===6));
  await p.click('#stepper-next-btn');await p.click('#cnn-step-next-btn');await p.click('#rnn-step-next-btn');await p.click('#tf-step-next-btn');

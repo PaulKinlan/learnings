@@ -30,7 +30,6 @@ export const CHAPTERS = [
     summary:
       "Learning as walking downhill. From Cauchy's 1847 method to momentum, Adam and AdamW, with a loss landscape you can roll a ball across.",
     buildsOn: ["neuron-and-perceptron.html"],
-    planned: true,
   },
   {
     slug: "backpropagation.html",

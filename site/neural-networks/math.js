@@ -274,6 +274,7 @@ export const SURFACES = {
     domain: { x: [-2, 2], y: [-2, 2] },
     start: [1.8, 1.5],
     minimum: [-1.036, 0],
+    localMinimum: [0.9601, 0],
     f: (x, y) => (x * x - 1) ** 2 + 0.3 * x + 0.5 * y * y,
     grad: (x, y) => [4 * x * (x * x - 1) + 0.3, y],
   },
@@ -286,6 +287,17 @@ export const OPTIMIZERS = {
   rmsprop: { name: "RMSProp", year: "2012 · Hinton (lecture 6e)" },
   adam: { name: "Adam", year: "2014 · Kingma & Ba" },
   adamw: { name: "AdamW", year: "2017 · Loshchilov & Hutter" },
+};
+
+/**
+ * Learning rates for the 300-step race on each surface, picked by a grid search. Momentum's
+ * rates are about 10× smaller than SGD's because with μ = 0.9 its effective step is η / (1 − μ).
+ * tests/nn-chapters.test.js checks every outcome gradient-descent.html describes for these rates.
+ */
+export const RACE_LEARNING_RATES = {
+  bowl: { sgd: 0.15, momentum: 0.01, adagrad: 0.5, rmsprop: 0.01, adam: 0.05, adamw: 0.05 },
+  rosenbrock: { sgd: 0.002, momentum: 0.002, adagrad: 0.5, rmsprop: 0.1, adam: 0.05, adamw: 0.05 },
+  doubleWell: { sgd: 0.05, momentum: 0.01, adagrad: 0.3, rmsprop: 0.02, adam: 0.05, adamw: 0.05 },
 };
 
 /** Returns step(p, g) → next p. State (velocity, moment estimates, step count) lives in the closure. */

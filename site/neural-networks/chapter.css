@@ -123,6 +123,10 @@ math[display="block"] {
   margin-block-start: 0;
 }
 
+.widget figure {
+  margin: 0;
+}
+
 .widget canvas {
   display: block;
   inline-size: 100%;
@@ -280,6 +284,29 @@ math[display="block"] {
   padding: 0.2rem 0.4rem;
   text-align: end;
   min-inline-size: 2.4rem;
+}
+
+/* Optimiser colours: these match COLORS in gradient-descent.js. */
+.swatch {
+  display: inline-block;
+  inline-size: 0.9em;
+  block-size: 0.9em;
+  border-radius: 2px;
+  margin-inline-end: 0.4em;
+  vertical-align: -0.1em;
+  outline: 1px solid var(--line);
+}
+
+.sw-sgd { background: #d1495b; }
+.sw-momentum { background: #f2a541; }
+.sw-adagrad { background: #2f9e44; }
+.sw-rmsprop { background: #7b2cbf; }
+.sw-adam { background: #e83e8c; }
+.sw-adamw { background: #111827; }
+.sw-alt { background: #8a5a00; }
+
+.sources li {
+  margin-block: 0.35rem;
 }
 
 @media (prefers-reduced-motion: no-preference) {

@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>Gradient descent: how a network walks downhill | Learnings</title>
+  <meta name="description" content="Gradient descent from first principles: slopes and gradients, the update rule, why the learning rate has a hard limit, and the history from Cauchy (1847) to momentum, Adam and AdamW, with a loss landscape you can race six optimisers across.">
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="./chapter.css">
+</head>
+<body data-nn-root="./" data-chapter="gradient-descent.html">
+  <a class="skip" href="#main">Skip to content</a>
+  <header>
+    <a href="../index.html">Paul’s learnings</a>
+    <nav aria-label="Main">
+      <a href="./">Chapters</a>
+      <a href="./lab.html">Workbench</a>
+      <a href="../decision-models/">Decision models</a>
+    </nav>
+  </header>
+
+  <main id="main" class="chapter">
+    <p class="crumbs"><a href="../index.html">Learnings</a> › <a href="./">Neural networks</a> › Gradient descent</p>
+    <h1>Gradient descent: how a network walks downhill</h1>
+    <p class="lead">
+      A network learns by adjusting its weights so that it makes smaller mistakes. Gradient descent
+      is the rule that says which way to adjust them and by how much. Almost every network trained
+      since the 1980s has learned this way.
+    </p>
+
+    <div class="chapter-grid">
+      <nav class="chapter-toc" aria-label="Chapters" data-chapter-nav><a href="./">All chapters</a></nav>
+      <article class="prose">
+
+        <h2 id="problem">Millions of dials, one score</h2>
+        <p>
+          A network's behaviour is set by its weights: plain numbers, from a few dozen in a toy model to
+          hundreds of billions in a large language model. A <em>loss function</em> turns the network's
+          mistakes on the training data into a single number. Training means finding weights that make
+          that number small.
+        </p>
+        <p>
+          Searching by trial and error is hopeless. Try just ten values for each of a million weights and
+          there are 10<sup>1,000,000</sup> combinations. Gradient descent never looks at the whole
+          landscape. It only asks which way is downhill from where it stands right now.
+        </p>
+        <div class="callout">
+          <p>
+            Picture standing on a hillside in thick fog. You cannot see the valley, but you can feel which
+            way the ground slopes under your feet. Take a step that way, feel again, step again. The height
+            is the loss; your position is the weights.
+          </p>
+        </div>
+
+        <h2 id="gradient">Slope, derivative, gradient</h2>
+        <p>
+          With a single weight <math><mi>w</mi></math>, the slope is the <em>derivative</em>: how much the
+          loss changes for a tiny nudge in <math><mi>w</mi></math>. You can measure it by nudging both ways:
+        </p>
+        <math display="block">
+          <mfrac><mrow><mi>d</mi><mi>L</mi></mrow><mrow><mi>d</mi><mi>w</mi></mrow></mfrac>
+          <mo>≈</mo>
+          <mfrac>
+            <mrow><mi>L</mi><mo>(</mo><mi>w</mi><mo>+</mo><mi>h</mi><mo>)</mo><mo>−</mo><mi>L</mi><mo>(</mo><mi>w</mi><mo>−</mo><mi>h</mi><mo>)</mo></mrow>
+            <mrow><mn>2</mn><mi>h</mi></mrow>
+          </mfrac>
+        </math>
+        <p class="equation-note">
+          This is how the tests for this guide check every derivative the pages use.
+        </p>
+        <p>
+          If the derivative is positive, increasing <math><mi>w</mi></math> increases the loss, so you
+          should decrease <math><mi>w</mi></math>. If it is negative, increase it. Either way, you move
+          against the sign of the slope.
+        </p>
+        <p>
+          With many weights, collect one slope per weight into a vector. That vector is the
+          <em>gradient</em>, written <math><mo>∇</mo><mi>L</mi></math>:
+        </p>
+        <math display="block">
+          <mo>∇</mo><mi>L</mi><mo>=</mo>
+          <mrow>
+            <mo>(</mo>
+            <mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><msub><mi>w</mi><mn>1</mn></msub></mrow></mfrac>
+            <mo>,</mo>
+            <mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><msub><mi>w</mi><mn>2</mn></msub></mrow></mfrac>
+            <mo>,</mo><mo>…</mo><mo>,</mo>
+            <mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><msub><mi>w</mi><mi>n</mi></msub></mrow></mfrac>
+            <mo>)</mo>
+          </mrow>
+        </math>
+        <p>
+          The gradient points in the direction in which the loss rises fastest, so its negative points
+          straight downhill. Working out all those slopes cheaply, even for billions of weights, is the
+          job of backpropagation, the next chapter.
+        </p>
+
+        <h2 id="update">The update rule</h2>
+        <p>Gradient descent repeats one line:</p>
+        <math display="block">
+          <msub><mi>w</mi><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub>
+          <mo>=</mo>
+          <msub><mi>w</mi><mi>t</mi></msub>
+          <mo>−</mo><mi>η</mi><mo>∇</mo><mi>L</mi><mo>(</mo><msub><mi>w</mi><mi>t</mi></msub><mo>)</mo>
+        </math>
+        <p>
+          <math><mi>η</mi></math> (eta) is the <em>learning rate</em>: how big a step to take. It is the
+          most important number in training, and the easiest to get wrong. Too small and training
+          crawls. Too large and each step overshoots the valley floor, lands higher on the other side,
+          and the next step overshoots further.
+        </p>
+
+        <h2 id="step-size">How big can a step be?</h2>
+        <p>
+          For a loss shaped like a simple bowl you can work out the exact limit. Take
+          <math><mi>L</mi><mo>(</mo><mi>w</mi><mo>)</mo><mo>=</mo><mfrac><mn>1</mn><mn>2</mn></mfrac><mi>λ</mi><msup><mi>w</mi><mn>2</mn></msup></math>,
+          where <math><mi>λ</mi></math> measures how sharply the bowl curves. The gradient is
+          <math><mi>λ</mi><mi>w</mi></math>, so one step gives:
+        </p>
+        <math display="block">
+          <msub><mi>w</mi><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub>
+          <mo>=</mo><msub><mi>w</mi><mi>t</mi></msub><mo>−</mo><mi>η</mi><mi>λ</mi><msub><mi>w</mi><mi>t</mi></msub>
+          <mo>=</mo><mo>(</mo><mn>1</mn><mo>−</mo><mi>η</mi><mi>λ</mi><mo>)</mo><msub><mi>w</mi><mi>t</mi></msub>
+        </math>
+        <p>
+          Every step multiplies the weight by the same factor, <math><mn>1</mn><mo>−</mo><mi>η</mi><mi>λ</mi></math>.
+          The weight shrinks towards the minimum at 0 only while that factor lies between −1 and 1:
+        </p>
+        <math display="block">
+          <mrow><mo>|</mo><mn>1</mn><mo>−</mo><mi>η</mi><mi>λ</mi><mo>|</mo></mrow><mo>&lt;</mo><mn>1</mn>
+          <mspace width="1em"></mspace><mo>⟺</mo><mspace width="1em"></mspace>
+          <mn>0</mn><mo>&lt;</mo><mi>η</mi><mo>&lt;</mo><mfrac><mn>2</mn><mi>λ</mi></mfrac>
+        </math>
+        <p>
+          Between <math><mfrac><mn>1</mn><mi>λ</mi></mfrac></math> and
+          <math><mfrac><mn>2</mn><mi>λ</mi></mfrac></math> the factor is negative, so the weight flips sign
+          on every step: it zig-zags but still converges. Past <math><mfrac><mn>2</mn><mi>λ</mi></mfrac></math>
+          each zig-zag is bigger than the last, and the weights blow up.
+        </p>
+        <p>
+          Real losses curve differently in different directions, and the sharpest direction sets the
+          limit. The first landscape below curves ten times more steeply in <math><mi>y</mi></math>
+          (<math><mi>λ</mi><mo>=</mo><mn>10</mn></math>) than in <math><mi>x</mi></math>
+          (<math><mi>λ</mi><mo>=</mo><mn>1</mn></math>), so plain gradient descent only survives for
+          <math><mi>η</mi><mo>&lt;</mo><mn>0.2</mn></math>. Press <strong>Stability</strong> to run
+          η = 0.19 and η = 0.21 side by side.
+        </p>
+        <p>
+          Even at the safe 0.19, the gentle <math><mi>x</mi></math> direction shrinks by only 0.81 per
+          step. Steep directions force small steps, and then flat directions take forever. Almost every
+          improvement in the rest of this chapter is a way round that.
+        </p>
+
+        <section class="widget" aria-labelledby="race-title">
+          <h3 id="race-title">Race six optimisers across a loss landscape</h3>
+          <p class="small">
+            <strong>Race all six</strong> runs every optimiser from the same start, each with a learning
+            rate chosen for that landscape. <strong>Run one</strong> uses your own settings. Click or tap
+            the map to move the start and run again.
+          </p>
+          <div class="controls">
+            <label>Landscape
+              <select id="gd-surface">
+                <option value="bowl">Elongated bowl</option>
+                <option value="rosenbrock">Rosenbrock valley</option>
+                <option value="doubleWell">Tilted double well</option>
+              </select>
+            </label>
+            <label>Optimiser
+              <select id="gd-optimizer">
+                <option value="sgd">SGD</option>
+                <option value="momentum">Momentum</option>
+                <option value="adagrad">AdaGrad</option>
+                <option value="rmsprop">RMSProp</option>
+                <option value="adam">Adam</option>
+                <option value="adamw">AdamW</option>
+              </select>
+            </label>
+            <label>Learning rate η = <output id="gd-lr-out" for="gd-lr">0.15</output>
+              <input id="gd-lr" type="range" min="-4" max="0" step="0.01" value="-0.82">
+            </label>
+            <label>Momentum μ = <output id="gd-momentum-out" for="gd-momentum">0.9</output>
+              <input id="gd-momentum" type="range" min="0" max="0.99" step="0.01" value="0.9">
+            </label>
+            <label>Steps = <output id="gd-steps-out" for="gd-steps">300</output>
+              <input id="gd-steps" type="range" min="50" max="1000" step="50" value="300">
+            </label>
+          </div>
+          <div class="controls">
+            <label>Start x
+              <input id="gd-start-x" type="range" min="-3" max="3" step="0.03" value="-2.5">
+            </label>
+            <label>Start y
+              <input id="gd-start-y" type="range" min="-3" max="3" step="0.03" value="2.5">
+            </label>
+            <p class="readout">start <output id="gd-start-out">(−2.50, 2.50)</output></p>
+          </div>
+          <div class="controls">
+            <button type="button" id="gd-race">Race all six</button>
+            <button type="button" id="gd-run" class="secondary">Run one</button>
+            <button type="button" id="gd-compare" class="secondary">Stability: η 0.19 vs 0.21</button>
+            <button type="button" id="gd-clear" class="secondary">Clear</button>
+          </div>
+          <div class="two-col">
+            <figure>
+              <canvas id="gd-map" class="draggable" width="480" height="480" role="img" aria-label="Contour map of the loss landscape">Contour map of the loss landscape with each optimiser's path. The results table lists where each path ends.</canvas>
+              <figcaption class="small">Darker is lower loss. White ring: the minimum. Black-ringed dot: the start.</figcaption>
+            </figure>
+            <figure>
+              <canvas id="gd-chart" width="480" height="240" role="img" aria-label="Loss above the minimum against step, on a log scale">Loss above the true minimum against step, on a log scale.</canvas>
+              <figcaption class="small">Loss above the true minimum against step, on a log scale. A line that drops off the bottom has reached the minimum.</figcaption>
+            </figure>
+          </div>
+          <p id="gd-status" class="readout" role="status"></p>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th scope="col">Optimiser</th><th scope="col">η</th><th scope="col">Loss above minimum</th><th scope="col">Ends at</th><th scope="col">Outcome</th></tr></thead>
+              <tbody id="gd-results"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <h2 id="race">What the race shows</h2>
+        <p>
+          No single learning rate suits every optimiser, so each gets its own, picked by a grid search on
+          each landscape for a 300-step run. Momentum's rates come out about ten times smaller than
+          SGD's: with μ = 0.9 its velocity builds up to about η / (1 − μ), ten times a single step.
+        </p>
+        <p>
+          <strong>Elongated bowl.</strong> All six reach the minimum. SGD's rate, 0.15, sits between
+          1/λ and 2/λ for the steep direction, so its path zig-zags across the bowl on the way down.
+        </p>
+        <p>
+          <strong>Rosenbrock valley.</strong> The minimum at (1, 1) lies at the bottom of a long, curved
+          valley. SGD and momentum end closest to it. Adam and AdamW end on the valley floor but still
+          short of the minimum. RMSProp ends further away, and AdaGrad makes little progress: it divides
+          each step by the running total of every squared gradient it has seen, so a few steep gradients
+          early on shrink all its later steps. Near (1, 1) the valley curves about 2,500 times more
+          sharply across than along, which puts SGD's 0.002 almost exactly on its stability limit. At
+          0.005 it blows up.
+        </p>
+        <p>
+          <strong>Tilted double well.</strong> The start is on the slope of a shallow well; a deeper one
+          lies on the far side of a hump. Only momentum carries enough speed over the hump to reach the
+          deeper well. Every other optimiser ends in the shallow one, where the gradient is zero, so
+          nothing pushes it further.
+        </p>
+        <p class="honest">
+          These are two-dimensional toys, chosen so you can see a path. The learning rates that work here
+          say nothing about the right ones for a real network: see
+          <a href="#limits">what these pictures leave out</a>.
+        </p>
+
+        <h2 id="history">Where it came from</h2>
+        <ol class="timeline">
+          <li><span class="when">1847</span><span>Augustin-Louis Cauchy describes the method of steepest descent, to solve the systems of equations that arise in astronomy.</span></li>
+          <li><span class="when">1944</span><span>Haskell Curry analyses steepest descent for nonlinear problems.</span></li>
+          <li><span class="when">1951</span><span>Herbert Robbins and Sutton Monro prove that noisy steps still converge if the step size shrinks at the right rate: the theory under stochastic gradient descent.</span></li>
+          <li><span class="when">1960</span><span>Bernard Widrow and Ted Hoff train ADALINE with the least-mean-squares rule, stochastic gradient descent built in hardware.</span></li>
+          <li><span class="when">1964</span><span>Boris Polyak adds momentum: the “heavy ball” method.</span></li>
+          <li><span class="when">1983</span><span>Yurii Nesterov's accelerated gradient reaches the best possible rate for smooth convex problems.</span></li>
+          <li><span class="when">1986</span><span>Rumelhart, Hinton and Williams train hidden layers with backpropagation and gradient descent with momentum.</span></li>
+          <li><span class="when">2011</span><span>Duchi, Hazan and Singer's AdaGrad gives each weight its own step size.</span></li>
+          <li><span class="when">2012</span><span>Geoffrey Hinton presents RMSProp in a Coursera lecture. It was never written up as a paper.</span></li>
+          <li><span class="when">2014</span><span>Diederik Kingma and Jimmy Ba publish Adam.</span></li>
+          <li><span class="when">2017</span><span>Ilya Loshchilov and Frank Hutter separate weight decay from Adam's update: AdamW.</span></li>
+        </ol>
+
+        <h2 id="sgd">Stochastic gradient descent</h2>
+        <p>
+          The true gradient averages over every example in the training set. With millions of examples,
+          computing it for every step is far too slow. <em>Stochastic</em> gradient descent estimates it
+          from a small random batch and steps on that estimate. Each step is noisy, but right on average.
+        </p>
+        <p>
+          Robbins and Monro showed in 1951 that this still converges, provided the step sizes shrink
+          neither too fast nor too slowly:
+        </p>
+        <math display="block">
+          <munderover><mo>∑</mo><mrow><mi>t</mi><mo>=</mo><mn>1</mn></mrow><mi>∞</mi></munderover>
+          <msub><mi>η</mi><mi>t</mi></msub><mo>=</mo><mi>∞</mi>
+          <mspace width="1.5em"></mspace>
+          <munderover><mo>∑</mo><mrow><mi>t</mi><mo>=</mo><mn>1</mn></mrow><mi>∞</mi></munderover>
+          <msubsup><mi>η</mi><mi>t</mi><mn>2</mn></msubsup><mo>&lt;</mo><mi>∞</mi>
+        </math>
+        <p>
+          The first condition lets the weights travel as far as they need to; the second makes the noise
+          average out. Modern schedules rarely meet these conditions exactly, but they keep the lesson:
+          lower the learning rate as training goes on. The noise may also help. Keskar and colleagues
+          found in 2017 that very large batches, which are less noisy, tend to land in sharper minima
+          that generalise worse, though that explanation is still debated.
+        </p>
+        <p class="honest">The race above uses exact gradients, so its “SGD” is plain full-batch gradient descent.</p>
+
+        <h2 id="momentum">Momentum</h2>
+        <p>
+          Plain gradient descent has no memory. In a narrow valley it bounces from wall to wall instead of
+          running along the floor. Polyak's 1964 fix gives the weights a velocity, like a heavy ball
+          rolling downhill:
+        </p>
+        <math display="block">
+          <msub><mi>v</mi><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo>
+          <mi>μ</mi><msub><mi>v</mi><mi>t</mi></msub><mo>−</mo><mi>η</mi><mo>∇</mo><mi>L</mi><mo>(</mo><msub><mi>w</mi><mi>t</mi></msub><mo>)</mo>
+        </math>
+        <math display="block">
+          <msub><mi>w</mi><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo>
+          <msub><mi>w</mi><mi>t</mi></msub><mo>+</mo><msub><mi>v</mi><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub>
+        </math>
+        <p>
+          With μ = 0.9, pushes that keep pointing the same way add up to about ten times a single step,
+          while pushes that alternate across the valley cancel out. The built-up speed also carries the
+          ball over small bumps, which is how momentum reaches the deeper well in the race. Nesterov's
+          1983 variant measures the gradient at the point the velocity is about to carry you to, and
+          reaches the best possible convergence rate for smooth convex problems.
+        </p>
+
+        <h2 id="adaptive">A step size for every weight</h2>
+        <p>
+          Some weights see large gradients on every step; others see small or rare ones. AdaGrad (2011)
+          gives each weight its own step size by dividing by the square root of the sum of all its past
+          squared gradients <math><msub><mi>g</mi><mi>t</mi></msub></math>:
+        </p>
+        <math display="block">
+          <msub><mi>s</mi><mi>t</mi></msub><mo>=</mo><msub><mi>s</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><mo>+</mo><msubsup><mi>g</mi><mi>t</mi><mn>2</mn></msubsup>
+        </math>
+        <math display="block">
+          <msub><mi>w</mi><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo><msub><mi>w</mi><mi>t</mi></msub><mo>−</mo>
+          <mfrac><mi>η</mi><mrow><msqrt><msub><mi>s</mi><mi>t</mi></msub></msqrt><mo>+</mo><mi>ε</mi></mrow></mfrac><msub><mi>g</mi><mi>t</mi></msub>
+        </math>
+        <p>
+          That helps on sparse problems such as text, where rare words deserve big updates. But the sum
+          only grows, so every step shrinks forever, which is why AdaGrad stalls in the Rosenbrock
+          valley. RMSProp (Hinton, 2012) replaces the sum with a decaying average that forgets old
+          gradients:
+        </p>
+        <math display="block">
+          <msub><mi>s</mi><mi>t</mi></msub><mo>=</mo><mi>ρ</mi><msub><mi>s</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><mo>+</mo><mo>(</mo><mn>1</mn><mo>−</mo><mi>ρ</mi><mo>)</mo><msubsup><mi>g</mi><mi>t</mi><mn>2</mn></msubsup>
+        </math>
+        <p>
+          Adam (Kingma and Ba, 2014) keeps two decaying averages: one of the gradient, as momentum does,
+          and one of its square, as RMSProp does. It corrects both for starting at zero. (Here
+          <math><mi>v</mi></math> is the average of squared gradients, not momentum's velocity.)
+        </p>
+        <math display="block">
+          <msub><mi>m</mi><mi>t</mi></msub><mo>=</mo><msub><mi>β</mi><mn>1</mn></msub><msub><mi>m</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><mo>+</mo><mo>(</mo><mn>1</mn><mo>−</mo><msub><mi>β</mi><mn>1</mn></msub><mo>)</mo><msub><mi>g</mi><mi>t</mi></msub>
+        </math>
+        <math display="block">
+          <msub><mi>v</mi><mi>t</mi></msub><mo>=</mo><msub><mi>β</mi><mn>2</mn></msub><msub><mi>v</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><mo>+</mo><mo>(</mo><mn>1</mn><mo>−</mo><msub><mi>β</mi><mn>2</mn></msub><mo>)</mo><msubsup><mi>g</mi><mi>t</mi><mn>2</mn></msubsup>
+        </math>
+        <math display="block">
+          <msub><mi>w</mi><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo><msub><mi>w</mi><mi>t</mi></msub><mo>−</mo><mi>η</mi>
+          <mfrac>
+            <mrow><msub><mi>m</mi><mi>t</mi></msub><mo>/</mo><mo>(</mo><mn>1</mn><mo>−</mo><msubsup><mi>β</mi><mn>1</mn><mi>t</mi></msubsup><mo>)</mo></mrow>
+            <mrow><msqrt><mrow><msub><mi>v</mi><mi>t</mi></msub><mo>/</mo><mo>(</mo><mn>1</mn><mo>−</mo><msubsup><mi>β</mi><mn>2</mn><mi>t</mi></msubsup><mo>)</mo></mrow></msqrt><mo>+</mo><mi>ε</mi></mrow>
+          </mfrac>
+        </math>
+        <p>
+          Its defaults (β<sub>1</sub> = 0.9, β<sub>2</sub> = 0.999, ε = 10<sup>−8</sup>) work across a very
+          wide range of problems, which is a large part of why Adam became the default choice.
+        </p>
+
+        <h2 id="adamw">AdamW: weight decay done properly</h2>
+        <p>
+          Weight decay shrinks every weight a little on each step, which discourages a network from
+          leaning on a few huge weights. With plain SGD, adding an L2 penalty
+          <math><mfrac><mi>λ</mi><mn>2</mn></mfrac><msup><mrow><mo>‖</mo><mi>w</mi><mo>‖</mo></mrow><mn>2</mn></msup></math>
+          to the loss and shrinking the weights directly are the same thing. Loshchilov and Hutter
+          pointed out that inside Adam they are not: the penalty's gradient is divided by Adam's
+          per-weight scaling too, so weights with large gradients barely decay. AdamW applies the decay
+          outside the adaptive step:
+        </p>
+        <math display="block">
+          <msub><mi>w</mi><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo>
+          <msub><mi>w</mi><mi>t</mi></msub><mo>−</mo><mi>η</mi><mo>·</mo><mtext>(Adam step)</mtext><mo>−</mo><mi>η</mi><mi>λ</mi><msub><mi>w</mi><mi>t</mi></msub>
+        </math>
+        <p class="equation-note">Here λ is the decay rate, not a curvature.</p>
+        <p>
+          In the race, Adam and AdamW trace almost the same paths. The difference shows when the gradient
+          is zero: Adam stops, while AdamW keeps shrinking the weights by a factor of
+          <math><mn>1</mn><mo>−</mo><mi>η</mi><mi>λ</mi></math> per step. This guide's tests check exactly that.
+        </p>
+
+        <h2 id="limits">What these pictures leave out</h2>
+        <ul>
+          <li>Real networks have millions of dimensions, not two. Dauphin and colleagues argued in 2014 that most flat points there are saddle points, which slow training down, rather than bad local minima that trap it.</li>
+          <li>With mini-batches, the landscape itself changes slightly on every step.</li>
+          <li>The learning rates in the race were tuned for three toy surfaces and 300 steps. A real network needs its own, usually found with short trial runs.</li>
+        </ul>
+
+        <h2 id="practice">What people use now</h2>
+        <p>
+          Transformers are usually trained with AdamW, a short warm-up during which the learning rate
+          rises from near zero (the original Transformer used 4,000 warm-up steps), and then a slow decay,
+          often along a cosine curve. SGD with momentum is still competitive for many image models. New
+          optimisers keep arriving. Lion (2023), found by an automated search, uses only the sign of a
+          momentum-like update. Muon (2024) orthogonalises the update for each weight matrix and has been
+          used to train large language models.
+        </p>
+
+        <h2 id="try">Try it in the workbench</h2>
+        <p>
+          The <a href="./lab.html#mlp-backprop">workbench's MLP trainer</a> trains a small network on 2-D
+          data with the optimiser you choose, and redraws its decision boundary as it learns.
+        </p>
+
+        <h2 id="sources">Sources</h2>
+        <ul class="sources small">
+          <li>A.-L. Cauchy (1847). Méthode générale pour la résolution des systèmes d'équations simultanées. <cite>Comptes rendus de l'Académie des sciences</cite> 25, 536–538.</li>
+          <li>C. Lemaréchal (2012). Cauchy and the gradient method. <cite>Documenta Mathematica</cite>, Extra Volume ISMP, 251–254.</li>
+          <li>H. Robbins and S. Monro (1951). <a href="https://doi.org/10.1214/aoms/1177729586">A stochastic approximation method</a>. <cite>Annals of Mathematical Statistics</cite> 22(3).</li>
+          <li>B. T. Polyak (1964). Some methods of speeding up the convergence of iteration methods. <cite>USSR Computational Mathematics and Mathematical Physics</cite> 4(5).</li>
+          <li>Y. Nesterov (1983). A method for solving the convex programming problem with convergence rate O(1/k²). <cite>Soviet Mathematics Doklady</cite> 27.</li>
+          <li>D. E. Rumelhart, G. E. Hinton and R. J. Williams (1986). <a href="https://doi.org/10.1038/323533a0">Learning representations by back-propagating errors</a>. <cite>Nature</cite> 323.</li>
+          <li>J. Duchi, E. Hazan and Y. Singer (2011). <a href="https://jmlr.org/papers/v12/duchi11a.html">Adaptive subgradient methods for online learning and stochastic optimization</a>. <cite>JMLR</cite> 12.</li>
+          <li>G. Hinton, N. Srivastava and K. Swersky (2012). <a href="https://www.cs.toronto.edu/~tijmen/csc321/slides/lecture_slides_lec6.pdf">Neural networks for machine learning, lecture 6</a> (RMSProp).</li>
+          <li>D. P. Kingma and J. Ba (2014). <a href="https://arxiv.org/abs/1412.6980">Adam: a method for stochastic optimization</a>.</li>
+          <li>I. Loshchilov and F. Hutter (2017). <a href="https://arxiv.org/abs/1711.05101">Decoupled weight decay regularization</a>.</li>
+          <li>Y. Dauphin et al. (2014). <a href="https://arxiv.org/abs/1406.2572">Identifying and attacking the saddle point problem in high-dimensional non-convex optimization</a>.</li>
+          <li>N. S. Keskar et al. (2017). <a href="https://arxiv.org/abs/1609.04836">On large-batch training for deep learning: generalization gap and sharp minima</a>.</li>
+          <li>A. Vaswani et al. (2017). <a href="https://arxiv.org/abs/1706.03762">Attention is all you need</a>.</li>
+          <li>X. Chen et al. (2023). <a href="https://arxiv.org/abs/2302.06675">Symbolic discovery of optimization algorithms</a> (Lion).</li>
+          <li>H. H. Rosenbrock (1960). An automatic method for finding the greatest or least value of a function. <cite>The Computer Journal</cite> 3(3).</li>
+        </ul>
+
+        <nav class="prev-next" aria-label="Previous and next chapters" data-prev-next><a href="./">All chapters</a></nav>
+      </article>
+    </div>
+  </main>
+
+  <footer>
+    A working notebook, not a promise of correctness. Every number on this page comes from
+    <code>math.js</code> and is checked by the repository's tests.
+  </footer>
+  <script type="module" src="./chapters.js"></script>
+  <script type="module" src="./gradient-descent.js"></script>
+</body>
+</html>
