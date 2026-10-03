@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>Backpropagation: the chain rule, run backwards | Learnings</title>
+  <meta name="description" content="Backpropagation from first principles: the chain rule on one neuron, computation graphs, a 2-2-1 network you can step through node by node in both directions, why the pass runs backwards, the matrix form, and the history from Kelley (1960) to Rumelhart, Hinton and Williams (1986).">
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="./chapter.css">
+</head>
+<body data-nn-root="./" data-chapter="backpropagation.html">
+  <a class="skip" href="#main">Skip to content</a>
+  <header>
+    <a href="../index.html">Paul’s learnings</a>
+    <nav aria-label="Main">
+      <a href="./">Chapters</a>
+      <a href="./lab.html">Workbench</a>
+      <a href="../decision-models/">Decision models</a>
+    </nav>
+  </header>
+
+  <main id="main" class="chapter">
+    <p class="crumbs"><a href="../index.html">Learnings</a> › <a href="./">Neural networks</a> › Backpropagation</p>
+    <h1>Backpropagation: the chain rule, run backwards</h1>
+    <p class="lead">
+      Gradient descent needs the slope of the loss for every weight. Backpropagation computes all of
+      them in one pass backwards through the network, for roughly twice the cost of the forward pass.
+      Without it, training anything large would be out of reach.
+    </p>
+
+    <div class="chapter-grid">
+      <nav class="chapter-toc" aria-label="Chapters" data-chapter-nav><a href="./">All chapters</a></nav>
+      <article class="prose">
+
+        <h2 id="problem">One slope per weight</h2>
+        <p>
+          The previous chapter measured a slope by nudging a weight both ways and re-running the
+          network. That works, but it takes two forward passes per weight. A model with a billion
+          weights would need two billion forward passes for a single training step.
+        </p>
+        <p>
+          Backpropagation gets every one of those slopes from one forward pass and one backward pass.
+          For the matrix multiplications that dominate a neural network, the backward pass costs about
+          twice as much as the forward one. That is the figure Kaplan and colleagues use when they count
+          training compute.
+        </p>
+
+        <h2 id="chain-rule">The chain rule, on one neuron</h2>
+        <p>
+          Take one neuron with one input. It computes <math><mi>z</mi><mo>=</mo><mi>w</mi><mi>x</mi><mo>+</mo><mi>b</mi></math>,
+          squashes that to <math><mi>a</mi><mo>=</mo><mi>σ</mi><mo>(</mo><mi>z</mi><mo>)</mo></math> with
+          the sigmoid, and the loss compares <math><mi>a</mi></math> with the target
+          <math><mi>y</mi></math>: <math><mi>L</mi><mo>=</mo><msup><mrow><mo>(</mo><mi>a</mi><mo>−</mo><mi>y</mi><mo>)</mo></mrow><mn>2</mn></msup></math>.
+        </p>
+        <p>
+          Each step depends only on the one before it. The chain rule says that the slope of the whole
+          chain is the product of the slopes of its links:
+        </p>
+        <math display="block">
+          <mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><mi>w</mi></mrow></mfrac><mo>=</mo>
+          <mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><mi>a</mi></mrow></mfrac><mo>·</mo>
+          <mfrac><mrow><mo>∂</mo><mi>a</mi></mrow><mrow><mo>∂</mo><mi>z</mi></mrow></mfrac><mo>·</mo>
+          <mfrac><mrow><mo>∂</mo><mi>z</mi></mrow><mrow><mo>∂</mo><mi>w</mi></mrow></mfrac>
+        </math>
+        <p>
+          Each link is easy on its own. The loss changes at <math><mn>2</mn><mo>(</mo><mi>a</mi><mo>−</mo><mi>y</mi><mo>)</mo></math>
+          per unit of <math><mi>a</mi></math>. The sigmoid's slope is <math><mi>a</mi><mo>(</mo><mn>1</mn><mo>−</mo><mi>a</mi><mo>)</mo></math>.
+          And <math><mi>z</mi></math> changes by <math><mi>x</mi></math> per unit of <math><mi>w</mi></math>. So:
+        </p>
+        <math display="block">
+          <mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><mi>w</mi></mrow></mfrac><mo>=</mo>
+          <mn>2</mn><mo>(</mo><mi>a</mi><mo>−</mo><mi>y</mi><mo>)</mo><mo>·</mo>
+          <mi>a</mi><mo>(</mo><mn>1</mn><mo>−</mo><mi>a</mi><mo>)</mo><mo>·</mo><mi>x</mi>
+        </math>
+        <p>
+          Notice that the first two factors are shared. The slope for the bias <math><mi>b</mi></math> uses the same two,
+          times <math><mfrac><mrow><mo>∂</mo><mi>z</mi></mrow><mrow><mo>∂</mo><mi>b</mi></mrow></mfrac><mo>=</mo><mn>1</mn></math>.
+          Reusing the shared part instead of recomputing it is the whole trick of backpropagation.
+        </p>
+
+        <section class="widget" aria-labelledby="neuron-title">
+          <h3 id="neuron-title">One neuron: three slopes, multiplied</h3>
+          <p class="small">
+            Move the sliders. The last two rows always agree. One is the chain rule's product; the other
+            is the slope you get by nudging <em>w</em> and running the neuron again.
+          </p>
+          <div class="controls">
+            <label>Weight w = <output id="bp-w-out" for="bp-w">0.70</output>
+              <input id="bp-w" type="range" min="-3" max="3" step="0.01" value="0.7">
+            </label>
+            <label>Bias b = <output id="bp-b-out" for="bp-b">-0.20</output>
+              <input id="bp-b" type="range" min="-3" max="3" step="0.01" value="-0.2">
+            </label>
+            <label>Input x = <output id="bp-x-out" for="bp-x">1.50</output>
+              <input id="bp-x" type="range" min="-3" max="3" step="0.01" value="1.5">
+            </label>
+            <label>Target y = <output id="bp-y-out" for="bp-y">1.00</output>
+              <input id="bp-y" type="range" min="0" max="1" step="0.01" value="1">
+            </label>
+          </div>
+          <div class="table-scroll">
+            <table class="trace">
+              <thead><tr><th scope="col">Quantity</th><th scope="col">Value</th></tr></thead>
+              <tbody id="bp-neuron-rows"></tbody>
+            </table>
+          </div>
+          <p id="bp-neuron-status" class="readout" role="status"></p>
+        </section>
+
+        <h2 id="graph">Computation graphs</h2>
+        <p>
+          A real network is far too big to write out by hand like that. Automatic differentiation
+          breaks the calculation into primitive operations (add, multiply, tanh, sigmoid, square) and
+          records them as a graph. Each operation needs to know only one thing: the slope of its output
+          with respect to each of its inputs, its <em>local derivative</em>.
+        </p>
+        <p>
+          The forward pass computes every node's value and keeps it. The backward pass starts at the
+          loss with <math><mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><mi>L</mi></mrow></mfrac><mo>=</mo><mn>1</mn></math>
+          and walks the graph in reverse, multiplying by local derivatives as it goes. When a value
+          feeds more than one operation, the contributions from each one add up:
+        </p>
+        <math display="block">
+          <mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><mi>u</mi></mrow></mfrac><mo>=</mo>
+          <munder><mo>∑</mo><mrow><mi>v</mi><mtext> uses </mtext><mi>u</mi></mrow></munder>
+          <mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><mi>v</mi></mrow></mfrac><mo>·</mo>
+          <mfrac><mrow><mo>∂</mo><mi>v</mi></mrow><mrow><mo>∂</mo><mi>u</mi></mrow></mfrac>
+        </math>
+        <p>
+          Visiting the nodes in reverse order of computation guarantees that everything using a node
+          has been visited before the node itself. So each node's gradient is complete by the time it
+          passes that gradient on to its own inputs.
+        </p>
+
+        <section class="widget" aria-labelledby="graph-title">
+          <h3 id="graph-title">Step through a 2-2-1 network</h3>
+          <p class="small">
+            Two inputs, two tanh hidden units, one sigmoid output and a squared-error loss: 17
+            operations in all. Step forwards through them, then backwards. Intermediate results without
+            a name are labelled t1, t2, … in the order they are computed. After both passes, the weights
+            table checks every backprop gradient against a finite difference.
+          </p>
+          <div class="controls">
+            <button type="button" id="bp-forward">Forward one step</button>
+            <button type="button" id="bp-backward" class="secondary">Backward one step</button>
+            <button type="button" id="bp-all" class="secondary">Run both passes</button>
+            <button type="button" id="bp-reset" class="secondary">Reset</button>
+          </div>
+          <div class="controls">
+            <button type="button" id="bp-train" class="secondary">Take one gradient step (η = 0.5)</button>
+            <button type="button" id="bp-random" class="secondary">Random weights</button>
+          </div>
+          <p class="readout"><span id="bp-progress"></span> · loss L = <output id="bp-loss">—</output></p>
+          <p id="bp-status" class="readout" role="status"></p>
+          <div class="table-scroll">
+            <table class="trace">
+              <caption class="small">Operations, in the order the forward pass computes them</caption>
+              <thead><tr><th scope="col">Node</th><th scope="col">Computes</th><th scope="col">Forward value</th><th scope="col">∂L/∂node</th></tr></thead>
+              <tbody id="bp-ops"></tbody>
+            </table>
+          </div>
+          <div class="table-scroll">
+            <table class="trace">
+              <caption class="small">Weights and inputs</caption>
+              <thead><tr><th scope="col">Leaf</th><th scope="col">Value</th><th scope="col">∂L/∂leaf, backprop</th><th scope="col">By nudging</th></tr></thead>
+              <tbody id="bp-leaves"></tbody>
+            </table>
+          </div>
+          <p id="bp-check" class="readout" role="status"></p>
+        </section>
+
+        <h2 id="why-backwards">Why backwards?</h2>
+        <p>
+          The chain rule can also run forwards. Pick one input and carry the derivative of every value
+          with respect to it through the graph, alongside the values themselves. This is
+          <em>forward-mode</em> differentiation: one pass gives the slope of every output with respect
+          to that one input. <em>Reverse mode</em>, which is backpropagation, does the opposite: one
+          pass gives the slope of one output with respect to every input.
+        </p>
+        <p>
+          A network has one output that matters, the loss, and millions or billions of weights.
+          Reverse mode needs one backward pass. Forward mode would need one pass per weight.
+        </p>
+        <p>
+          The price is memory. The backward pass needs the values the forward pass computed, so
+          training keeps every layer's activations until the backward pass reaches that layer. That is
+          a large part of why training needs much more memory than running the same model. Gradient
+          checkpointing (Chen and colleagues, 2016) trades some of it back: keep only some activations,
+          and recompute the rest during the backward pass.
+        </p>
+
+        <h2 id="matrices">The same thing with matrices</h2>
+        <p>
+          Real networks work on matrices, not single numbers. Take a layer that multiplies its input
+          <math><mi>X</mi></math> by a weight matrix <math><mi>W</mi></math>:
+        </p>
+        <math display="block"><mi>Y</mi><mo>=</mo><mi>X</mi><mi>W</mi></math>
+        <p>
+          Its local derivative would be an enormous matrix of every output's slope with respect to every
+          input, and no framework ever builds it. Instead, given the gradient
+          <math><mi>G</mi><mo>=</mo><mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><mi>Y</mi></mrow></mfrac></math>
+          that arrives from the layer above, the backward pass computes:
+        </p>
+        <math display="block">
+          <mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><mi>W</mi></mrow></mfrac><mo>=</mo>
+          <msup><mi>X</mi><mi>T</mi></msup><mi>G</mi>
+        </math>
+        <math display="block">
+          <mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><mi>X</mi></mrow></mfrac><mo>=</mo>
+          <mi>G</mi><msup><mi>W</mi><mi>T</mi></msup>
+        </math>
+        <p>
+          Both are ordinary matrix multiplications, the same kind of work as the forward pass. Two of
+          them per layer, against one going forwards, is where “about twice the cost” comes from. This
+          guide's tests check both formulas against finite differences.
+        </p>
+
+        <h2 id="history">Who worked it out</h2>
+        <p>
+          Backpropagation was discovered several times, in different fields, before it became famous.
+        </p>
+        <ol class="timeline">
+          <li><span class="when">1960</span><span>Henry Kelley's gradient method for optimal flight paths runs a recursion backwards from the end of the trajectory: the same structure, in control theory.</span></li>
+          <li><span class="when">1962</span><span>Stuart Dreyfus derives that backward recursion using nothing but the chain rule.</span></li>
+          <li><span class="when">1962</span><span>Frank Rosenblatt writes of “back-propagating error correction” in <cite>Principles of Neurodynamics</cite>, but has no working rule for hidden layers.</span></li>
+          <li><span class="when">1967</span><span>Shun'ichi Amari trains a network with an adaptive hidden layer by stochastic gradient descent.</span></li>
+          <li><span class="when">1970</span><span>Seppo Linnainmaa's master's thesis describes reverse-mode automatic differentiation in general form. It was published in 1976.</span></li>
+          <li><span class="when">1974</span><span>Paul Werbos's PhD thesis proposes using it to train neural networks. He applies it to networks explicitly in 1982.</span></li>
+          <li><span class="when">1985</span><span>David Parker and Yann LeCun each arrive at it independently.</span></li>
+          <li><span class="when">1986</span><span>Rumelhart, Hinton and Williams show in <cite>Nature</cite> that backpropagation teaches hidden units useful internal representations.</span></li>
+          <li><span class="when">1989</span><span>LeCun and colleagues use it to train a convolutional network that reads handwritten ZIP codes.</span></li>
+        </ol>
+        <p>
+          The 1986 paper did not invent the algorithm. What it did was show what the algorithm could
+          do. In one experiment a network learned two family trees, and its hidden units came to stand
+          for features such as nationality and generation, which nobody had programmed in. Computers
+          had also become fast enough to run experiments like that.
+        </p>
+
+        <h2 id="frameworks">Nobody writes the backward pass by hand any more</h2>
+        <p>
+          Theano and TensorFlow build a graph of operations first and then differentiate it. PyTorch
+          records operations on a tape as the code runs, much as the <code>Value</code> class behind the
+          widgets on this page does. JAX transforms ordinary Python functions. Underneath, all of them
+          do reverse-mode automatic differentiation.
+        </p>
+
+        <h2 id="limits">What this leaves out</h2>
+        <ul>
+          <li>ReLU has a corner at zero, where its slope is undefined. Frameworks simply pick a value there, usually 0.</li>
+          <li>A gradient that travels back through many layers is a product of many local slopes. If most of them are below 1 it shrinks towards zero; if most are above 1 it blows up. The chapter on activation functions is about exactly that.</li>
+          <li>Whether the brain does anything like backpropagation is still an open question (Lillicrap and colleagues, 2020).</li>
+        </ul>
+
+        <h2 id="try">Try it in the workbench</h2>
+        <p>
+          The workbench's <a href="./lab.html#network-stepper">node graph debugger</a> steps a larger
+          network through its forward pass, backward pass and weight update. Its
+          <a href="./lab.html#mlp-backprop">MLP trainer</a> runs backpropagation on 2-D data and redraws the
+          decision boundary as the network learns.
+        </p>
+
+        <h2 id="sources">Sources</h2>
+        <ul class="sources small">
+          <li>D. E. Rumelhart, G. E. Hinton and R. J. Williams (1986). <a href="https://doi.org/10.1038/323533a0">Learning representations by back-propagating errors</a>. <cite>Nature</cite> 323.</li>
+          <li>H. J. Kelley (1960). Gradient theory of optimal flight paths. <cite>ARS Journal</cite> 30(10).</li>
+          <li>S. Dreyfus (1962). The numerical solution of variational problems. <cite>Journal of Mathematical Analysis and Applications</cite> 5(1).</li>
+          <li>F. Rosenblatt (1962). <cite>Principles of Neurodynamics</cite>. Spartan Books.</li>
+          <li>S. Amari (1967). A theory of adaptive pattern classifiers. <cite>IEEE Transactions on Electronic Computers</cite> EC-16(3).</li>
+          <li>S. Linnainmaa (1976). Taylor expansion of the accumulated rounding error. <cite>BIT</cite> 16. Based on his 1970 master's thesis.</li>
+          <li>P. J. Werbos (1974). <cite>Beyond Regression: New Tools for Prediction and Analysis in the Behavioral Sciences</cite>. PhD thesis, Harvard University.</li>
+          <li>Y. LeCun et al. (1989). <a href="https://doi.org/10.1162/neco.1989.1.4.541">Backpropagation applied to handwritten zip code recognition</a>. <cite>Neural Computation</cite> 1(4).</li>
+          <li>A. G. Baydin et al. (2018). <a href="https://arxiv.org/abs/1502.05767">Automatic differentiation in machine learning: a survey</a>. <cite>JMLR</cite> 18.</li>
+          <li>T. Chen et al. (2016). <a href="https://arxiv.org/abs/1604.06174">Training deep nets with sublinear memory cost</a>.</li>
+          <li>J. Kaplan et al. (2020). <a href="https://arxiv.org/abs/2001.08361">Scaling laws for neural language models</a> (the forward and backward compute counts).</li>
+          <li>T. P. Lillicrap et al. (2020). Backpropagation and the brain. <cite>Nature Reviews Neuroscience</cite> 21.</li>
+          <li>A. Karpathy. <a href="https://github.com/karpathy/micrograd">micrograd</a>. The <code>Value</code> class in this guide's <code>math.js</code> follows the same idea.</li>
+        </ul>
+
+        <nav class="prev-next" aria-label="Previous and next chapters" data-prev-next><a href="./">All chapters</a></nav>
+      </article>
+    </div>
+  </main>
+
+  <footer>
+    A working notebook, not a promise of correctness. Every number on this page comes from
+    <code>math.js</code> and is checked by the repository's tests.
+  </footer>
+  <script type="module" src="./chapters.js"></script>
+  <script type="module" src="./backpropagation.js"></script>
+</body>
+</html>

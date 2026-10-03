@@ -37,9 +37,8 @@ export const CHAPTERS = [
     title: "Backpropagation",
     years: "1960–1986",
     summary:
-      "The chain rule, run backwards. Why a gradient for every weight costs about as much as one forward pass, and who worked that out.",
+      "The chain rule, run backwards. Why one backward pass gives the slope for every weight at about twice the cost of a forward pass, and who worked that out.",
     buildsOn: ["gradient-descent.html"],
-    planned: true,
   },
   {
     slug: "activations.html",

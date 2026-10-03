@@ -87,6 +87,15 @@ try{
  check('gradient-descent: the learning-rate readout shows the exact race rate (0.15), not the slider rounding (0.151)',await p.evaluate(()=>document.querySelector('#gd-lr-out').textContent==='0.15'));
  await p.click('#gd-compare');await p.waitFor(()=>document.querySelectorAll('#gd-results tr').length===2);
  check('gradient-descent stability demo: eta 0.19 reaches the minimum and 0.21 diverges',await p.evaluate(()=>{const r=[...document.querySelectorAll('#gd-results tr')].map((t)=>t.textContent);return r[0].includes('Reached')&&r[1].includes('Diverged');}));
+ await p.goto(base+'neural-networks/backpropagation.html');await p.waitFor(()=>document.querySelectorAll('#bp-ops tr').length===17);
+ check('backpropagation: 17 operations listed, nothing computed yet, Backward disabled until the forward pass is done',await p.evaluate(()=>document.querySelector('#bp-progress').textContent.startsWith('forward 0 of 17')&&document.querySelector('#bp-backward').disabled&&document.querySelectorAll('#bp-neuron-rows tr').length===8));
+ await p.click('#bp-forward');
+ check('backpropagation: one forward step computes exactly one node',await p.evaluate(()=>document.querySelector('#bp-progress').textContent.startsWith('forward 1 of 17')&&[...document.querySelectorAll('#bp-ops tr')].filter((r)=>r.cells[2].textContent!=='—').length===1));
+ await p.click('#bp-all');
+ check('backpropagation: after both passes all 9 weight gradients match finite differences',await p.evaluate(()=>{const d=document.querySelector('#bp-check').dataset.maxDiff;return d!==''&&Number(d)<1e-6&&document.querySelectorAll('#bp-leaves tr').length===11;}));
+ await p.click('#bp-train');
+ check('backpropagation: one gradient step lowers the loss',await p.evaluate(()=>{const m=document.querySelector('#bp-status').textContent.match(/from ([-0-9.e+]+) to ([-0-9.e+]+)\.$/);return !!m&&Number(m[2])<Number(m[1]);}));
+ check('backpropagation: every block formula lays out on one line, no mobile overflow',(await p.evaluate(blockMathOnOneLine))&&(await p.evaluate(()=>innerWidth===390&&document.documentElement.scrollWidth<=innerWidth)));
  await p.goto(base+'neural-networks/lab.html');await p.waitFor(()=>document.querySelector('#mlp-epoch').textContent!=='0');
  check('neural-networks WASM GEMM kernel and interactive trainers render',await p.evaluate(()=>document.querySelector('#kernel-readout').textContent.includes('WebAssembly')&&document.querySelectorAll('#builder-stack .block-item').length===6));
  await p.click('#stepper-next-btn');await p.click('#cnn-step-next-btn');await p.click('#rnn-step-next-btn');await p.click('#tf-step-next-btn');
