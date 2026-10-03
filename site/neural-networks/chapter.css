@@ -1,0 +1,289 @@
+/* site/neural-networks/chapter.css — shared layout for the chapter pages.
+   Loaded after ../style.css and reuses its tokens (--ink, --accent, --line, --wash, --muted). */
+
+.chapter {
+  max-inline-size: 78rem;
+}
+
+.chapter-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2rem;
+}
+
+@media (min-width: 1100px) {
+  .chapter-grid {
+    grid-template-columns: 15rem minmax(0, 1fr);
+  }
+  .chapter-toc {
+    position: sticky;
+    inset-block-start: 1rem;
+    align-self: start;
+    max-block-size: calc(100dvh - 2rem);
+    overflow-y: auto;
+  }
+}
+
+.crumbs {
+  font-size: 0.9rem;
+  color: var(--muted);
+  margin-block-end: 0.5rem;
+}
+
+.chapter-toc {
+  font-size: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+
+.chapter-toc > ol,
+.chapter-toc ol ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.chapter-toc ol ol {
+  margin-block: 0.25rem 0.75rem;
+}
+
+.chapter-toc li li {
+  padding-block: 0.2rem;
+}
+
+.chapter-toc .toc-part {
+  display: block;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.chapter-toc a[aria-current="page"] {
+  font-weight: 700;
+  text-decoration: none;
+  border-inline-start: 3px solid var(--accent);
+  padding-inline-start: 0.4rem;
+}
+
+.chapter-toc .planned {
+  color: var(--muted);
+}
+
+.prose {
+  max-inline-size: 74ch;
+  min-inline-size: 0;
+}
+
+.prose h2 {
+  margin-block-start: 2.5rem;
+}
+
+.prose h3 {
+  margin-block-start: 1.75rem;
+}
+
+.lead {
+  font-size: 1.15rem;
+}
+
+/* Native MathML: no MathJax, no KaTeX. */
+math {
+  font-family: "STIX Two Math", "Cambria Math", "Latin Modern Math", "Noto Sans Math", math, serif;
+}
+
+math[display="block"] {
+  display: block;
+  margin-block: 1rem;
+  padding-block: 0.4rem;
+  font-size: 1.2em;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.equation-note {
+  color: var(--muted);
+  font-size: 0.92rem;
+  margin-block-start: -0.5rem;
+}
+
+/* Interactive panels */
+.widget {
+  border: 1px solid var(--line);
+  background: var(--wash);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-block: 1.5rem;
+  min-inline-size: 0;
+}
+
+.widget h3 {
+  margin-block-start: 0;
+}
+
+.widget canvas {
+  display: block;
+  inline-size: 100%;
+  max-inline-size: 640px;
+  block-size: auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.widget canvas.draggable {
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  align-items: end;
+  margin-block: 0.75rem;
+}
+
+.controls label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.controls input[type="range"] {
+  inline-size: min(14rem, 100%);
+}
+
+.readout {
+  font-family: ui-monospace, monospace;
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+  margin-block: 0.5rem;
+}
+
+.two-col {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+@media (min-width: 900px) {
+  .two-col {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+/* History timeline */
+.timeline {
+  list-style: none;
+  padding: 0;
+  margin-block: 1rem;
+  border-inline-start: 2px solid var(--line);
+}
+
+.timeline li {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: 0.75rem;
+  padding: 0.4rem 0 0.4rem 0.75rem;
+}
+
+.timeline .when {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.callout {
+  border-inline-start: 4px solid var(--accent);
+  background: var(--wash);
+  padding: 0.75rem 1rem;
+  margin-block: 1.25rem;
+  border-radius: 0 6px 6px 0;
+}
+
+.callout > :first-child {
+  margin-block-start: 0;
+}
+
+.callout > :last-child {
+  margin-block-end: 0;
+}
+
+.honest {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+/* Hub: the stack */
+.nn-stack {
+  list-style: none;
+  padding: 0;
+  margin-block: 1.5rem;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.nn-stack li {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  background: #fff;
+}
+
+.nn-stack .part-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.nn-stack .years {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-inline-start: 0.4rem;
+}
+
+.nn-stack li.is-active {
+  border-color: var(--accent);
+  box-shadow: inset 4px 0 0 var(--accent);
+}
+
+.nn-stack li.is-prereq {
+  background: var(--wash);
+}
+
+.nn-stack .builds-on {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.prev-next {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-block-start: 1px solid var(--line);
+  margin-block-start: 3rem;
+  padding-block-start: 1rem;
+}
+
+.matrix {
+  border-collapse: collapse;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.matrix td {
+  border: 1px solid var(--line);
+  padding: 0.2rem 0.4rem;
+  text-align: end;
+  min-inline-size: 2.4rem;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition {
+    navigation: auto;
+  }
+}
