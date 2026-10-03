@@ -74,6 +74,13 @@ test('every neural-network page has balanced MathML and no inline script or styl
   }
 });
 
+test('chapter.css keeps display: block math on block formulas (Chrome otherwise stacks them)', () => {
+  const css = readFileSync(join(nn, 'chapter.css'), 'utf8');
+  const rule = css.match(/math\[display="block"\]\s*\{([^}]*)\}/);
+  assert.ok(rule, 'chapter.css has a math[display="block"] rule');
+  assert.match(rule[1], /display:\s*block math;/);
+});
+
 test('every local link, stylesheet and script in the neural-network pages resolves', () => {
   for (const file of htmlFiles(nn)) {
     for (const url of localTargets(file)) {
