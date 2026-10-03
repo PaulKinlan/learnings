@@ -1,11 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   BENCHMARK_META,
   JEV_IMAGE_BENCH_DATA,
   filterImageBench,
   sortImageBench
 } from '../site/decision-models/image-bench-data.js';
+
+const SOURCE_EXTRACT = JSON.parse(
+  readFileSync(new URL('./fixtures/image-jev-bench-source-extract.json', import.meta.url), 'utf8')
+);
 import {
   PRESETS,
   validateImageSpec,
@@ -27,6 +32,31 @@ test('JevImageBench v0.1.5: dataset integrity & metadata', () => {
   }
   const uniqueRanks = new Set(ranks);
   assert.equal(uniqueRanks.size, 50, 'All ranks must be unique');
+});
+
+test('JevImageBench v0.1.5: comprehensive 50-row mechanical validation against source extract fixture', () => {
+  assert.ok(SOURCE_EXTRACT.metadata, 'Fixture metadata header must exist');
+  assert.equal(SOURCE_EXTRACT.metadata.sourceUrl, 'https://benchmarkheaven.com/image-jev-bench');
+  assert.equal(SOURCE_EXTRACT.metadata.version, '0.1.5');
+  assert.equal(SOURCE_EXTRACT.metadata.totalRows, 50);
+  assert.ok(SOURCE_EXTRACT.metadata.fetchDate, 'Fetch date must exist in header metadata');
+
+  assert.equal(JEV_IMAGE_BENCH_DATA.length, 50, 'image-bench-data.js must contain exactly 50 rows');
+  assert.equal(SOURCE_EXTRACT.rows.length, 50, 'Source extract fixture must contain exactly 50 rows');
+
+  for (let i = 0; i < 50; i++) {
+    const dataRow = JEV_IMAGE_BENCH_DATA[i];
+    const fixtureRow = SOURCE_EXTRACT.rows[i];
+
+    assert.equal(dataRow.rank, fixtureRow.rank, `Row ${i + 1} rank mismatch (${dataRow.name})`);
+    assert.equal(dataRow.name, fixtureRow.name, `Row ${i + 1} name mismatch`);
+    assert.equal(dataRow.capabilityScore, fixtureRow.capability, `Row ${i + 1} capability mismatch (${dataRow.name})`);
+    assert.equal(dataRow.intelligence, fixtureRow.intelligence, `Row ${i + 1} intelligence mismatch (${dataRow.name})`);
+    assert.equal(dataRow.calibration, fixtureRow.calibration, `Row ${i + 1} calibration mismatch (${dataRow.name})`);
+    assert.equal(dataRow.speed, fixtureRow.latency, `Row ${i + 1} latency/speed mismatch (${dataRow.name})`);
+    assert.equal(dataRow.cost, fixtureRow.cost, `Row ${i + 1} cost mismatch (${dataRow.name})`);
+    assert.equal(dataRow.link, fixtureRow.link, `Row ${i + 1} link mismatch (${dataRow.name})`);
+  }
 });
 
 test('JevImageBench v0.1.5: top Jev-class models and baselines scores match benchmark', () => {
@@ -179,9 +209,18 @@ test('JevImageBench v0.1.5: top Jev-class models and baselines scores match benc
   assert.ok(playjev, 'PlayJev 0.8B must exist');
   assert.equal(playjev.capabilityScore, 24.4);
   assert.equal(playjev.intelligence, 4.4);
-  assert.equal(playjev.calibration, 44.5);
-  assert.equal(playjev.speed, 0.28);
+  assert.equal(playjev.calibration, 59.4);
+  assert.equal(playjev.speed, 0.49);
   assert.equal(playjev.cost, 0.023);
+  assert.equal(playjev.link, 'https://huggingface.co/OmniJev/PlayJev-0.8B/blob/a7348002b1e159add7037d6d50812cd4db2d96e9/README.md');
+
+  const omnijev9b = find('OmniJev-Qwen3.5-9B-v4');
+  assert.ok(omnijev9b, 'OmniJev-Qwen3.5-9B-v4 must exist');
+  assert.equal(omnijev9b.capabilityScore, 60.9);
+  assert.equal(omnijev9b.intelligence, 52.2);
+  assert.equal(omnijev9b.calibration, 69.6);
+  assert.equal(omnijev9b.speed, 0.27);
+  assert.equal(omnijev9b.cost, 0.022);
 
   // Baselines outside budget
   const gpt56 = find('GPT-5.6 Luna');
