@@ -508,6 +508,41 @@ export function buildTinyNetwork({ inputs, target, params } = TINY_NET_DEFAULTS)
 }
 
 /**
+ * The backward pass written out one node at a time, without touching .grad. Operation nodes are
+ * visited in reverse topological order, and each visit pushes ∂L/∂node × (local derivative) into
+ * every input. A node's own gradient is final when it is visited, because everything that uses it
+ * was visited first. Returns the steps (for the step-through widget) and every node's gradient.
+ */
+export function backwardTrace(loss) {
+  const order = loss.topo();
+  const grads = new Map(order.map((v) => [v, 0]));
+  grads.set(loss, 1);
+  const steps = [];
+  for (let i = order.length - 1; i >= 0; i--) {
+    const v = order[i];
+    if (!v.children.length) continue;
+    const g = grads.get(v);
+    const contributions = v.children.map((c, k) => {
+      const delta = g * v.localGrads[k];
+      grads.set(c, grads.get(c) + delta);
+      return { child: c, local: v.localGrads[k], delta };
+    });
+    steps.push({ node: v, grad: g, contributions });
+  }
+  return { order, steps, grads };
+}
+
+/** One plain gradient-descent step on the 2-2-1 network's weights: w ← w − η ∂L/∂w. */
+export function trainTinyNetworkStep(config = TINY_NET_DEFAULTS, lr = 0.5) {
+  const before = buildTinyNetwork(config);
+  const { grads } = backwardTrace(before.loss);
+  const params = {};
+  for (const [k, node] of Object.entries(before.params)) params[k] = node.data - lr * grads.get(node);
+  const next = { ...config, params };
+  return { config: next, lossBefore: before.loss.data, lossAfter: buildTinyNetwork(next).loss.data };
+}
+
+/**
  * The chain rule for one sigmoid neuron with squared error, written out factor by factor:
  * L = (σ(w x + b) − y)², so ∂L/∂w = ∂L/∂a · ∂a/∂z · ∂z/∂w = 2(a − y) · a(1 − a) · x.
  */

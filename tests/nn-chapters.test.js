@@ -8,9 +8,9 @@ import {
   PERCEPTRON_DATASETS, perceptronOutput, trainPerceptron, xorTwoLayer,
   softmax, entropy, crossEntropy, softmaxCrossEntropyGrad, expectedCalibrationError, mse,
   SURFACES, OPTIMIZERS, RACE_LEARNING_RATES, makeOptimizer, optimizePath,
-  Value, buildTinyNetwork, TINY_NET_DEFAULTS, singleNeuronChainRule,
+  Value, buildTinyNetwork, TINY_NET_DEFAULTS, singleNeuronChainRule, backwardTrace, trainTinyNetworkStep,
   conv2d, conv2dOutputSize, conv2dMulti, zeroPad, maxPool2d, relu2d, KERNEL_PRESETS,
-  scaledDotProductAttention, matmul, layerNorm, rmsNorm, rope, dot, moeRoute,
+  scaledDotProductAttention, matmul, transpose, layerNorm, rmsNorm, rope, dot, moeRoute,
   attentionHbmTraffic, kvCacheBytes, quantizeAffineInt8, quantizeSymmetricInt8, mulberry32,
 } from '../site/neural-networks/math.js';
 
@@ -308,4 +308,53 @@ test('int8 quantisation: zero is exact, error is at most half a step', () => {
   assert.equal(s.zeroPoint, 0);
   assert.ok(s.q.every((q) => q >= -127 && q <= 127));
   assert.ok(s.maxError <= s.scale * 0.5 + 1e-9);
+});
+
+// ── backpropagation.html ────────────────────────────────────────────────────────────────
+
+test('the step-by-step backward trace gives exactly the gradients Value.backward() gives', () => {
+  const { loss } = buildTinyNetwork(TINY_NET_DEFAULTS);
+  const { steps, grads, order } = backwardTrace(loss);
+  loss.backward();
+  for (const v of order) close(grads.get(v), v.grad, 1e-12, v.label || v.op);
+  assert.equal(steps[0].node, loss);
+  assert.equal(steps[0].grad, 1);
+  assert.equal(steps.length, order.filter((v) => v.children.length).length);
+  // A node is visited only after every node that uses it: nothing pushes into a visited node.
+  const visited = new Set();
+  for (const s of steps) {
+    for (const c of s.contributions) assert.ok(!visited.has(c.child), 'gradient pushed into an already-visited node');
+    visited.add(s.node);
+  }
+});
+
+test('one gradient step on the 2-2-1 network lowers the loss, and twenty keep lowering it', () => {
+  const first = trainTinyNetworkStep(TINY_NET_DEFAULTS, 0.5);
+  assert.ok(first.lossAfter < first.lossBefore, `${first.lossBefore} -> ${first.lossAfter}`);
+  let cfg = TINY_NET_DEFAULTS;
+  let last = first.lossBefore;
+  for (let i = 0; i < 20; i++) {
+    const s = trainTinyNetworkStep(cfg, 0.5);
+    assert.ok(s.lossAfter < last, `step ${i}: ${last} -> ${s.lossAfter}`);
+    last = s.lossAfter;
+    cfg = s.config;
+  }
+  assert.ok(last < first.lossBefore * 0.7, `after 20 steps ${last}`);
+});
+
+test('matrix backprop: for Y = XW, dL/dW = Xᵀ G and dL/dX = G Wᵀ (checked by finite differences)', () => {
+  const X = [[1, -2, 0.5], [0.3, 0.8, -1.1]];
+  const W = [[0.2, -0.4], [1.5, 0.1], [-0.7, 0.9]];
+  const G = [[0.6, -1.2], [2.0, 0.4]]; // the upstream gradient dL/dY, for L = Σ G ⊙ Y
+  const L = (Xm, Wm) => matmul(Xm, Wm).reduce((a, row, i) => a + row.reduce((b, y, j) => b + G[i][j] * y, 0), 0);
+  const dW = matmul(transpose(X), G);
+  const dX = matmul(G, transpose(W));
+  W.forEach((row, i) => row.forEach((_, j) => {
+    const f = (v) => { const Wm = W.map((r) => [...r]); Wm[i][j] = v; return L(X, Wm); };
+    close(dW[i][j], numericalDerivative(f, W[i][j]), 1e-6, `dW[${i}][${j}]`);
+  }));
+  X.forEach((row, i) => row.forEach((_, j) => {
+    const f = (v) => { const Xm = X.map((r) => [...r]); Xm[i][j] = v; return L(Xm, W); };
+    close(dX[i][j], numericalDerivative(f, X[i][j]), 1e-6, `dX[${i}][${j}]`);
+  }));
 });
