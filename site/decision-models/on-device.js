@@ -19,7 +19,7 @@ const el = (tag, text, cls) => {
   if (cls) node.className = cls;
   return node;
 };
-const line = (text, cls) => $("log").append(el("p", text, cls));
+const line = (text, cls) => ($("log") ?? $("load-state"))?.append(el("p", text, cls));
 
 // ---------------------------------------------------------------------------------------------
 // Loading
@@ -27,29 +27,16 @@ const line = (text, cls) => $("log").append(el("p", text, cls));
 
 let session = null; // { tokenizer, model, ids, cache }
 
-const downloaded = new Map();
-function progress(event) {
-  if (!event || event.status !== "progress" || !event.file) return;
-  downloaded.set(event.file, { loaded: event.loaded || 0, total: event.total || 0 });
-  let loaded = 0;
-  let total = 0;
-  for (const f of downloaded.values()) {
-    loaded += f.loaded;
-    total += f.total;
-  }
-  const mb = (n) => (n / 1048576).toFixed(1);
-  $("progress").textContent = total
-    ? `${mb(loaded)} MB of ${mb(total)} MB · ${downloaded.size} file${downloaded.size === 1 ? "" : "s"} · ${event.file}`
-    : `contacting ${event.file}`;
-}
-
 async function load() {
   $("load").disabled = true;
   $("load-state").textContent = "Loading the runtime, then the weights…";
   const started = performance.now();
   try {
     session = await loadKev({
-      onProgress: (stage, received, total) => {
+      onProgress: (info, receivedArg, totalArg) => {
+        const stage = typeof info === "object" && info !== null ? info.stage : info;
+        const received = typeof info === "object" && info !== null ? (info.loaded ?? 0) : (receivedArg ?? 0);
+        const total = typeof info === "object" && info !== null ? (info.total ?? 0) : (totalArg ?? 0);
         const mb = (n) => (n / 1048576).toFixed(1);
         $("progress").textContent = total
           ? `${stage} · ${mb(received)} MB of ${mb(total)} MB`
@@ -65,6 +52,7 @@ async function load() {
   } catch (error) {
     $("load-state").textContent = `Could not load the model: ${error.message}`;
     line(String(error.stack || error), "bad");
+  } finally {
     $("load").disabled = false;
   }
 }

@@ -53,12 +53,7 @@ async function measureKev() {
   const before = heap();
   const t0 = performance.now();
   const session = await loadKev({
-    urls: {
-      'tokenizer.json': '../kev-staging/tokenizer.json',
-      'config.json': '../kev-staging/config.json',
-      'onnx/model_q4.onnx': '../kev-staging/onnx/model_q4.onnx',
-      'onnx/model_q4.onnx_data': '../kev-staging/onnx/model_q4.onnx_data',
-    },
+    ...(globalThis.__KEV_URLS ? { urls: globalThis.__KEV_URLS } : {}),
   });
   const loadMs = performance.now() - t0;
   const afterLoad = heap();

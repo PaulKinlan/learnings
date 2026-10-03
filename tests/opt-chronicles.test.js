@@ -42,3 +42,15 @@ test('OPT Chronicles: loss trajectory datasets have aligned step lengths', () =>
     assert.ok(LOSS_DATA.exp12[i] < LOSS_DATA.exp12[i - 1], `exp12 should decrease at step ${LOSS_DATA.steps[i]}`);
   }
 });
+
+test('OPT Chronicles: HTML enforces strict CSP, skip link, semantic math, and zero inline styles', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const html = await readFile(new URL('../site/opt-chronicles/index.html', import.meta.url), 'utf8');
+  const js = await readFile(new URL('../site/opt-chronicles/app.js', import.meta.url), 'utf8');
+  assert.match(html, /http-equiv="Content-Security-Policy"/);
+  assert.match(html, /class="skip" href="#main"/);
+  assert.match(html, /<main id="main">/);
+  assert.ok(!html.includes('style="'), 'index.html must not contain inline style attributes');
+  assert.ok(!js.includes('style="'), 'app.js must not contain inline style attributes');
+  assert.ok(!html.includes('$\\text{'), 'index.html must not contain raw unrendered LaTeX');
+});

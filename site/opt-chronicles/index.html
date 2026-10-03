@@ -3,24 +3,29 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; font-src 'self'; worker-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
   <title>Chronicles of OPT-175B: Training Large Models at Scale | Learnings</title>
   <link rel="stylesheet" href="../style.css">
   <link rel="stylesheet" href="opt.css">
   <meta name="description" content="An interactive graphical overview of Meta AI's 148-page OPT-175B training logbook, 90+ restarts, hardware crises, cluster deletions, and numerical stabilization techniques.">
 </head>
 <body>
+  <a class="skip" href="#main">Skip to content</a>
   <header>
     <a href="../index.html">← Learnings Hub</a>
-    <nav>
+    <nav aria-label="Section navigation">
       <a href="#timeline">Timeline</a>
       <a href="#trajectories">Loss Curves</a>
       <a href="#learnings">Key Learnings</a>
       <a href="#simulator">Failure Simulator</a>
+      <a href="../neural-networks/">Neural Networks</a>
+      <a href="../celld/">celld &amp; DOs</a>
       <a href="https://github.com/facebookresearch/metaseq/tree/main/projects/OPT/chronicles" target="_blank" rel="noopener">Original GitHub Repo ↗</a>
     </nav>
   </header>
 
-  <main>
+  <main id="main">
     <!-- Hero Banner -->
     <section class="hero-banner">
       <h1>Chronicles of OPT-175B</h1>
@@ -62,41 +67,41 @@
     <section id="timeline">
       <div class="chart-header">
         <div>
-          <h2>Interactive Incident & Training Timeline</h2>
-          <p class="small">Click any marker or log row to inspect exact logbook notes, token milestones, and architectural actions.</p>
+          <h2>Interactive Incident &amp; Training Timeline</h2>
+          <p class="small">Click or press Enter on any marker or log row to inspect exact logbook notes, token milestones, and architectural actions.</p>
         </div>
         <div class="legend">
-          <span class="legend-item"><span class="legend-color" style="background:#e02424;"></span> Major SEV</span>
-          <span class="legend-item"><span class="legend-color" style="background:#d97706;"></span> Hardware Failure</span>
-          <span class="legend-item"><span class="legend-color" style="background:#dc2626;"></span> Loss Spike / NaN</span>
-          <span class="legend-item"><span class="legend-color" style="background:#2563eb;"></span> Hyperparameter / Architecture</span>
-          <span class="legend-item"><span class="legend-color" style="background:#0d9488;"></span> Automation Win</span>
+          <span class="legend-item"><span class="legend-color swatch-sev"></span> Major SEV</span>
+          <span class="legend-item"><span class="legend-color swatch-hw"></span> Hardware Failure</span>
+          <span class="legend-item"><span class="legend-color swatch-stability"></span> Loss Spike / NaN</span>
+          <span class="legend-item"><span class="legend-color swatch-tune"></span> Hyperparameter / Architecture</span>
+          <span class="legend-item"><span class="legend-color swatch-auto"></span> Automation Win</span>
         </div>
       </div>
 
       <!-- Controls Panel -->
       <div class="controls-panel">
         <div class="filter-row">
-          <span style="font-weight:700; font-size:0.85rem; color:var(--muted); text-transform:uppercase;">Phases:</span>
-          <button class="filter-btn active" data-phase-filter="all">All Phases</button>
-          <button class="filter-btn" data-phase-filter="pre">Ablations & Prep</button>
-          <button class="filter-btn" data-phase-filter="phase-10">0–10% (Pivot to 12.xx)</button>
-          <button class="filter-btn" data-phase-filter="phase-27">10–27% (HW Carnage)</button>
-          <button class="filter-btn" data-phase-filter="phase-56">27–56% (Scale & Stability)</button>
-          <button class="filter-btn" data-phase-filter="phase-100">56–100% (SEV & Auto)</button>
+          <span class="filter-label">Phases:</span>
+          <button type="button" class="filter-btn active" aria-pressed="true" data-phase-filter="all">All Phases</button>
+          <button type="button" class="filter-btn" aria-pressed="false" data-phase-filter="pre">Ablations &amp; Prep</button>
+          <button type="button" class="filter-btn" aria-pressed="false" data-phase-filter="phase-10">0–10% (Pivot to 12.xx)</button>
+          <button type="button" class="filter-btn" aria-pressed="false" data-phase-filter="phase-27">10–27% (HW Carnage)</button>
+          <button type="button" class="filter-btn" aria-pressed="false" data-phase-filter="phase-56">27–56% (Scale &amp; Stability)</button>
+          <button type="button" class="filter-btn" aria-pressed="false" data-phase-filter="phase-100">56–100% (SEV &amp; Auto)</button>
         </div>
 
         <div class="filter-row">
-          <span style="font-weight:700; font-size:0.85rem; color:var(--muted); text-transform:uppercase;">Category:</span>
-          <button class="filter-btn active" data-cat-filter="all">All</button>
-          <button class="filter-btn" data-cat-filter="sev">Major SEV</button>
-          <button class="filter-btn" data-cat-filter="hardware">Hardware</button>
-          <button class="filter-btn" data-cat-filter="stability">Numerical Stability</button>
-          <button class="filter-btn" data-cat-filter="tune">Architecture / LR</button>
-          <button class="filter-btn" data-cat-filter="auto">Automation</button>
+          <span class="filter-label">Category:</span>
+          <button type="button" class="filter-btn active" aria-pressed="true" data-cat-filter="all">All</button>
+          <button type="button" class="filter-btn" aria-pressed="false" data-cat-filter="sev">Major SEV</button>
+          <button type="button" class="filter-btn" aria-pressed="false" data-cat-filter="hardware">Hardware</button>
+          <button type="button" class="filter-btn" aria-pressed="false" data-cat-filter="stability">Numerical Stability</button>
+          <button type="button" class="filter-btn" aria-pressed="false" data-cat-filter="tune">Architecture / LR</button>
+          <button type="button" class="filter-btn" aria-pressed="false" data-cat-filter="auto">Automation</button>
 
           <div class="search-box">
-            <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
             <input type="text" id="chronicle-search" placeholder="Search logbook (e.g. Omicron, ReLU, ECC, 1.6TB)..." aria-label="Search logbook">
           </div>
         </div>
@@ -104,16 +109,16 @@
 
       <!-- Timeline SVG Viz -->
       <div class="timeline-viz-container">
-        <svg id="timeline-svg" class="timeline-svg" role="img" aria-label="Interactive timeline of OPT-175B training"></svg>
+        <svg id="timeline-svg" class="timeline-svg" role="group" aria-label="Interactive timeline of OPT-175B training"></svg>
       </div>
 
       <!-- Detail Inspector -->
-      <div id="event-inspector" class="event-inspector" role="region" aria-live="polite">
+      <div id="event-inspector" class="event-inspector" role="region" aria-live="polite" aria-label="Selected incident details">
         <!-- Injected via JavaScript -->
       </div>
 
       <!-- Event Table / List -->
-      <h3 style="margin: 2rem 0 0.8rem 0;">Chronological Event Ledger</h3>
+      <h3 class="ledger-heading">Chronological Event Ledger</h3>
       <div id="chronicle-event-list" class="event-list">
         <!-- Injected via JavaScript -->
       </div>
@@ -121,7 +126,7 @@
 
     <!-- Trajectories Section -->
     <section id="trajectories">
-      <h2>Validation Loss Dynamics & Trajectory</h2>
+      <h2>Validation Loss Dynamics &amp; Trajectory</h2>
       <p>
         The comparison between the ill-fated <strong>Experiment 11.xx</strong> and the successful <strong>Experiment 12.xx</strong>
         revealed a crucial counter-intuitive lesson in deep learning at scale:
@@ -130,25 +135,25 @@
 
       <div class="charts-grid">
         <div class="chart-card">
-          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:0.8rem;">
-            <h3 style="margin:0;">Loss Trajectory vs Steps</h3>
-            <div style="font-size:0.85rem; color:var(--muted);">Updates (0 to 75,000)</div>
+          <div class="chart-card-head">
+            <h3 class="no-margin">Loss Trajectory vs Steps</h3>
+            <div class="chart-sub">Updates (0 to 75,000)</div>
           </div>
           <svg id="loss-chart-svg" class="svg-chart" role="img" aria-label="Chart comparing 11.xx, 12.xx, and GPT-3 validation loss curves"></svg>
-          <div class="legend" style="margin-top:1rem; justify-content:center;">
-            <span class="legend-item"><span class="legend-color" style="background:#ef4444;"></span> Exp 11.xx (Diverged / Underflow)</span>
-            <span class="legend-item"><span class="legend-color" style="background:#0284c7;"></span> Exp 12.xx (Megatron Init / Final)</span>
-            <span class="legend-item"><span class="legend-color" style="background:#f59e0b;"></span> GPT-3 175B Reference</span>
+          <div class="legend legend-centered">
+            <span class="legend-item"><span class="legend-color swatch-exp11"></span> Exp 11.xx (Diverged / Underflow)</span>
+            <span class="legend-item"><span class="legend-color swatch-exp12"></span> Exp 12.xx (Megatron Init / Final)</span>
+            <span class="legend-item"><span class="legend-color swatch-gpt3"></span> GPT-3 175B Reference</span>
           </div>
         </div>
 
-        <div class="chart-card" style="display:flex; flex-direction:column; justify-content:center;">
-          <h3 style="margin-top:0;">The Early Loss Trap</h3>
-          <p style="font-size:0.95rem;">
+        <div class="chart-card chart-card-centered">
+          <h3 class="no-top-margin">The Early Loss Trap</h3>
+          <p class="card-copy">
             Notice how <strong>Exp 11.xx</strong> (red) plunged aggressively early on, reaching a loss of <strong>5.1</strong>
             by update 3,500 while <strong>Exp 12.xx</strong> (blue) was lagging behind at <strong>5.4</strong>.
           </p>
-          <p style="font-size:0.95rem;">
+          <p class="card-copy">
             However, 11.xx achieved this through aggressive initialization and Normformer layers that quickly saturated gradients,
             leading to floating-point underflow and terminal stagnation. Exp 12.xx sacrificed early speed for structural stability,
             unlocking a steady, monotonic descent across 75,000 steps.
@@ -169,11 +174,11 @@
       <div class="learnings-grid">
         <div class="learning-card">
           <div class="learning-num">Learning #1</div>
-          <h3>The $x^3$ GeLU FP16 Instability</h3>
+          <h3>The <code>x<sup>3</sup></code> GeLU FP16 Instability</h3>
           <p>
-            In FP16 mixed-precision training, the cubic term in Gaussian Error Linear Units ($\text{GeLU}(x) \approx x \cdot \sigma(1.702 x)$)
+            In FP16 mixed-precision training, the cubic term in Gaussian Error Linear Units (<code>GeLU(x) ≈ x · σ(1.702x)</code>)
             amplifies activations exponentially during extreme forward passes. At 175B scale, this caused sudden gradient overflows.
-            Hot-swapping to standard $\text{ReLU}$ restored bounded linear gradients.
+            Hot-swapping to standard <code>ReLU</code> restored bounded linear gradients.
           </p>
           <div class="card-callout">
             <strong>Takeaway:</strong> What works cleanly in FP32 on a 1.3B model can trigger catastrophic underflow or overflow in FP16 at 175B.
@@ -312,7 +317,7 @@
             </div>
             <div class="sim-metric">
               <div class="sim-metric-label">Wasted Idle Spend:</div>
-              <div id="res-wasted" class="sim-metric-val" style="color:#dc2626;">$174.5k wasted</div>
+              <div id="res-wasted" class="sim-metric-val sim-metric-danger">$174.5k wasted</div>
             </div>
           </div>
         </div>
@@ -320,8 +325,8 @@
     </section>
 
     <!-- References & Sources -->
-    <section style="margin-top: 3rem; border-top: 1px solid var(--line); padding-top: 2rem;">
-      <h3>Primary Sources & Documentation</h3>
+    <section class="references-section">
+      <h3>Primary Sources &amp; Documentation</h3>
       <ul>
         <li>
           <a href="https://github.com/facebookresearch/metaseq/tree/main/projects/OPT/chronicles" target="_blank" rel="noopener">

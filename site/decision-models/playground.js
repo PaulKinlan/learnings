@@ -9,7 +9,7 @@
 import { loadLaya } from "./laya-engine.js";
 import { loadKev, KevSession } from "./kev-engine.js";
 import { Classifier } from "./classifier-api.js";
-import { renderOptions } from "./laya-pack.js";
+import { renderOptions, choiceConfidence } from "./laya-pack.js";
 import {
   choose as kevChoose,
   expectedLevel as kevExpectedLevel,
@@ -24,7 +24,7 @@ const $ = (id) => document.getElementById(id);
 const engines = {
   laya: {
     label: "Laya",
-    checkpointNote: "multilingual mmBERT on LiteRT.js (WASM/XNNPack), ~680 MB of verified downloads",
+    checkpointNote: "multilingual mmBERT on LiteRT.js (WASM/XNNPack), ~650 MB of verified downloads",
     // window.__LAYA_URLS is a test seam: when set (by a smoke driver), loadLaya uses those
     // asset URLs instead of the hub's. Unset in normal use, so the hub is the source.
     load: (onProgress) => loadLaya({
@@ -36,7 +36,7 @@ const engines = {
     label: "Kev",
     checkpointNote: "0.6 B decision model on ONNX Runtime Web (CPU), ~375 MB download",
     load: (onProgress) => loadKev({
-      onProgress: ({ file, loaded, total }) => onProgress("weights", loaded, total, file),
+      onProgress: ({ stage, file, loaded, total }) => onProgress(stage || "weights", loaded, total, file),
       ...(globalThis.__KEV_URLS ? { urls: globalThis.__KEV_URLS } : {}),
     }),
   },
@@ -110,7 +110,11 @@ async function ensureEngine() {
     });
     activeEngine = { name, session };
     const seconds = ((performance.now() - started) / 1000).toFixed(1);
-    setProgress(`${spec.label} ready in ${seconds}s — ${session.checkpoint}. Nothing has been sent anywhere.`);
+    setProgress(
+      name === "jev"
+        ? `${spec.label} ready in ${seconds}s — ${session.checkpoint}. Requests use your API key.`
+        : `${spec.label} ready in ${seconds}s — ${session.checkpoint}. Nothing has been sent anywhere.`,
+    );
     $("demos").hidden = false;
     $("backend").textContent = backendLine(name, session);
     return session;
@@ -168,6 +172,8 @@ function renderAnswer(qid, q, answer, meta) {
     return row;
   };
 
+  const actProb = answer.action?.act_probability ?? "—";
+
   if (answer.type === "choice") {
     block.append(bar(`choice: ${answer.choice}`, answer.probabilities[answer.choice], true));
     for (const [label, p] of Object.entries(answer.probabilities)) {
@@ -175,16 +181,17 @@ function renderAnswer(qid, q, answer, meta) {
     }
     block.append(Object.assign(document.createElement("p"), {
       className: "small",
-      textContent: `confidence ${answer.confidence} · act ${answer.action.act_probability}`,
+      textContent: `confidence ${answer.confidence} · act ${actProb}`,
     }));
   } else if (answer.type === "score") {
-    block.append(bar(`score: ${answer.score} (${nearestLegend(answer.score, answer.legend)})`, Math.min(answer.confidence, 1), true));
+    const legend = answer.legend ?? Object.fromEntries((Array.isArray(q.crit) ? q.crit : []).map((c, o) => [String(o), c]));
+    block.append(bar(`score: ${answer.score} (${nearestLegend(answer.score, legend)})`, Math.min(Number(answer.confidence) || 0, 1), true));
     for (const [index, p] of Object.entries(answer.probabilities)) {
-      block.append(bar(`${index} — ${answer.legend[index]}`, p, false));
+      block.append(bar(`${index} — ${legend[index] ?? index}`, p, false));
     }
     block.append(Object.assign(document.createElement("p"), {
       className: "small",
-      textContent: `confidence ${answer.confidence} · act ${answer.action.act_probability}`,
+      textContent: `confidence ${answer.confidence} · act ${actProb}`,
     }));
   } else if (answer.type === "noul") {
     block.append(bar("yes", answer.noul, answer.noul >= 0.5));
@@ -192,7 +199,7 @@ function renderAnswer(qid, q, answer, meta) {
     block.append(Object.assign(document.createElement("p"), {
       className: "small",
       textContent:
-        `confidence ${answer.confidence} · act ${answer.action.act_probability}. ` +
+        `confidence ${answer.confidence} · act ${actProb}. ` +
         `This is a probability, not a boolean — judge the ranking before any threshold.`,
     }));
   }
@@ -202,8 +209,10 @@ function renderAnswer(qid, q, answer, meta) {
 }
 
 function nearestLegend(score, legend) {
-  const index = Math.max(0, Math.min(Object.keys(legend).length - 1, Math.round(score)));
-  return legend[index];
+  const keys = Object.keys(legend || {});
+  if (!keys.length) return String(score);
+  const index = Math.max(0, Math.min(keys.length - 1, Math.round(score)));
+  return legend[index] ?? String(score);
 }
 
 /** Translate a Laya-schema question to Kev's {instruction, options} shape. */
@@ -232,7 +241,7 @@ async function runDemo(demoEl, session, engine) {
   button.disabled = true;
   const started = performance.now();
   try {
-    if (engine === "laya") {
+    if (engine === "laya" || engine === "jev") {
       const report = await session.decideAll(state, questions);
       const ms = Math.round(performance.now() - started);
       for (const [qid, answer] of Object.entries(report.answers)) {
@@ -260,7 +269,7 @@ async function runDemo(demoEl, session, engine) {
             type: "choice",
             choice: labels[best],
             probabilities: Object.fromEntries(labels.map((l, o) => [l, Math.round(dist[o] * 10000) / 10000])),
-            confidence: dist[best].toFixed(4),
+            confidence: choiceConfidence(dist, labels.length).toFixed(4),
             action: { act_probability: "—" },
           };
         } else if (q.t === "score") {
@@ -269,7 +278,7 @@ async function runDemo(demoEl, session, engine) {
             score: Math.round(kevExpectedLevel(dist) * 10000) / 10000,
             legend: Object.fromEntries(q.crit.map((c, o) => [String(o), c])),
             probabilities: Object.fromEntries(q.crit.map((_, o) => [String(o), Math.round(dist[o] * 10000) / 10000])),
-            confidence: Math.max(...dist).toFixed(4),
+            confidence: choiceConfidence(dist, q.crit.length).toFixed(4),
             action: { act_probability: "—" },
           };
         } else {

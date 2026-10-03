@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; worker-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>celld &amp; Durable Object Fleet Architecture: Field Guide &amp; Simulators · Learnings</title>
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="./celld.css">
+  <meta name="description" content="Complete engineering field guide and interactive simulators for celld (SQLite/LTX cell engine) and Cloudflare Durable Object fleets: S3 CAS ownership, monotonic epoch fencing, fleet vs bucket durability, load balancing, and fleet-wide usage accounting and querying.">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header>
+    <a href="../index.html">← Learnings Hub</a>
+    <nav aria-label="Main navigation">
+      <a href="#cas-fencing">1. CAS &amp; Epoch Fencing</a>
+      <a href="#setup-run">2. Setup &amp; Production</a>
+      <a href="#load-balancing">3. Load Balancing</a>
+      <a href="#do-architecture">4. DO Grain &amp; Sharding</a>
+      <a href="#do-accounting">5. Fleet Accounting &amp; Querying</a>
+      <a href="../neural-networks/">Neural Networks</a>
+      <a href="../decision-models/">Decision Models</a>
+      <a href="../opt-chronicles/">OPT Chronicles</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="celld-hero">
+      <h1><code>celld</code> &amp; Durable Object Fleet Architecture</h1>
+      <p class="lead">
+        A first-principles engineering guide and interactive workbench for running single-writer SQLite actors at scale. Explore how <strong><code>celld</code></strong> coordinates ownership via S3 Conditional Writes without Raft or ZooKeeper, how monotonic epochs fence off split-brain zombies, how to load-balance and shard hot cells, and how to account for and query usage across 10,000+ Durable Objects.
+      </p>
+      <div class="actions">
+        <a class="button" href="#cas-fencing">Run Split-Brain Simulator</a>
+        <a class="button" href="#load-balancing">Simulate Load Balancing</a>
+        <a class="button" href="#do-accounting">Fleet Accounting &amp; Code Blueprints</a>
+      </div>
+    </section>
+
+    <div class="reading">
+      <aside class="toc" aria-label="Contents">
+        <a href="#cas-fencing">1. How celld Works</a>
+        <a href="#bucket-layout">S3 Bucket &amp; CAS Layout</a>
+        <a href="#http-contract">HTTP API Contract</a>
+        <a href="#setup-run">2. Setup &amp; Running</a>
+        <a href="#load-balancing">3. Load Balancing</a>
+        <a href="#proxy-configs">Caddy &amp; Envoy Configs</a>
+        <a href="#do-architecture">4. DO Grain &amp; Sharding</a>
+        <a href="#do-accounting">5. Accounting &amp; Querying</a>
+        <a href="#code-leases">Code: Credit Leases</a>
+        <a href="#code-alarms">Code: Alarm Rollups</a>
+        <a href="#code-lakehouse">Code: Lakehouse &amp; OTEL</a>
+        <a href="#code-cqrs">Code: CQRS Index DO</a>
+      </aside>
+
+      <article class="article">
+        <!-- SECTION 1: HOW CELLD WORKS + CAS SIMULATOR -->
+        <section id="cas-fencing" class="celld-section">
+          <h2>1. How <code>celld</code> Works Under the Hood</h2>
+          <p>
+            <code>celld</code> is a lightweight, self-hostable Durable Object-style database engine written in Go. Instead of running a heavy consensus cluster (Raft, Paxos, etcd, or ZooKeeper), <code>celld</code> gives every tenant, user, room, or workflow its own isolated SQLite database—called a <strong>cell</strong>—and uses <strong>S3-compatible object storage with conditional writes (<code>If-Match</code> / <code>If-None-Match</code>)</strong> as its sole coordination authority.
+          </p>
+
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Subsystem</th>
+                  <th>Mechanism</th>
+                  <th>Why It Matters in Production</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>1. SQLite Cell Engine</strong></td>
+                  <td>Each cell is a standalone local SQLite database file on the owning node’s disk.</td>
+                  <td>Zero cross-tenant lock contention; sub-millisecond local SQL reads and writes.</td>
+                </tr>
+                <tr>
+                  <td><strong>2. S3 CAS Ownership</strong></td>
+                  <td><code>cells/&lt;cell&gt;/ownership.json</code> written via <code>If-None-Match: *</code> (initial claim) or <code>If-Match: &lt;etag&gt;</code> (renewal/takeover).</td>
+                  <td>Guarantees at most one active owner per lease window without any quorum daemon.</td>
+                </tr>
+                <tr>
+                  <td><strong>3. Monotonic Epoch Fencing</strong></td>
+                  <td>Every ownership takeover increments <code>epoch</code> and writes LTX frames exclusively under <code>cells/&lt;cell&gt;/ltx/e&lt;epoch&gt;/</code>.</td>
+                  <td>Prevents a partitioned zombie node from corrupting the transaction history of the new owner.</td>
+                </tr>
+                <tr>
+                  <td><strong>4. Dual Durability Modes</strong></td>
+                  <td><code>CELLD_DURABILITY=fleet</code> (peer LTX stream + disk <code>fsync</code>) vs <code>bucket</code> (synchronous S3 <code>PutObject</code> per commit).</td>
+                  <td><code>fleet</code> delivers ~1–3 ms commit latency with <code>RPO = 0</code> across node crashes; <code>bucket</code> runs on a single node at ~35–80 ms commit latency.</td>
+                </tr>
+                <tr>
+                  <td><strong>5. Peer HTTP/2 Mesh</strong></td>
+                  <td>Any node accepts requests for any cell and transparently tunnels non-local cells to the current owner (<code>X-Cell-Proxied: 1</code>).</td>
+                  <td>Allows any stateless L4/L7 load balancer to sit in front of the fleet with zero custom routing logic.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3 id="bucket-layout">S3 Bucket Layout &amp; <code>ownership.json</code> Schema</h3>
+          <pre><code>s3://my-celld-bucket/prod/
+├── fleet/
+│   └── capacity-v1.json                           # Published every 5s for cell-count rebalancing
+└── cells/
+    └── tenant_acme/
+        ├── ownership.json                         # CAS lease record (guarded by S3 ETag)
+        └── ltx/
+            ├── e1/
+            │   ├── 00000001-00000001.ltx          # Epoch 1 initial snapshot / frames
+            │   └── 00000002-00000015.ltx          # Compacted LTX range
+            └── e2/                                # Created after node-b took over in Epoch 2
+                └── 00000016-00000016.ltx</code></pre>
+
+          <p>
+            When a node claims or renews ownership of <code>tenant_acme</code>, it updates <code>cells/tenant_acme/ownership.json</code> using the S3 object ETag as a compare-and-swap token:
+          </p>
+          <pre><code>{
+  "cell": "tenant_acme",
+  "owner": "node-a",
+  "advertise_url": "http://10.0.1.11:8081",
+  "epoch": 2,
+  "lease_expires_at": "2026-10-02T12:30:15Z",
+  "max_txid": 16
+}</code></pre>
+
+          <h3>Interactive S3 CAS Ownership &amp; Split-Brain Fencing Simulator</h3>
+          <p class="small">
+            Step through commits, inject a network partition to trigger a CAS lease takeover, and test what happens when the partitioned zombie node attempts to write with a stale epoch.
+          </p>
+
+          <div class="celld-grid">
+            <div class="celld-panel">
+              <h4>Cluster Controls</h4>
+              <div>
+                <label for="cas-durability">Durability Mode (<code>CELLD_DURABILITY</code>)</label>
+                <select id="cas-durability">
+                  <option value="fleet">fleet — Stream LTX to peer replica + disk fsync (~1.8ms, RPO=0)</option>
+                  <option value="bucket">bucket — Synchronous S3 PutObject per SQLite commit (~42ms, RPO=0)</option>
+                </select>
+              </div>
+
+              <div class="actions">
+                <button type="button" id="btn-cas-commit">1. Commit SQLite Write</button>
+                <button type="button" id="btn-cas-partition" class="secondary">2. Inject Partition &amp; CAS Takeover</button>
+                <button type="button" id="btn-cas-zombie" class="secondary">3. Attempt Stale Zombie Write</button>
+                <button type="button" id="btn-cas-reset" class="secondary">Reset Fleet</button>
+              </div>
+
+              <div id="cas-bucket-state" class="status" aria-live="polite"></div>
+            </div>
+
+            <div class="celld-panel">
+              <h4>3-Node <code>celld</code> Fleet State &amp; S3 Audit Log</h4>
+              <div id="cas-nodes" class="node-cards" aria-live="polite"></div>
+              <pre id="cas-log" class="cas-log" aria-live="polite"></pre>
+            </div>
+          </div>
+
+          <h3 id="http-contract"><code>celld</code> HTTP API Contract</h3>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Endpoint</th>
+                  <th>Purpose</th>
+                  <th>Key Headers &amp; Status Codes</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>POST /cells/{cell}/sql</code></td>
+                  <td>Execute parameterized SQLite read/write statements inside a single ACID transaction.</td>
+                  <td>Returns <code>200 OK</code>, <code>X-Cell-Proxied: 1</code> if tunneled, or <code>503 cell busy</code> on lock timeout.</td>
+                </tr>
+                <tr>
+                  <td><code>GET /cells/{cell}</code></td>
+                  <td>Inspect current owner, epoch, lease expiration, and highest committed TXID.</td>
+                  <td>Used by smart clients or edge workers to cache cell-to-node affinity.</td>
+                </tr>
+                <tr>
+                  <td><code>DELETE /cells/{cell}</code></td>
+                  <td>Drop local state and delete S3 cell artifacts.</td>
+                  <td>Requires active ownership lease.</td>
+                </tr>
+                <tr>
+                  <td><code>POST /drain</code></td>
+                  <td>Gracefully flush all owned cells’ final LTX frames to peers and release S3 leases.</td>
+                  <td>Guarantees <code>RPO = 0</code> during rolling deployments and node scale-down.</td>
+                </tr>
+                <tr>
+                  <td><code>GET /fleet/status</code></td>
+                  <td>Health check and node capacity summary (owned cell count, peer connectivity).</td>
+                  <td>Used by L4/L7 load balancers for active health probes.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- SECTION 2: SETUP & PRODUCTION DEPLOYMENT -->
+        <section id="setup-run" class="celld-section">
+          <h2>2. How to Set Up &amp; Run <code>celld</code> (Local &amp; Production)</h2>
+          <p>
+            You can run a complete 3-node <code>celld</code> cluster locally against MinIO, Tigris, Cloudflare R2, or AWS S3. Below is a copy-pasteable 3-node launch script and a hardened production <code>systemd</code> service unit.
+          </p>
+
+          <h3>Local 3-Node Fleet Launch Script</h3>
+          <pre><code>#!/usr/bin/env bash
+set -euo pipefail
+
+# Build celld from source
+git clone https://github.com/superfly/celld.git
+cd celld &amp;&amp; go build -o ./bin/celld ./cmd/celld
+
+export CELLD_BUCKET_URL="s3://celld-local/dev"
+export CELLD_S3_ENDPOINT="http://127.0.0.1:9000"
+export CELLD_S3_REGION="us-east-1"
+export CELLD_DURABILITY="fleet"
+export CELLD_OTEL="1"
+
+# Launch 3 peers on :8081, :8082, :8083
+for i in 1 2 3; do
+  mkdir -p "/tmp/celld/node-${i}"
+  CELLD_NODE_ID="node-${i}" \
+  CELLD_LISTEN="127.0.0.1:808${i}" \
+  CELLD_ADVERTISE_URL="http://127.0.0.1:808${i}" \
+  CELLD_DATA="/tmp/celld/node-${i}" \
+  CELLD_PEERS="http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083" \
+  ./bin/celld &amp;
+done
+
+# Execute a parameterized transaction against cell "org_42" on any node
+curl -sS -X POST http://127.0.0.1:8081/cells/org_42/sql \
+  -H "Content-Type: application/json" \
+  -d '{
+    "statements": [
+      {"sql": "CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, ts INTEGER, kind TEXT)"},
+      {"sql": "INSERT INTO events (id, ts, kind) VALUES (?, ?, ?)", "params": ["ev_101", 1759404000, "signup"]}
+    ]
+  }'</code></pre>
+
+          <h3>Production <code>systemd</code> Unit with Graceful <code>/drain</code></h3>
+          <pre><code># /etc/systemd/system/celld.service
+[Unit]
+Description=celld SQLite Cell Fleet Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=celld
+Group=celld
+EnvironmentFile=/etc/celld/celld.env
+ExecStart=/usr/local/bin/celld
+# Step down cleanly on stop/restart so peers receive final LTX frames (RPO=0)
+ExecStop=/usr/bin/curl -fsS -X POST http://127.0.0.1:8080/drain
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=2
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+        </section>
+
+        <!-- SECTION 3: LOAD BALANCING & HOT CELLS -->
+        <section id="load-balancing" class="celld-section">
+          <h2>3. Load Balancing <code>celld</code> &amp; Handling Hot Cells</h2>
+          <p>
+            Load balancing a stateful actor fleet has two distinct layers: <strong>Ingress Request Routing</strong> (how HTTP requests reach the node that currently owns a cell) and <strong>Cell Placement Rebalancing</strong> (how cells are distributed across nodes).
+          </p>
+          <ul>
+            <li>
+              <strong>Layer 1 — Stateless L7 Round-Robin + Peer Tunneling:</strong> Because every <code>celld</code> node knows the owner of active cells (or looks up <code>ownership.json</code>) and proxies non-local requests over its internal HTTP/2 mesh, a standard round-robin load balancer works immediately with zero state synchronization. In an <code>N</code>-node cluster, <code>(N − 1) / N</code> of uncached requests incur a ~0.5–1.0 ms intra-VPC hop (<code>X-Cell-Proxied: 1</code>).
+            </li>
+            <li>
+              <strong>Layer 2 — Cell-ID Consistent Hashing / Client Affinity:</strong> For ultra-low-latency workloads, L7 proxies (Envoy/HAProxy/Cloudflare Workers) can hash the <code>/cells/{cell}/</code> URI path segment—or clients can cache the owner’s <code>advertise_url</code> from <code>GET /cells/{cell}</code>—reducing peer proxy hops to near zero except immediately after a failover.
+            </li>
+            <li>
+              <strong>The Rebalancer Caveat (Count vs Load):</strong> Every 5 seconds, <code>celld</code> nodes publish their owned cell counts to <code>fleet/capacity-v1.json</code> and rebalance so each node holds roughly <code>TotalCells / N</code> cells. <strong>It does not rebalance by CPU or request rate.</strong> If a single “celebrity” cell receives 4,000 writes/sec, migrating that cell to another node still funnels all 4,000 writes into a single SQLite writer lock, triggering <code>503 cell busy</code>.
+            </li>
+          </ul>
+
+          <div class="celld-grid">
+            <div class="celld-panel">
+              <h3>Interactive Ingress &amp; Hot-Cell Load Simulator</h3>
+              <label for="lb-nodes">Fleet Size: <output id="lb-nodes-val" for="lb-nodes">4 nodes</output></label>
+              <input type="range" id="lb-nodes" min="2" max="12" step="1" value="4">
+
+              <label for="lb-rps">Total Fleet Write Traffic: <output id="lb-rps-val" for="lb-rps">2,400 req/s</output></label>
+              <input type="range" id="lb-rps" min="200" max="6000" step="200" value="2400">
+
+              <label for="lb-hot">Traffic Skewed to Top Single Cell: <output id="lb-hot-val" for="lb-hot">35%</output></label>
+              <input type="range" id="lb-hot" min="5" max="90" step="5" value="35">
+
+              <div class="fields">
+                <div>
+                  <label for="lb-route">L7 Ingress Strategy</label>
+                  <select id="lb-route">
+                    <option value="random-l7">Stateless Round-Robin (Peer Mesh Tunneling)</option>
+                    <option value="affinity-header">Cell-ID Consistent Hash / Affinity Cache</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="lb-dur">Cell Commit Path</label>
+                  <select id="lb-dur">
+                    <option value="fleet">fleet (Peer Fsync ~2ms)</option>
+                    <option value="bucket">bucket (S3 PUT ~38ms)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div class="celld-panel">
+              <h3>Live Fleet Telemetry</h3>
+              <div class="metric-cards" aria-live="polite">
+                <div class="metric-card">
+                  <div class="metric-card-label">Peer-Proxied Traffic</div>
+                  <div id="lb-out-proxied" class="metric-card-val">—</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-card-label">Mean Commit Latency</div>
+                  <div id="lb-out-lat" class="metric-card-val">—</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-card-label">Single-Cell Max RPS</div>
+                  <div id="lb-out-cap" class="metric-card-val">—</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-card-label">Hot-Cell 503 Overload</div>
+                  <div id="lb-out-503" class="metric-card-val">—</div>
+                </div>
+              </div>
+              <p class="small">
+                <strong>Mitigating Hot-Cell <code>503</code>s:</strong> (1) Run <code>CELLD_DURABILITY=fleet</code> instead of <code>bucket</code> (boosting per-cell write capacity ~19×), (2) batch multiple SQL statements into a single <code>POST /cells/{cell}/sql</code> call, and (3) shard high-throughput cells across <code>K</code> sub-cells (<code>tenant_acme_s0..s7</code>).
+              </p>
+            </div>
+          </div>
+
+          <h3 id="proxy-configs">Production Load-Balancer Configs (Caddy &amp; Envoy)</h3>
+          <pre><code># Option A: Caddyfile — Stateless round-robin with active /fleet/status health probes
+celld.internal.example.com {
+    reverse_proxy 10.0.1.11:8081 10.0.1.12:8081 10.0.1.13:8081 {
+        lb_policy round_robin
+        health_uri /fleet/status
+        health_interval 3s
+        health_timeout 1s
+        fail_duration 10s
+    }
+}
+
+# Option B: Envoy Ring-Hash on X-Cell-ID header to minimize X-Cell-Proxied hops
+route_config:
+  routes:
+    - match: { prefix: "/cells/" }
+      route:
+        cluster: celld_fleet
+        hash_policy:
+          - header: { header_name: "x-cell-id" }</code></pre>
+        </section>
+
+        <!-- SECTION 4: ARCHITECTING LARGE APPS WITH DURABLE OBJECTS -->
+        <section id="do-architecture" class="celld-section">
+          <h2>4. Architecting Large Applications with Durable Objects: Choosing the Right Grain</h2>
+          <p>
+            The most consequential architectural decision in any Durable Object or <code>celld</code> system is <strong>cell granularity</strong> (what a single actor instance represents). A single SQLite Durable Object can comfortably sustain ~300–1,000 SQL transactions/sec.
+          </p>
+
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Actor Grain</th>
+                  <th>Example Key</th>
+                  <th>Strengths</th>
+                  <th>Anti-Pattern / Failure Mode</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Global Singleton (Avoid!)</strong></td>
+                  <td><code>idFromName("GLOBAL_DB")</code></td>
+                  <td>Trivial to query everything in one SQLite file.</td>
+                  <td><strong>Fatal bottleneck:</strong> Serializes your entire company’s traffic onto one CPU core (~800 req/s ceiling).</td>
+                </tr>
+                <tr>
+                  <td><strong>Per-Tenant / Workspace</strong></td>
+                  <td><code>idFromName("org_" + orgId)</code></td>
+                  <td>Natural transactional boundary for B2B SaaS; zero cross-tenant data leaks; easy GDPR deletion.</td>
+                  <td>One huge enterprise customer with 5,000 concurrent users can saturate their single Tenant DO.</td>
+                </tr>
+                <tr>
+                  <td><strong>Per-Collaboration Resource</strong></td>
+                  <td><code>idFromName("doc_" + docId)</code></td>
+                  <td>Ideal for WebSockets, CRDT/OT state, multiplayer rooms, or AI agent sessions.</td>
+                  <td>Requires a parent <code>WorkspaceIndexDO</code> or external read-model to list all documents in a workspace.</td>
+                </tr>
+                <tr>
+                  <td><strong>Sharded High-Throughput Ledger</strong></td>
+                  <td><code>idFromName("org_" + orgId + "_s" + (hash % 16))</code></td>
+                  <td>Scales write throughput 16× for a single large tenant.</td>
+                  <td>Cross-shard totals must be aggregated asynchronously via alarms or read-time fan-in.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- SECTION 5: FLEET-WIDE ACCOUNTING & QUERYING + CODE BLUEPRINTS -->
+        <section id="do-accounting" class="celld-section">
+          <h2>5. Accounting &amp; Querying Usage Across a Fleet of Durable Objects</h2>
+          <p>
+            Suppose you have 10,000 active <code>AgentSessionDO</code> instances executing LLM calls and SQLite writes, and you need to:
+            (1) <strong>enforce hard real-time credit/token quotas per organization</strong>, and
+            (2) <strong>query usage and performance across the entire fleet</strong> (e.g., <em>“Which 50 tenants consumed the most tokens in the last hour?”</em>).
+          </p>
+          <p>
+            If every <code>AgentSessionDO</code> makes a synchronous RPC to a central <code>BillingDO</code> on every event, that central DO saturates at ~800 req/s. Below is an interactive calculator and the <strong>four production code patterns</strong> that solve this cleanly.
+          </p>
+
+          <div class="celld-grid">
+            <div class="celld-panel">
+              <h3>Fleet Usage Accounting Calculator</h3>
+              <label for="acc-rps">Total Fleet Request Rate: <output id="acc-rps-val" for="acc-rps">10,000 req/s</output></label>
+              <input type="range" id="acc-rps" min="500" max="50000" step="500" value="10000">
+
+              <label for="acc-cells">Active Durable Objects / Cells: <output id="acc-cells-val" for="acc-cells">2,500 DOs</output></label>
+              <input type="range" id="acc-cells" min="100" max="10000" step="100" value="2500">
+
+              <label for="acc-lease">Quota Lease Batch Size: <output id="acc-lease-val" for="acc-lease">500 credits</output></label>
+              <input type="range" id="acc-lease" min="50" max="2000" step="50" value="500">
+            </div>
+
+            <div class="celld-panel">
+              <h3>Central Quota DO Load &amp; RPC Volume</h3>
+              <div class="metric-cards" aria-live="polite">
+                <div class="metric-card">
+                  <div class="metric-card-label">Naive Central DO Load</div>
+                  <div id="acc-out-naive-rps" class="metric-card-val danger">—</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-card-label">Naive Bottleneck Drop</div>
+                  <div id="acc-out-naive-drop" class="metric-card-val danger">—</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-card-label">Leased + Alarm Load</div>
+                  <div id="acc-out-opt-rps" class="metric-card-val good">—</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-card-label">Cross-DO RPC Savings</div>
+                  <div id="acc-out-saving" class="metric-card-val good">—</div>
+                </div>
+              </div>
+              <p class="small">
+                <strong>Monthly RPC Volume:</strong> <span id="acc-out-monthly" class="number"></span>
+              </p>
+            </div>
+          </div>
+
+          <h3 id="code-leases">Pattern 1: The Credit / Quota Lease Pattern (Real-Time Enforcement)</h3>
+          <p>
+            Instead of calling `TenantQuotaDO` on every action, each worker DO leases a block of `N = 500` credits and stores the remaining lease balance in its own local SQLite database. Local deductions happen in `0 ms` with zero network hops; when the local lease drops below 20%, the worker DO tops up asynchronously:
+          </p>
+          <pre><code>// Worker Durable Object: deducts locally from leased credits in SQLite
+export class WorkspaceSessionDO extends DurableObject {
+  async consumeCredits(cost: number): Promise&lt;{ allowed: boolean; remaining: number }&gt; {
+    const row = this.ctx.storage.sql
+      .exec("SELECT balance FROM local_lease WHERE id = 1")
+      .one() as { balance: number } | null;
+    let balance = row?.balance ?? 0;
+
+    // Top up a 500-credit block from TenantQuotaDO only when local lease is insufficient
+    if (balance &lt; cost) {
+      const quotaStub = this.env.TENANT_QUOTA.get(
+        this.env.TENANT_QUOTA.idFromName(this.tenantId)
+      );
+      const granted = await quotaStub.leaseCredits(Math.max(500, cost * 2));
+      if (granted &lt; cost) return { allowed: false, remaining: balance };
+      balance += granted;
+    }
+
+    balance -= cost;
+    this.ctx.storage.sql.exec(
+      "INSERT INTO local_lease (id, balance) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET balance = excluded.balance",
+      balance
+    );
+    return { allowed: true, remaining: balance };
+  }
+}</code></pre>
+
+          <h3 id="code-alarms">Pattern 2: Write-Behind `alarm()` Rollups (Durable Billing Ledger)</h3>
+          <p>
+            For exact billing and audit ledgers, accumulate high-frequency events inside each DO’s local SQLite table (`unflushed_usage`) and schedule a Durable Object `alarm()` every 30 seconds to flush a single pre-aggregated delta row to your billing queue or central ledger:
+          </p>
+          <pre><code>export class AgentSessionDO extends DurableObject {
+  async recordUsage(model: string, inputTokens: number, outputTokens: number) {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO unflushed_usage (model, reqs, in_tok, out_tok)
+       VALUES (?, 1, ?, ?)
+       ON CONFLICT(model) DO UPDATE SET
+         reqs = reqs + 1,
+         in_tok = in_tok + excluded.in_tok,
+         out_tok = out_tok + excluded.out_tok`,
+      model, inputTokens, outputTokens
+    );
+
+    const currentAlarm = await this.ctx.storage.getAlarm();
+    if (currentAlarm === null) {
+      await this.ctx.storage.setAlarm(Date.now() + 30_000); // Flush once every 30s
+    }
+  }
+
+  async alarm() {
+    const rows = this.ctx.storage.sql
+      .exec("SELECT model, reqs, in_tok, out_tok FROM unflushed_usage")
+      .toArray();
+    if (rows.length === 0) return;
+
+    await this.env.BILLING_QUEUE.send({
+      cellId: this.ctx.id.toString(),
+      flushedAt: Date.now(),
+      deltas: rows
+    });
+    this.ctx.storage.sql.exec("DELETE FROM unflushed_usage");
+  }
+}</code></pre>
+
+          <h3 id="code-lakehouse">Pattern 3: Async Telemetry &amp; Columnar Lakehouse (`CELLD_OTEL=1` / Analytics Engine)</h3>
+          <p>
+            Never fan out read RPCs across thousands of DOs to render an analytics dashboard. Emit non-blocking telemetry points from each DO (or enable `CELLD_OTEL=1` in `celld`) and query the columnar sink with SQL:
+          </p>
+          <pre><code>// 1. Inside Cloudflare Durable Object: non-blocking writeDataPoint (0ms latency)
+this.env.USAGE_ANALYTICS.writeDataPoint({
+  indexes: [this.tenantId],
+  blobs: [this.cellId, modelName, region],
+  doubles: [1, inputTokens, outputTokens, elapsedMs]
+});
+
+// 2. For self-hosted celld (CELLD_OTEL=1): query cross-fleet JSONL/Parquet logs with DuckDB
+SELECT
+  cell_id,
+  count(*) AS total_tx,
+  sum(rows_written) AS total_rows_written,
+  quantile_cont(duration_ms, 0.99) AS p99_ms
+FROM read_json_auto('/var/log/celld/otel-*.jsonl')
+WHERE ts &gt;= now() - INTERVAL '1 hour'
+GROUP BY cell_id
+ORDER BY total_rows_written DESC
+LIMIT 50;</code></pre>
+
+          <h3 id="code-cqrs">Pattern 4: Hierarchical CQRS Index DOs (Consistent Entity Listings)</h3>
+          <p>
+            Analytics pipelines have a few seconds of ingestion delay. When your application UI needs a **strongly consistent list** of active child DOs (for example, listing every active chat room or agent in an organization), maintain a parent `WorkspaceIndexDO` that stores only lightweight metadata rows updated when a child DO is created, renamed, or archived:
+          </p>
+          <pre><code>export class WorkspaceIndexDO extends DurableObject {
+  registerChildRoom(roomId: string, title: string, createdAt: number) {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO rooms (room_id, title, status, updated_at)
+       VALUES (?, ?, 'active', ?)
+       ON CONFLICT(room_id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at`,
+      roomId, title, createdAt
+    );
+  }
+
+  listActiveRooms() {
+    return this.ctx.storage.sql
+      .exec("SELECT room_id, title, updated_at FROM rooms WHERE status = 'active' ORDER BY updated_at DESC LIMIT 100")
+      .toArray();
+  }
+}</code></pre>
+        </section>
+      </article>
+    </div>
+  </main>
+
+  <footer>
+    <p>Part of the <a href="../index.html">Learnings Hub</a> · Interactive Distributed Systems &amp; Durable Object Architecture Workbench.</p>
+  </footer>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -10,18 +10,14 @@ the site's Content-Security-Policy can keep `script-src 'self'`.
 | ort.bundle.min.mjs | onnxruntime-web (JS API bundle) | 1.31.0-dev.20260914 | MIT |
 | ort-wasm-simd-threaded.jsep.mjs | onnxruntime-web (JSEP glue) | 1.31.0-dev.20260914 | MIT |
 | ort-wasm-simd-threaded.jsep.wasm | onnxruntime-web (JSEP wasm binary, 28 MB) | 1.31.0-dev.20260914 | MIT |
-| ort-wasm-simd-threaded.asyncify.mjs | onnxruntime-web (asyncify glue) | 1.31.0-dev.20260914 | MIT |
-| ort-wasm-simd-threaded.asyncify.wasm | onnxruntime-web (asyncify wasm binary, 27 MB) | 1.31.0-dev.20260914 | MIT |
-| ort-wasm-simd-threaded.mjs | onnxruntime-web (CPU glue) | 1.31.0-dev.20260914 | MIT |
-| ort-wasm-simd-threaded.wasm | onnxruntime-web (CPU wasm binary, 14 MB) | 1.31.0-dev.20260914 | MIT |
 
 Notes that matter:
 
 - The onnxruntime-web version is a **development build pinned by a date** rather than a release.
   It is what `@huggingface/transformers@4.3.0` depends on. Treat it as pinned, not as chosen.
-- Only the **CPU/WebAssembly** binary is vendored (13.6 MB). The WebGPU binary
-  (`ort-wasm-simd-threaded.jsep.wasm`) is a further 27 MB and is not included, so this site does
-  not offer a WebGPU path. That is a size decision, not a claim that WebGPU would not work.
+- The **JSEP WebAssembly** binary (`ort-wasm-simd-threaded.jsep.wasm`, 28 MB) is the one vendored
+  build because `GatherBlockQuantized(1)` registers only through `jsepInit`; the plain CPU and
+  `asyncify` builds fail to deserialize the q4 Kev graph and have been removed.
 - onnxruntime-web ships no licence file of its own; the MIT licence is declared in its
   package.json, which is where the licence column above comes from.
 
