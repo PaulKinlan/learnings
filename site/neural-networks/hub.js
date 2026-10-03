@@ -2,8 +2,7 @@
 // old deep links working (the workbench used to live at this URL; its anchors now live on lab.html).
 import { CHAPTERS, PARTS, labRedirectFor } from "./chapters.js";
 
-const redirect = labRedirectFor(location.hash);
-if (redirect) location.replace(redirect);
+// Anchors live on index.html; no redirect needed.
 
 const titleOf = new Map(CHAPTERS.map((c) => [c.slug, c.title]));
 

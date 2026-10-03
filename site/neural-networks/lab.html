@@ -7,6 +7,8 @@
   <meta name="referrer" content="no-referrer">
   <title>Neural Networks From First Principles: Raw WASM, JS &amp; WebGPU | Learnings</title>
   <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="./chapter.css">
+  <link rel="stylesheet" href="./playgrounds.css">
   <link rel="stylesheet" href="./nn.css">
   <meta name="description" content="Comprehensive interactive study guide and live training workbench for neural networks built from first principles in Raw WebAssembly, Float32Array JS, and WebGPU WGSL: Perceptrons, Backpropagation, CNNs, Recurrent Networks (RNN/GRU &amp; BPTT), Deep Residual Networks (ResNets &amp; RMSNorm), Transformers, Continuous &amp; Discrete Diffusion, Decision Pointer Heads, and a Composable Block Builder.">
 </head>
@@ -14,8 +16,9 @@
   <a class="skip" href="#main">Skip to content</a>
   <header>
     <a href="../index.html">← Learnings Hub</a>
-    <nav aria-label="Main navigation">
-      <a href="./">Chapters</a>
+        <nav aria-label="Main navigation">
+      <a href="#the-stack">Chapters</a>
+      <a href="#three-ideas">Foundations</a>
       <a href="#mlp-backprop">1. MLPs &amp; Backprop</a>
       <a href="#network-stepper">Node Graph</a>
       <a href="#cnn-lab">2. CNNs</a>
@@ -314,6 +317,57 @@
       </div>
 
       <div class="section-code-widget" data-code-blueprint="mlp_backprop"></div>
+    </section>
+
+    <!-- =====================================================================
+         CORE PRINCIPLES PLAYGROUNDS & CHAPTER DIRECTORY (MPA)
+         ===================================================================== -->
+    <section id="the-stack" class="nn-section">
+      <h2>Neural Network Chapters &amp; Foundations (MPA)</h2>
+      <p class="lead">
+        A chapter-by-chapter guide from one neuron to modern LLM frontiers. Each chapter is a true, standalone static multi-page guide with native MathML formulas and live interactive sandboxes.
+      </p>
+      <p id="stack-status" class="small" role="status" aria-live="polite"></p>
+      <ol id="nn-stack" class="nn-stack"></ol>
+    </section>
+
+    <section id="three-ideas" class="nn-section">
+      <h2>Three Ideas Carry the Whole Subject</h2>
+      <p>
+        <strong>1. A neuron is a weighted sum followed by a squash:</strong> Multiply each input by a weight, add them up with a bias, and pass through activation function:
+      </p>
+      <math display="block">
+        <mi>y</mi><mo>=</mo><mi>f</mi><mrow><mo>(</mo>
+          <munderover><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn></mrow><mi>n</mi></munderover>
+          <msub><mi>w</mi><mi>i</mi></msub><msub><mi>x</mi><mi>i</mi></msub><mo>+</mo><mi>b</mi>
+        <mo>)</mo></mrow>
+      </math>
+      <section id="perceptron-playground" data-widget="perceptron"><p>Explore the <a href="./neuron-and-perceptron.html">perceptron chapter</a>.</p></section>
+
+      <p>
+        <strong>2. Learning means walking downhill on a loss:</strong> Score error with loss <math><mi>L</mi></math> and step against its gradient:
+      </p>
+      <math display="block">
+        <mi>w</mi><mo>←</mo><mi>w</mi><mo>−</mo><mi>η</mi>
+        <mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><mi>w</mi></mrow></mfrac>
+      </math>
+      <section id="loss-landscape" data-widget="landscape"><p>Explore the <a href="./gradient-descent.html">gradient descent chapter</a>.</p></section>
+
+      <p>
+        <strong>3. Backpropagation finds every slope at once:</strong> Chain rule evaluated in reverse mode:
+      </p>
+      <math display="block">
+        <mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><mi>w</mi></mrow></mfrac><mo>=</mo>
+        <mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><mi>a</mi></mrow></mfrac><mo>·</mo>
+        <mfrac><mrow><mo>∂</mo><mi>a</mi></mrow><mrow><mo>∂</mo><mi>z</mi></mrow></mfrac><mo>·</mo>
+        <mfrac><mrow><mo>∂</mo><mi>z</mi></mrow><mrow><mo>∂</mo><mi>w</mi></mrow></mfrac>
+      </math>
+      <section id="backprop-playground" data-widget="backprop"><p>Explore the <a href="./backpropagation.html">backpropagation chapter</a>.</p></section>
+
+      <h3>Visual Convolution, Softmax &amp; Self-Attention Playgrounds</h3>
+      <section data-widget="convolution"><p>Explore the <a href="./cnn.html">CNN chapter</a>.</p></section>
+      <section data-widget="probabilities"><p>Explore the <a href="./loss-and-calibration.html">Softmax chapter</a>.</p></section>
+      <section data-widget="attention"><p>Explore the <a href="./transformer.html">Transformer chapter</a>.</p></section>
     </section>
 
     <!-- =====================================================================
@@ -1183,6 +1237,8 @@ registerBlockType({
     </p>
   </footer>
 
+    <script type="module" src="./hub.js"></script>
+  <script type="module" src="./widgets.js"></script>
   <script type="module" src="./app.js"></script>
 </body>
 </html>
