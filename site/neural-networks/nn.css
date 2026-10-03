@@ -83,26 +83,26 @@
 }
 
 .era-card {
-  background: white;
-  border: 1px solid var(--line);
-  border-top: 4px solid var(--accent);
+  background: var(--card, #151d2f);
+  border: 1px solid var(--line, #64748b);
+  border-top: 4px solid var(--accent, #38bdf8);
   border-radius: 6px;
   padding: 0.95rem 1.05rem;
   text-decoration: none;
-  color: var(--ink);
+  color: var(--ink, #f8fafc);
   display: flex;
   flex-direction: column;
   gap: 0.28rem;
 }
 
 .era-card:hover {
-  background: var(--wash);
+  background: #1e293b;
 }
 
 .era-year {
   font-size: 0.78rem;
   font-weight: 800;
-  color: #054a80;
+  color: var(--accent, #38bdf8);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -110,20 +110,37 @@
 .era-title {
   font-weight: 750;
   font-size: 1rem;
-  color: var(--ink);
+  color: var(--ink, #f8fafc);
 }
 
 .era-sub {
   font-size: 0.82rem;
-  color: #3d5266;
+  color: var(--muted, #94a3b8);
 }
 
 .nn-section {
-  background: white;
-  border: 1px solid var(--line);
+  background: var(--card, #151d2f);
+  border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 8px;
   padding: 2rem;
   margin-bottom: 2.5rem;
+  color: var(--ink, #f8fafc);
+}
+
+.nn-section h2, .nn-section h3, .nn-section h4 {
+  color: var(--ink, #f8fafc);
+}
+
+.study-prose p, .study-prose li {
+  color: #e2e8f0;
+}
+
+.study-prose code, p code, li code {
+  background: #0b0f19;
+  color: #38bdf8;
+  border: 1px solid #334155;
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
 }
 
 .nn-section h2 {
@@ -131,14 +148,14 @@
 }
 
 .nn-section button.secondary {
-  background: #ffffff;
-  color: #054a80;
-  border: 1px solid #075c9c;
+  background: rgba(15, 23, 42, 0.8);
+  color: #f8fafc;
+  border: 1px solid #38bdf8;
 }
 
 .nn-section button.secondary:hover {
-  background: #f0f9ff;
-  color: #03355c;
+  background: #0c4a6e;
+  color: #ffffff;
 }
 
 .nn-grid {
@@ -150,10 +167,19 @@
 }
 
 .nn-panel {
-  background: var(--wash);
-  border: 1px solid var(--line);
+  background: #111827;
+  border: 1px solid var(--line, #64748b);
   border-radius: 6px;
   padding: 1.25rem;
+  color: var(--ink, #f8fafc);
+}
+
+.nn-panel h3 {
+  color: var(--ink, #f8fafc);
+}
+
+.nn-panel label {
+  color: var(--muted, #94a3b8);
 }
 
 .nn-panel h3 {
@@ -197,10 +223,18 @@
 }
 
 .metric-box {
-  background: white;
-  border: 1px solid var(--line);
+  background: #0b0f19;
+  border: 1px solid var(--line, #64748b);
   border-radius: 5px;
   padding: 0.65rem 0.8rem;
+}
+
+.metric-label {
+  color: var(--muted, #94a3b8);
+}
+
+.metric-val {
+  color: var(--ink, #f8fafc);
 }
 
 .metric-label {
@@ -261,15 +295,15 @@
   aspect-ratio: 1;
   min-height: 26px;
   padding: 0;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #334155;
   border-radius: 2px;
-  background: #ffffff;
+  background: #0b0f19;
   color: transparent;
 }
 
 .pixel-btn.lit {
-  background: #075c9c;
-  border-color: #043962;
+  background: #38bdf8;
+  border-color: #0284c7;
 }
 
 .feature-maps-row {
@@ -280,11 +314,12 @@
 }
 
 .fmap-card {
-  background: white;
+  background: #111827;
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 0.65rem;
   text-align: center;
+  color: var(--ink);
 }
 
 .mini-grid-3,
@@ -351,11 +386,12 @@
 }
 
 .sprite-card {
-  background: white;
+  background: #111827;
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 0.6rem;
   text-align: center;
+  color: var(--ink);
 }
 
 .text-diff-steps {
@@ -366,7 +402,7 @@
 }
 
 .text-step-row {
-  background: white;
+  background: #111827;
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 0.65rem 0.85rem;
@@ -374,6 +410,7 @@
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
+  color: var(--ink);
 }
 
 .tok-chip {
@@ -382,15 +419,15 @@
   font-weight: 700;
   padding: 0.25rem 0.55rem;
   border-radius: 4px;
-  background: #def7ec;
-  color: #03543f;
-  border: 1px solid #84e1bc;
+  background: #064e3b;
+  color: #a7f3d0;
+  border: 1px solid #059669;
 }
 
 .tok-chip.masked {
-  background: #fde8e8;
-  color: #9b1c1c;
-  border-color: #f8b4b4;
+  background: #881337;
+  color: #fecdd3;
+  border-color: #be123c;
 }
 
 /* Block Builder Stack */
@@ -408,7 +445,7 @@
 }
 
 .block-item {
-  background: white;
+  background: #111827;
   border: 1px solid var(--line);
   border-left: 5px solid var(--accent);
   border-radius: 6px;
@@ -418,11 +455,14 @@
   gap: 0.6rem;
   align-items: center;
   font-size: 0.88rem;
+  color: var(--ink);
 }
 
 .equation-box {
-  background: #edf2f7;
-  border-left: 4px solid var(--accent);
+  background: #0b0f19;
+  border: 1px solid #334155;
+  border-left: 4px solid var(--accent, #38bdf8);
+  color: var(--ink, #f8fafc);
   padding: 0.75rem 1rem;
   font-family: ui-monospace, monospace;
   font-size: 0.88rem;
@@ -500,9 +540,9 @@
   font-family: ui-monospace, monospace;
   padding: 0.4rem 0.78rem;
   border-radius: 999px;
-  background: #ffffff;
-  color: var(--ink);
-  border: 1px solid var(--line);
+  background: #0b0f19;
+  color: var(--ink, #f8fafc);
+  border: 1px solid var(--line, #64748b);
 }
 
 .stepper-pill.done {
@@ -536,12 +576,13 @@
 }
 
 .stepper-stage-banner {
-  background: #ffffff;
-  border: 1px solid var(--line);
-  border-left: 4px solid #0369a1;
+  background: #0b0f19;
+  border: 1px solid var(--line, #64748b);
+  border-left: 4px solid var(--accent, #38bdf8);
   border-radius: 6px;
   padding: 0.9rem 1.05rem;
   margin-bottom: 1.15rem;
+  color: var(--ink, #f8fafc);
 }
 
 .stepper-stage-top {
@@ -608,11 +649,12 @@
 
 .stepper-graph-card,
 .stepper-inspector-card {
-  background: #ffffff;
-  border: 1px solid var(--line);
+  background: #111827;
+  border: 1px solid var(--line, #64748b);
   border-radius: 6px;
   padding: 1.05rem;
   min-width: 0;
+  color: var(--ink, #f8fafc);
 }
 
 .stepper-inspector-card h4 {
@@ -777,10 +819,10 @@
 
 .kernel-code-explorer {
   margin-top: 1.15rem;
-  background: #ffffff;
-  color: var(--ink);
-  color-scheme: light;
-  border: 1px solid var(--line);
+  background: #0b0f19;
+  color: var(--ink, #f8fafc);
+  color-scheme: dark;
+  border: 1px solid var(--line, #64748b);
   border-radius: 6px;
   padding: 1rem 1.15rem;
   min-width: 0;
@@ -860,10 +902,19 @@
 }
 
 .hyperparam-card {
-  background: #ffffff;
-  border: 1px solid var(--line);
+  background: #0b0f19;
+  border: 1px solid var(--line, #64748b);
   border-radius: 5px;
   padding: 0.65rem 0.8rem;
+  color: var(--ink, #f8fafc);
+}
+
+.hyperparam-card h4 {
+  color: #38bdf8;
+}
+
+.hyperparam-card p {
+  color: #cbd5e1;
 }
 
 .hyperparam-card-top {
