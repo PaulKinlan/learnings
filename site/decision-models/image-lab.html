@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; worker-src 'self' blob:; connect-src 'self' https://api.typesafe.ai https://api.openai.com https://api.anthropic.com https://huggingface.co https://*.huggingface.co https://*.hf.co http://127.0.0.1:* http://localhost:* http://[::1]:* https://127.0.0.1:* https://localhost:* https://[::1]:*; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>Image Decision Lab · Learnings</title>
+  <link rel="stylesheet" href="../style.css">
+  <script type="module" src="image-lab.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header>
+    <a href="../">Paul’s learnings</a>
+    <nav aria-label="Main">
+      <a href="../decision-models/catalogue.html">Use cases</a>
+      <a href="../decision-models/">Report</a>
+      <a href="../decision-models/lab.html">Decision lab</a>
+      <a href="../decision-models/image-lab.html" aria-current="page">Image decisions</a>
+      <a href="../decision-models/on-device.html">In your browser</a>
+      <a href="../decision-models/playground.html">Playground</a>
+      <a href="../decision-models/adaptation.html">Unfamiliar labels</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <h1>Visual Decisions.<br>Pixels to Probabilities.</h1>
+    <p class="lead">Test multimodal System One models on images. Upload screenshots, receipts, or robotics feeds, edit typed question rubrics, and inspect calibrated decision distributions.</p>
+
+    <p class="notice">
+      <strong>Multimodal System One:</strong> Traditional vision-language models decode multi-token descriptive prose character-by-character. Visual decision models project image tokens directly into bounded option logits in a single forward pass—slashing latency from ~1000ms to 25–70ms and cost by 90%+.
+    </p>
+
+    <!-- Lab Engine & Gate Settings -->
+    <section class="settings" aria-labelledby="settings-heading">
+      <h2 id="settings-heading" style="margin-top:0">Decision Engine & Gate Policy</h2>
+      <div class="fields">
+        <div>
+          <label for="engine">Vision decision engine</label>
+          <select id="engine">
+            <option value="client">Client-side Vision Engine (in-tab, no server)</option>
+            <option value="local">Local Vision Decision Server (loopback: 8009)</option>
+            <option value="api">Multimodal API Adapter (Wity-1 / OpenAI / Gemini)</option>
+          </select>
+        </div>
+        <div id="local-field" hidden>
+          <label for="endpoint">Local endpoint</label>
+          <input id="endpoint" value="http://127.0.0.1:8009/v1/systemone" autocomplete="off">
+        </div>
+        <div id="api-field" hidden>
+          <label for="api-key">API Key (memory only)</label>
+          <input id="api-key" type="password" autocomplete="off" spellcheck="false">
+          <label for="model-name" style="margin-top:.4rem">Model ID</label>
+          <input id="model-name" value="Imajev-4B" autocomplete="off">
+        </div>
+        <div>
+          <label for="threshold">Confidence gate threshold: <output id="threshold-value">0.80</output></label>
+          <input id="threshold" type="range" min="0.5" max="1" step="0.01" value="0.8">
+        </div>
+      </div>
+      <p class="small">Threshold policy: Choice gates on confidence; Noul accepts positive when p ≥ threshold and negative when p ≤ (1 − threshold); Score checks confidence across level mass.</p>
+    </section>
+
+    <!-- Workbench: Left Input (Image + Questions), Right Output -->
+    <div class="workbench">
+      <!-- Input Section -->
+      <section aria-labelledby="input-heading">
+        <h2 id="input-heading">Visual Input & Questions</h2>
+
+        <label>Preset visual test cases</label>
+        <div class="actions">
+          <button id="preset-ui" type="button" class="secondary">1. UI Error Modal</button>
+          <button id="preset-invoice" type="button" class="secondary">2. Invoice / Receipt</button>
+          <button id="preset-security" type="button" class="secondary">3. Security Credential</button>
+          <button id="preset-navigation" type="button" class="secondary">4. Robot Navigation</button>
+        </div>
+
+        <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-label="Drop image file here or click to select">
+          <strong>Drag &amp; drop an image here</strong>, click to browse, or paste directly with <code>Ctrl+V</code>
+          <input type="file" id="image-file" accept="image/*" style="display:none">
+        </div>
+
+        <div class="preview-wrap">
+          <img id="preview-image" alt="Visual decision input preview">
+        </div>
+        <p id="image-meta" class="small"></p>
+
+        <label for="questions">Typed questions schema (editable JSON)</label>
+        <textarea id="questions" class="code" spellcheck="false" style="min-height:14rem"></textarea>
+
+        <div class="actions">
+          <button id="run-decision" type="button">Run vision decision</button>
+          <button id="clear-image" type="button" class="secondary">Reset to UI preset</button>
+        </div>
+      </section>
+
+      <!-- Output Section -->
+      <section aria-labelledby="results-heading">
+        <h2 id="results-heading">Decision &amp; Distribution</h2>
+        <p id="status" class="status" role="status">Ready. Select a preset or upload an image and click "Run vision decision".</p>
+        <div id="answers"></div>
+
+        <details id="raw-details" hidden>
+          <summary>Request &amp; response JSON</summary>
+          <pre id="raw-json"></pre>
+        </details>
+      </section>
+    </div>
+
+    <!-- JevImageBench Explorer Table Section -->
+    <section id="benchmark" style="margin-top:4rem">
+      <h2>JevImageBench v0.1.5: 50 Vision Decision Systems Ranked</h2>
+      <p>Independent benchmark data from <a href="https://benchmarkheaven.com/image-jev-bench" target="_blank" rel="noreferrer noopener">benchmarkheaven.com/image-jev-bench</a> evaluating 50 vision models on bounded multimodal decision tasks across speed, cost, intelligence, and calibration.</p>
+
+      <div class="settings" style="margin:1.5rem 0">
+        <div class="fields">
+          <div>
+            <label for="bench-search">Search models or base backbones</label>
+            <input id="bench-search" type="search" placeholder="Filter by name e.g. Qwen, Gemma, Wity..." autocomplete="off">
+          </div>
+          <div>
+            <label for="bench-access">Access classification</label>
+            <select id="bench-access">
+              <option value="all">All Access Types</option>
+              <option value="open">Open Weights only</option>
+              <option value="closed">Closed API only</option>
+            </select>
+          </div>
+          <div>
+            <label for="bench-category">System category</label>
+            <select id="bench-category">
+              <option value="all">All Systems</option>
+              <option value="highlight">Top Jev-Class Highlights</option>
+              <option value="jev">Jev-Class Vision only</option>
+              <option value="baseline">General Multimodal Baselines</option>
+            </select>
+          </div>
+          <div>
+            <label for="bench-sort">Sort ranking by</label>
+            <select id="bench-sort">
+              <option value="capabilityScore">Capability Score (High → Low)</option>
+              <option value="intelligence">Intelligence Score (High → Low)</option>
+              <option value="calibration">Calibration (High → Low)</option>
+              <option value="speed">Speed (Fastest first)</option>
+              <option value="cost">Cost (Lowest first)</option>
+            </select>
+          </div>
+        </div>
+        <p id="bench-count" class="small" style="margin-top:.8rem"></p>
+      </div>
+
+      <div id="bench-table-container" class="table-scroll"></div>
+    </section>
+
+    <p style="margin-top:3rem"><a href="catalogue.html">View use-case catalogue</a> · <a href="index.html">Read the decision models report</a> · <a href="on-device.html">Run text deciders on-device</a></p>
+  </main>
+
+  <footer>
+    A working notebook, not a promise of correctness. Researched October 2026. <a href="https://github.com/PaulKinlan/learnings">Source &amp; limitations</a>. No analytics. API requests happen only when you ask.
+  </footer>
+</body>
+</html>
