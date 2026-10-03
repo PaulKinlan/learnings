@@ -94,8 +94,13 @@ math {
   font-family: "STIX Two Math", "Cambria Math", "Latin Modern Math", "Noto Sans Math", math, serif;
 }
 
+/* `display: block math` has to be set explicitly. Measured in Chrome 154 on 2026-10-03: by
+   default <math display="block"> computes plain `display: block`, which lays each child out as a
+   separate CSS block, so the formula stacks vertically and every fraction bar spans the full
+   width. A browser that does not know the two-keyword value drops this declaration and keeps its
+   own default. tests/browser.mjs fails if any block formula stops laying out on one line. */
 math[display="block"] {
-  display: block;
+  display: block math;
   margin-block: 1rem;
   padding-block: 0.4rem;
   font-size: 1.2em;
