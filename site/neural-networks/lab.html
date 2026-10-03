@@ -1,0 +1,1188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; worker-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>Neural Networks From First Principles: Raw WASM, JS &amp; WebGPU | Learnings</title>
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="./nn.css">
+  <meta name="description" content="Comprehensive interactive study guide and live training workbench for neural networks built from first principles in Raw WebAssembly, Float32Array JS, and WebGPU WGSL: Perceptrons, Backpropagation, CNNs, Recurrent Networks (RNN/GRU &amp; BPTT), Deep Residual Networks (ResNets &amp; RMSNorm), Transformers, Continuous &amp; Discrete Diffusion, Decision Pointer Heads, and a Composable Block Builder.">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header>
+    <a href="../index.html">← Learnings Hub</a>
+    <nav aria-label="Main navigation">
+      <a href="./">Chapters</a>
+      <a href="#mlp-backprop">1. MLPs &amp; Backprop</a>
+      <a href="#network-stepper">Node Graph</a>
+      <a href="#cnn-lab">2. CNNs</a>
+      <a href="#rnn-lab">3. RNNs &amp; BPTT</a>
+      <a href="#deep-resnet-lab">4. Deep ResNets</a>
+      <a href="#transformer-lab">5. Transformers</a>
+      <a href="#diffusion-lab">6. Diffusion</a>
+      <a href="#decision-lab">7. Decision Heads</a>
+      <a href="#block-builder">8. Block Builder</a>
+      <a href="../celld/">celld &amp; DOs</a>
+      <a href="../decision-models/">Decision Models</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="nn-hero">
+      <h1>Neural Networks From First Principles</h1>
+      <p class="lead">
+        A rigorous, interactive field guide and live training laboratory. Every architecture on this page trains and runs inference directly in your browser with zero external ML libraries—backed by an in-memory compiled <strong>Raw WebAssembly (<code>wasm32</code> <code>f32</code> GEMM kernel)</strong>, a <strong>Raw JavaScript (<code>Float32Array</code>)</strong> autograd engine, and a <strong>WebGPU (<code>WGSL @compute</code> workgroup-tiled shader)</strong> pipeline.
+      </p>
+
+      <div class="kernel-bar" role="region" aria-label="Compute backend selector and benchmark">
+        <div class="kernel-bar-controls">
+          <strong>Active Compute Kernel:</strong>
+          <button type="button" id="btn-kernel-wasm" class="kernel-pill" aria-pressed="true">Raw WebAssembly (wasm32 GEMM)</button>
+          <button type="button" id="btn-kernel-js" class="kernel-pill" aria-pressed="false">Raw JS (Float32Array)</button>
+          <button type="button" id="btn-kernel-webgpu" class="kernel-pill" aria-pressed="false">WebGPU (WGSL Compute Shader)</button>
+          <button type="button" id="btn-bench-kernels" class="secondary">Benchmark WASM vs JS vs WebGPU</button>
+        </div>
+        <div id="kernel-readout" class="kernel-readout" aria-live="polite">
+          WASM GEMM active · 0 external dependencies
+        </div>
+      </div>
+
+      <!-- Quick Side-by-Side Kernel Code Explorer (Raw JS vs Raw WASM vs WebGPU WGSL) -->
+      <div id="kernel-code-viewer" class="kernel-code-explorer" role="region" aria-label="Side-by-side Raw JS, Raw WASM, and WebGPU WGSL code explorer">
+        <div class="kernel-code-toolbar">
+          <div>
+            <label for="global-code-op">Inspect First-Principles Implementation Across Backends:</label>
+            <select id="global-code-op">
+              <option value="gemm">1. Dense Matrix Multiply (GEMM: C = A · B)</option>
+              <option value="mlp_backprop">2. MLP Forward &amp; Reverse-Mode Backprop</option>
+              <option value="conv2d">3. 2D Spatial Convolution (3×3) &amp; MaxPool2D</option>
+              <option value="rnn_bptt">4. Recurrent Cell (Elman RNN vs Gated GRU) &amp; BPTT</option>
+              <option value="deep_resnet">5. Deep Residual Highway (x + F(RMSNorm(x)))</option>
+              <option value="attention">6. Multi-Head Self-Attention &amp; Softmax Jacobian</option>
+              <option value="diffusion">7. Continuous DDPM &amp; Discrete Masked Text Diffusion</option>
+              <option value="decision_head">8. Delimiter-Gated Decision Pointer Head</option>
+            </select>
+          </div>
+          <div class="code-lang-tabs" role="tablist" aria-label="Select backend implementation language">
+            <button type="button" class="code-lang-btn active" data-global-lang="js" role="tab" aria-selected="true">Raw JS (Float32Array)</button>
+            <button type="button" class="code-lang-btn" data-global-lang="wasm" role="tab" aria-selected="false">Raw WASM (WAT &amp; Opcodes)</button>
+            <button type="button" class="code-lang-btn" data-global-lang="webgpu" role="tab" aria-selected="false">WebGPU (WGSL Compute Shader)</button>
+          </div>
+        </div>
+        <p id="global-code-summary" class="small kernel-code-summary"></p>
+        <pre class="kernel-code-pre"><code id="global-code-display"></code></pre>
+      </div>
+    </section>
+
+    <!-- Historical Era Navigation -->
+    <nav class="era-timeline" aria-label="Historical evolution of neural networks">
+      <a class="era-card" href="#mlp-backprop">
+        <span class="era-year">1958 → 1986</span>
+        <span class="era-title">1. Perceptrons &amp; Backprop</span>
+        <span class="era-sub">Rosenblatt, Rumelhart, Hinton · Chain rule, hyperplanes &amp; optimizers</span>
+      </a>
+      <a class="era-card" href="#cnn-lab">
+        <span class="era-year">1989 → 2012</span>
+        <span class="era-title">2. Convolutional Nets</span>
+        <span class="era-sub">LeNet to AlexNet · Spatial weight sharing &amp; translation equivariance</span>
+      </a>
+      <a class="era-card" href="#rnn-lab">
+        <span class="era-year">1986 → 1997</span>
+        <span class="era-title">3. Recurrent Nets &amp; LSTM/GRU</span>
+        <span class="era-sub">Elman, Hochreiter &amp; Schmidhuber · BPTT &amp; Constant Error Carousel</span>
+      </a>
+      <a class="era-card" href="#deep-resnet-lab">
+        <span class="era-year">2015 → Present</span>
+        <span class="era-title">4. Very Deep Nets (ResNets)</span>
+        <span class="era-sub">He et al. · Skip highways, Pre-RMSNorm &amp; Kaiming initialization</span>
+      </a>
+      <a class="era-card" href="#transformer-lab">
+        <span class="era-year">2017 → Present</span>
+        <span class="era-title">5. Transformers</span>
+        <span class="era-sub">Vaswani et al. · Scaled dot-product self-attention &amp; parallel context</span>
+      </a>
+      <a class="era-card" href="#diffusion-lab">
+        <span class="era-year">2020 → Present</span>
+        <span class="era-title">6. Diffusion (Image &amp; Text)</span>
+        <span class="era-sub">DDPM &amp; Masked Discrete Diffusion · Score matching &amp; parallel unmasking</span>
+      </a>
+      <a class="era-card" href="#decision-lab">
+        <span class="era-year">2025 → Present</span>
+        <span class="era-title">7. Decision Pointer Heads</span>
+        <span class="era-sub">Jev, Kev &amp; Laya · Single-pass option marker readout &amp; calibrated gates</span>
+      </a>
+      <a class="era-card" href="#block-builder">
+        <span class="era-year">Modular Frontier</span>
+        <span class="era-title">8. Plug &amp; Play Workbench</span>
+        <span class="era-sub">Compose custom stacks, register new blocks (SSM/Mamba, MoE), inspect FLOPs</span>
+      </a>
+    </nav>
+
+    <!-- =====================================================================
+         CHAPTER 1: PERCEPTRONS, FEEDFORWARD MLPs & BACKPROPAGATION
+         ===================================================================== -->
+    <section id="mlp-backprop" class="nn-section">
+      <h2>1. Perceptrons, Feedforward MLPs &amp; Backpropagation (1958–1986)</h2>
+
+      <div class="study-prose">
+        <p>
+          In 1958, Frank Rosenblatt introduced the <strong>Perceptron</strong>, a linear threshold unit computing <code>ŷ = step(w · x + b)</code>. Eleven years later, Marvin Minsky and Seymour Papert proved in <em>Perceptrons</em> (1969) that a single linear layer defines only a single flat hyperplane <code>w<sub>0</sub>x<sub>0</sub> + w<sub>1</sub>x<sub>1</sub> + b = 0</code> in input space—making it mathematically impossible to represent non-linearly separable predicates such as <strong>XOR parity</strong> (where opposite corners of the unit square share a class).
+        </p>
+        <p>
+          The resolution—championed by Rumelhart, Hinton, and Williams (1986) building on Linnainmaa's (1970) reverse-mode automatic differentiation—is to stack <strong>hidden layers</strong> interleaved with point-wise <strong>non-linear activation functions</strong> <code>σ(z)</code>. Geometrically, each hidden layer folds and stretches the coordinate manifold along <code>d<sub>out</sub></code> hyperplanes so that classes tangled in input space become linearly separable at the final readout layer.
+        </p>
+        <p>
+          Training a multilayer network requires computing how a nudge to any weight <code>W<sub>i,j</sub><sup>(l)</sup></code> in layer <code>l</code> affects the scalar loss <code>L(ŷ, y)</code> at layer <code>L</code>. Naive finite differences (perturbing each of <code>P</code> parameters one by one) requires <code>O(P)</code> forward passes per step. <strong>Reverse-Mode Backpropagation</strong> computes the exact gradient for <em>all</em> <code>P</code> parameters in a single backward sweep at the cost of roughly one extra forward pass by caching each layer's pre-activation <code>z<sup>(l)</sup></code> and activation <code>a<sup>(l)</sup></code> and propagating the local error sensitivity <code>δ<sup>(l)</sup> = ∂L / ∂z<sup>(l)</sup></code> from output to input:
+        </p>
+      </div>
+
+      <div class="equation-box">
+        Forward: z<sup>(l)</sup> = a<sup>(l−1)</sup>W<sup>(l)</sup> + b<sup>(l)</sup>, &nbsp; a<sup>(l)</sup> = σ(z<sup>(l)</sup>) &nbsp;|&nbsp;
+        Output Error (Sigmoid + BCE): δ<sup>(L)</sup> = ∂L/∂z<sup>(L)</sup> = ŷ − y &nbsp;|&nbsp;
+        Backward: δ<sup>(l)</sup> = (δ<sup>(l+1)</sup>(W<sup>(l+1)</sup>)<sup>T</sup>) ⊙ σ'(z<sup>(l)</sup>), &nbsp; ∇<sub>W<sup>(l)</sup></sub>L = (a<sup>(l−1)</sup>)<sup>T</sup>δ<sup>(l)</sup>, &nbsp; ∇<sub>b<sup>(l)</sup></sub>L = δ<sup>(l)</sup>
+      </div>
+
+      <div class="nn-grid">
+        <div class="nn-panel">
+          <h3>Interactive Trainer &amp; Hyperparameters</h3>
+          <div class="fields">
+            <div>
+              <label for="mlp-dataset">2D Manifold Dataset</label>
+              <select id="mlp-dataset">
+                <option value="xor">XOR Parity (Classic Non-Linear)</option>
+                <option value="circle">Concentric Ring vs Core</option>
+                <option value="spiral">Two-Arm Archimedean Spiral</option>
+                <option value="moons">Interleaving Half-Moons</option>
+              </select>
+            </div>
+            <div>
+              <label for="mlp-arch">Hidden Layer Architecture</label>
+              <select id="mlp-arch">
+                <option value="2,4,4,1">2 → 4 → 4 → 1 (Compact 2-Hidden — Ideal for Graph)</option>
+                <option value="2,8,8,1">2 → 8 → 8 → 1 (2 Hidden Layers)</option>
+                <option value="2,12,12,1">2 → 12 → 12 → 1 (Wide MLP)</option>
+                <option value="2,6,6,6,1">2 → 6 → 6 → 6 → 1 (Deep 3-Layer)</option>
+                <option value="2,1">2 → 1 (Single Perceptron — Fails XOR!)</option>
+              </select>
+            </div>
+            <div>
+              <label for="mlp-act">Activation Function σ(z)</label>
+              <select id="mlp-act">
+                <option value="gelu">GELU (Smooth Modern Default)</option>
+                <option value="relu">ReLU max(0, z)</option>
+                <option value="tanh">Tanh(z)</option>
+                <option value="sigmoid">Sigmoid (Observe Vanishing Gradients)</option>
+              </select>
+            </div>
+            <div>
+              <label for="mlp-opt">Optimizer</label>
+              <select id="mlp-opt">
+                <option value="adamw">AdamW (Adaptive Moments + Decay)</option>
+                <option value="momentum">SGD + Momentum (β=0.9)</option>
+                <option value="sgd">Vanilla SGD</option>
+              </select>
+            </div>
+          </div>
+
+          <label for="mlp-lr">Learning Rate η: <output id="mlp-lr-val" for="mlp-lr">0.050</output></label>
+          <input type="range" id="mlp-lr" min="0.005" max="0.20" step="0.005" value="0.05">
+
+          <div class="actions">
+            <button type="button" id="mlp-train-btn">Train 80 Epochs</button>
+            <button type="button" id="mlp-step-btn" class="secondary">Step 1 Epoch</button>
+            <button type="button" id="mlp-reset-btn" class="secondary">Reset Weights</button>
+          </div>
+
+          <div class="metrics-strip">
+            <div class="metric-box">
+              <div class="metric-label">Epoch</div>
+              <div id="mlp-epoch" class="metric-val">0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">BCE Loss</div>
+              <div id="mlp-loss" class="metric-val">—</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Accuracy</div>
+              <div id="mlp-acc" class="metric-val">—</div>
+            </div>
+          </div>
+
+          <h4>Per-Layer Gradient Norms ‖∇<sub>W</sub>L‖<sub>2</sub> (Backprop Signal Flow)</h4>
+          <div id="mlp-grad-bars" class="grad-bars" aria-live="polite"></div>
+        </div>
+
+        <div class="nn-panel">
+          <h3>Live Decision Boundary &amp; Point Probe</h3>
+          <div class="canvas-frame">
+            <canvas id="mlp-canvas" class="decision-canvas" width="320" height="320" aria-label="2D decision boundary canvas"></canvas>
+            <div id="mlp-probe-readout" class="kernel-readout">Click anywhere on the canvas to run live forward inference &amp; load the sample into the Network Graph below.</div>
+          </div>
+
+          <!-- Live Dynamic Hyperparameter & Component Encyclopedia Card -->
+          <div id="mlp-hyperparam-explainer" class="hyperparam-explainer" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <!-- INTERACTIVE NETWORK NODE GRAPH & STEP-BY-STEP DEBUGGER -->
+      <div id="network-stepper" class="nn-stepper-workbench" role="region" aria-label="Interactive network node graph and step-by-step training and inference debugger">
+        <div class="stepper-header">
+          <div>
+            <h3>Interactive Network Node Graph &amp; Step-by-Step Execution Debugger</h3>
+            <p class="small">
+              Inspect every neuron node (<code>z</code>, <code>a</code>, <code>b</code>, <code>δ</code>) and weighted synapse (<code>W</code>, <code>∂L/∂W</code>, <code>ΔW</code>) in the active network above. Step forward and backward through each micro-stage of <strong>Forward Inference</strong>, <strong>BCE Loss Evaluation</strong>, <strong>Reverse-Mode Backpropagation</strong>, and <strong>Optimizer Weight Updates</strong>—and click any node in the graph to inspect its exact arithmetic.
+            </p>
+          </div>
+          <div class="stepper-size-control">
+            <label for="stepper-graph-size">Graph Canvas Scale</label>
+            <select id="stepper-graph-size">
+              <option value="large">Large Stage (520px Height)</option>
+              <option value="theatre">Extra-Large Theatre (680px Height)</option>
+              <option value="compact">Compact (380px Height)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="stepper-toolbar">
+          <div class="fields stepper-fields">
+            <div>
+              <label for="stepper-mode">Step-Through Pass Mode</label>
+              <select id="stepper-mode">
+                <option value="train">Training Step (Forward → Loss → Backprop → Weight Update)</option>
+                <option value="inference">Inference Step (Forward Propagation Only)</option>
+              </select>
+            </div>
+            <div>
+              <label for="stepper-sample">Input Sample (x₀, x₁) &amp; Target y</label>
+              <select id="stepper-sample">
+                <option value="-0.55,0.55,1">Sample A: x = (−0.55, +0.55) → Target y = 1 (XOR +)</option>
+                <option value="0.55,-0.55,1">Sample B: x = (+0.55, −0.55) → Target y = 1 (XOR +)</option>
+                <option value="-0.55,-0.55,0">Sample C: x = (−0.55, −0.55) → Target y = 0 (XOR −)</option>
+                <option value="0.55,0.55,0">Sample D: x = (+0.55, +0.55) → Target y = 0 (XOR −)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="actions stepper-actions">
+            <button type="button" id="stepper-reset-btn" class="secondary">⏮ Start of Pass</button>
+            <button type="button" id="stepper-prev-btn" class="secondary">◀ Prev Step</button>
+            <button type="button" id="stepper-next-btn">Next Step ▶</button>
+            <button type="button" id="stepper-play-btn" class="secondary">⏯ Auto-Step</button>
+            <button type="button" id="stepper-commit-btn" class="secondary">⚡ Commit Update &amp; Train Sample</button>
+          </div>
+        </div>
+
+        <!-- Micro-Step Execution Timeline Tape -->
+        <div id="stepper-tape" class="stepper-tape" role="tablist" aria-label="Execution micro-steps"></div>
+
+        <!-- Current Stage Formula & Telemetry Callout -->
+        <div id="stepper-stage-banner" class="stepper-stage-banner" aria-live="polite">
+          <div class="stepper-stage-top">
+            <span id="stepper-phase-badge" class="stepper-phase-badge">INPUT</span>
+            <strong id="stepper-stage-title">Stage 1 · Input Feature Injection</strong>
+            <span id="stepper-pass-counter" class="stepper-pass-counter">Micro-step 1 / 9</span>
+          </div>
+          <div id="stepper-stage-formula" class="stepper-stage-formula"></div>
+          <div id="stepper-stage-summary" class="stepper-stage-summary"></div>
+        </div>
+
+        <div class="stepper-body-grid">
+          <!-- Full-Width Interactive SVG Network Graph Stage -->
+          <div class="stepper-graph-card">
+            <div id="stepper-svg-wrap" class="stepper-svg-container scale-large">
+              <svg id="nn-stepper-svg" class="nn-stepper-svg" viewBox="0 0 1120 560" role="img" aria-label="Interactive neural network node and synapse graph"></svg>
+            </div>
+            <div class="stepper-legend">
+              <span class="legend-item"><span class="legend-swatch swatch-pos"></span> Positive weight / signal (W &gt; 0)</span>
+              <span class="legend-item"><span class="legend-swatch swatch-neg"></span> Negative weight / signal (W &lt; 0)</span>
+              <span class="legend-item"><span class="legend-swatch swatch-fwd"></span> Active Forward Wave (a·W)</span>
+              <span class="legend-item"><span class="legend-swatch swatch-bwd"></span> Active Backprop Wave (δ → ∇W)</span>
+              <span class="legend-item"><span class="legend-swatch swatch-upd"></span> Weight Update (ΔW)</span>
+            </div>
+          </div>
+
+          <!-- Full-Width Selected Node & Incoming Synapses Inspector -->
+          <div class="stepper-inspector-card">
+            <h4>Neuron &amp; Synapse Inspector (Click any node in graph above)</h4>
+            <div id="stepper-node-pills" class="stepper-node-pills" role="group" aria-label="Select neuron node to inspect"></div>
+            <div id="stepper-node-detail" class="stepper-node-detail" aria-live="polite"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-code-widget" data-code-blueprint="mlp_backprop"></div>
+    </section>
+
+    <!-- =====================================================================
+         CHAPTER 2: CONVOLUTIONAL NEURAL NETWORKS (CNNs)
+         ===================================================================== -->
+    <section id="cnn-lab" class="nn-section">
+      <h2>2. Convolutional Neural Networks: Spatial Priors, Weight Sharing &amp; Pooling (1989–2012)</h2>
+
+      <div class="study-prose">
+        <p>
+          Why not feed images directly into a dense MLP? Consider a modest <code>256 × 256</code> RGB image (<code>196,608</code> inputs). A single dense layer with <code>1,000</code> hidden units requires <code>196.6 million</code> weights—and worse, if an object shifts by just 2 pixels, every input lands on a completely different weight, forcing the network to re-learn edge detectors at every (x, y) coordinate from scratch.
+        </p>
+        <p>
+          <strong>Convolutional Neural Networks</strong>—pioneered by Fukushima's Neocognitron (1980), LeCun's LeNet-5 (1989/1998) for handwritten zip codes, and scaled to GPUs by Krizhevsky, Sutskever, and Hinton's AlexNet (2012)—encode two physical priors of natural signals directly into the architecture:
+        </p>
+        <ul>
+          <li>
+            <strong>Locality &amp; Sparse Connectivity:</strong> Early visual features (oriented edges, corners, strokes) depend only on a small local neighborhood <code>k × k</code> (here <code>3 × 3</code> pixels). Stacking convolutional layers grows the <strong>effective receptive field</strong> linearly with depth (two <code>3 × 3</code> layers see a <code>5 × 5</code> window; three see <code>7 × 7</code>).
+          </li>
+          <li>
+            <strong>Spatial Weight Sharing (Translation Equivariance):</strong> The exact same <code>3 × 3</code> kernel tensor <code>K<sup>(f)</sup></code> (only 9 weights + 1 bias!) is slid across every row <code>r</code> and column <code>c</code> of the image. Shifting the input shifts the resulting feature map identically: <code>f(T<sub>Δr,Δc</sub> I) = T<sub>Δr,Δc</sub> f(I)</code>.
+          </li>
+          <li>
+            <strong>Local Max-Pooling &amp; Switch Routing:</strong> A <code>2 × 2</code> stride-2 MaxPool layer outputs the maximum activation in each <code>2 × 2</code> patch, granting local translation invariance. During backpropagation, MaxPool acts as a router: it records the <code>argmax</code> index during the forward pass and routes 100% of the upstream gradient <code>∂L/∂p</code> exclusively to that winning pixel while zeroing the other three.
+          </li>
+        </ul>
+      </div>
+
+      <div class="equation-box">
+        Forward: Z<sup>(f)</sup><sub>r,c</sub> = b<sub>f</sub> + ∑<sub>u=0..2</sub> ∑<sub>v=0..2</sub> I<sub>r+u, c+v</sub> · K<sup>(f)</sup><sub>u,v</sub> &nbsp;|&nbsp;
+        Backward Filter Grad: ∂L/∂K<sup>(f)</sup><sub>u,v</sub> = ∑<sub>r,c</sub> I<sub>r+u, c+v</sub> · δ<sup>(f)</sup><sub>r,c</sub> &nbsp;|&nbsp;
+        Input Grad: ∂L/∂I = δ ∗ rot<sub>180°</sub>(K)
+      </div>
+
+      <div class="nn-grid">
+        <div class="nn-panel">
+          <h3>Draw or Load an 8×8 Glyph &amp; Train Kernels</h3>
+          <p class="small">Click cells to toggle pixels, or load a preset pattern to inspect how each 3×3 filter responds.</p>
+          <div class="actions">
+            <button type="button" class="secondary" data-glyph-preset="0">Preset: Vertical |</button>
+            <button type="button" class="secondary" data-glyph-preset="1">Preset: Horizontal —</button>
+            <button type="button" class="secondary" data-glyph-preset="2">Preset: Diagonal /</button>
+            <button type="button" class="secondary" data-glyph-preset="3">Preset: Box □</button>
+          </div>
+
+          <div id="cnn-pixel-grid" class="pixel-grid-8" role="group" aria-label="8 by 8 drawable pixel grid"></div>
+
+          <div class="actions">
+            <button type="button" id="cnn-train-btn">Train CNN (30 Epochs)</button>
+            <button type="button" id="cnn-reset-btn" class="secondary">Reset Kernels</button>
+          </div>
+
+          <div class="metrics-strip">
+            <div class="metric-box">
+              <div class="metric-label">CNN Epoch</div>
+              <div id="cnn-epoch" class="metric-val">0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">CE Loss</div>
+              <div id="cnn-loss" class="metric-val">—</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Train Accuracy</div>
+              <div id="cnn-acc" class="metric-val">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="nn-panel">
+          <h3>Live Learned 3×3 Kernels, 6×6 Feature Maps &amp; Class Probabilities</h3>
+          <div id="cnn-probs" aria-live="polite"></div>
+          <div id="cnn-feature-maps" class="feature-maps-row"></div>
+        </div>
+      </div>
+
+      <div id="cnn-stepper"></div>
+
+      <div class="section-code-widget" data-code-blueprint="conv2d"></div>
+    </section>
+
+    <!-- =====================================================================
+         CHAPTER 3: RECURRENT NEURAL NETWORKS (RNNs, BPTT, LSTMs & GRUs)
+         ===================================================================== -->
+    <section id="rnn-lab" class="nn-section">
+      <h2>3. Recurrent Neural Networks, BPTT &amp; Gated Memory (LSTM / GRU) (1986–1997)</h2>
+
+      <div class="study-prose">
+        <p>
+          Feedforward MLPs and CNNs assume fixed-size inputs with no persistent memory across time. To process sequences <code>x<sub>0</sub>, x<sub>1</sub>, …, x<sub>T−1</sub></code> of arbitrary length (speech, text, time series, control loops), Jordan (1986) and Elman (1990) introduced <strong>Recurrent Neural Networks (RNNs)</strong>, which maintain a hidden state vector <code>h<sub>t</sub> ∈ ℝ<sup>D</sup></code> updated recurrently at every timestep:
+          <code>h<sub>t</sub> = tanh(W<sub>xh</sub> x<sub>t</sub> + W<sub>hh</sub> h<sub>t−1</sub> + b<sub>h</sub>)</code>.
+        </p>
+        <p>
+          <strong>Why Vanilla RNNs Struggle with Long-Term Dependencies (Hochreiter, 1991; Bengio et al., 1994):</strong>
+          When we unroll the recurrence across <code>T</code> timesteps and apply the chain rule—an algorithm known as <strong>Backpropagation Through Time (BPTT)</strong>—the sensitivity of the final loss <code>L<sub>T</sub></code> to an early hidden state <code>h<sub>k</sub></code> is a product of <code>T − k</code> Jacobians:
+        </p>
+      </div>
+
+      <div class="equation-box">
+        BPTT Jacobian Chain: ∂h<sub>T</sub> / ∂h<sub>k</sub> = ∏<sub>j=k+1..T</sub> (∂h<sub>j</sub> / ∂h<sub>j−1</sub>) = ∏<sub>j=k+1..T</sub> diag(1 − h<sub>j</sub><sup>2</sup>) · W<sub>hh</sub><sup>T</sup> &nbsp;|&nbsp;
+        GRU Additive Highway: h<sub>t</sub> = (1 − z<sub>t</sub>) ⊙ h<sub>t−1</sub> + z<sub>t</sub> ⊙ h̃<sub>t</sub> &nbsp;⇒&nbsp; ∂h<sub>t</sub>/∂h<sub>t−1</sub> = diag(1 − z<sub>t</sub>) + …
+      </div>
+
+      <div class="study-prose">
+        <ul>
+          <li>
+            <strong>Vanishing vs. Exploding Gradients:</strong> Because <code>diag(1 − h<sub>j</sub><sup>2</sup>)</code> is bounded in <code>[0, 1]</code> and <code>W<sub>hh</sub><sup>T</sup></code> is multiplied repeatedly <code>T − k</code> times, if the largest eigenvalue (spectral radius) <code>ρ(W<sub>hh</sub>) &lt; 1</code>, the gradient norm <code>‖∂L<sub>T</sub>/∂h<sub>0</sub>‖</code> decays exponentially like <code>ρ<sup>T</sup> → 0</code>—wiping out any learning signal from token <code>x<sub>0</sub></code>! Conversely, if <code>ρ(W<sub>hh</sub>) &gt; 1</code>, gradients grow exponentially like <code>ρ<sup>T</sup> → ∞</code> (requiring global <strong>gradient norm clipping</strong>).
+          </li>
+          <li>
+            <strong>The Gated Solution — LSTM (Hochreiter &amp; Schmidhuber, 1997) &amp; GRU (Cho et al., 2014):</strong>
+            Instead of overwriting <code>h<sub>t</sub></code> through a multiplicative matrix + saturating <code>tanh</code> at every step, <strong>Long Short-Term Memory (LSTM)</strong> and the <strong>Gated Recurrent Unit (GRU)</strong> introduce a learnable sigmoid <strong>Update / Forget Gate</strong> <code>z<sub>t</sub> = σ(W<sub>xz</sub>x<sub>t</sub> + W<sub>hz</sub>h<sub>t−1</sub> + b<sub>z</sub>) ∈ (0, 1)</code> that interpolates <em>additively</em> between the old state and the new candidate state: <code>h<sub>t</sub> = (1 − z<sub>t</sub>) ⊙ h<sub>t−1</sub> + z<sub>t</sub> ⊙ h̃<sub>t</sub></code>. When the gate remains closed (<code>z<sub>t</sub> → 0</code>) across distractor tokens, <code>∂h<sub>t</sub>/∂h<sub>t−1</sub> ≈ I</code>—forming a <strong>Constant Error Carousel</strong> that carries both the memory of <code>x<sub>0</sub></code> forward and the error gradient <code>∂L<sub>T</sub>/∂h<sub>0</sub></code> backward across dozens or hundreds of timesteps without attenuation!
+          </li>
+        </ul>
+      </div>
+
+      <div class="nn-grid">
+        <div class="nn-panel">
+          <h3>Interactive RNN vs Gated GRU Temporal Memory Trainer</h3>
+          <div class="fields">
+            <div>
+              <label for="rnn-cell-type">Recurrent Cell Architecture</label>
+              <select id="rnn-cell-type">
+                <option value="gru">Gated Recurrent Unit (GRU — Additive Memory Gate)</option>
+                <option value="rnn">Vanilla Elman RNN (h_t = tanh(W·h_{t-1}) — Vanishing Gradients)</option>
+              </select>
+            </div>
+            <div>
+              <label for="rnn-seq-len">Sequence Horizon Length T</label>
+              <select id="rnn-seq-len">
+                <option value="8">T = 8 Timesteps (Medium Horizon)</option>
+                <option value="12">T = 12 Timesteps (Long Horizon — Watch Vanilla RNN Decay)</option>
+                <option value="5">T = 5 Timesteps (Short Horizon)</option>
+              </select>
+            </div>
+            <div>
+              <label for="rnn-task">Temporal Sequence Task</label>
+              <select id="rnn-task">
+                <option value="memory_first">Delayed First-Bit Recall (Remember sign(x₀) across T−1 distractors)</option>
+                <option value="parity">Sequential XOR Parity (Count positive bits mod 2)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button type="button" id="rnn-train-btn">Train 35 Epochs via BPTT</button>
+            <button type="button" id="rnn-reset-btn" class="secondary">Reset Recurrent Weights</button>
+          </div>
+
+          <div class="metrics-strip">
+            <div class="metric-box">
+              <div class="metric-label">BPTT Epoch</div>
+              <div id="rnn-epoch" class="metric-val">0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Sequence BCE Loss</div>
+              <div id="rnn-loss" class="metric-val">—</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Recall Accuracy</div>
+              <div id="rnn-acc" class="metric-val">—</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">t=0 / t=T−1 Grad Ratio</div>
+              <div id="rnn-grad-ratio" class="metric-val">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="nn-panel">
+          <h3>Unrolled Temporal State &amp; Backpropagated Gradient Flow (t = 0 … T−1)</h3>
+          <p class="small">
+            Compare <strong>Gated GRU</strong> vs <strong>Vanilla Elman RNN</strong> at <code>T = 12</code>: notice how the GRU's update gate <code>z<sub>t</sub></code> stays small on distractor steps so the backward gradient <code>‖∂L<sub>T</sub>/∂h<sub>0</sub>‖</code> reaches <code>t = 0</code> intact, whereas Vanilla RNN gradients decay toward zero!
+          </p>
+          <div id="rnn-temporal-strip" class="grad-bars" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div id="rnn-stepper"></div>
+
+      <div class="section-code-widget" data-code-blueprint="rnn_bptt"></div>
+    </section>
+
+    <!-- =====================================================================
+         CHAPTER 4: VERY DEEP NEURAL NETWORKS (RESNETS, RMSNORM & INITIALIZATION)
+         ===================================================================== -->
+    <section id="deep-resnet-lab" class="nn-section">
+      <h2>4. Very Deep Neural Networks: Residual Highways (ResNets), Normalization &amp; Init (2015–Present)</h2>
+
+      <div class="study-prose">
+        <p>
+          By 2014, researchers discovered a counterintuitive barrier when stacking 20, 50, or 100+ layers: even with ReLU activations and careful initialization, <strong>plain deep networks had higher training error than shallower networks</strong> (the <em>Degradation Problem</em>). Three interlocking mechanisms govern whether signals and gradients survive across extreme depth:
+        </p>
+        <ul>
+          <li>
+            <strong>1. Variance-Preserving Weight Initialization (Glorot/Xavier 2010 &amp; Kaiming He 2015):</strong>
+            For a linear layer <code>z<sub>j</sub> = ∑<sub>i=1..D</sub> w<sub>ij</sub> a<sub>i</sub></code> with independent zero-mean weights of variance <code>σ<sub>w</sub><sup>2</sup></code>, the output variance is <code>Var(z<sub>j</sub>) = D · σ<sub>w</sub><sup>2</sup> · Var(a<sub>i</sub>)</code>. If <code>D · σ<sub>w</sub><sup>2</sup> ≠ 1</code>, after <code>L</code> layers the signal variance scales as <code>(D · σ<sub>w</sub><sup>2</sup>)<sup>L</sup></code>—either vanishing to <code>0</code> (when weights are too small) or exploding to <code>∞</code> (when weights are too large). <strong>Xavier init</strong> sets <code>σ<sub>w</sub> = √(1/D)</code> for linear/tanh layers; <strong>Kaiming He init</strong> sets <code>σ<sub>w</sub> = √(2/D)</code> to compensate for ReLU/GELU zeroing half the distribution.
+          </li>
+          <li>
+            <strong>2. Layer Normalization &amp; Pre-RMSNorm (Ba et al. 2016; Zhang &amp; Sennrich 2019):</strong>
+            Even with ideal initialization, parameter updates during training cause activation scales to drift across layers (internal covariate shift). <strong>RMSNorm</strong> rescales each layer's input vector to unit root-mean-square before the weight projection: <code>RMSNorm(x) = (x / √(mean(x²) + ε)) ⊙ γ</code>, ensuring every block receives well-conditioned <code>O(1)</code> inputs regardless of depth.
+          </li>
+          <li>
+            <strong>3. Residual Skip Highways (He, Zhang, Ren &amp; Sun, 2015):</strong>
+            Instead of forcing layer <code>l</code> to learn a full mapping <code>x<sup>(l)</sup> = F<sub>l</sub>(x<sup>(l−1)</sup>)</code>, a <strong>Residual Block</strong> learns an additive perturbation around an identity skip path: <code>x<sup>(l)</sup> = x<sup>(l−1)</sup> + F<sub>l</sub>(RMSNorm(x<sup>(l−1)</sup>))</code>. Unrolling this recurrence to layer <code>L</code> reveals why 100+ layer ResNets and modern Pre-LN Transformers train effortlessly:
+          </li>
+        </ul>
+      </div>
+
+      <div class="equation-box">
+        Forward Residual Stream: x<sup>(L)</sup> = x<sup>(l)</sup> + ∑<sub>k=l..L−1</sub> F<sub>k</sub>(x<sup>(k)</sup>) &nbsp;|&nbsp;
+        Backward Jacobian Highway: ∂L / ∂x<sup>(l)</sup> = (∂L / ∂x<sup>(L)</sup>) · (I + ∂/∂x<sup>(l)</sup> ∑<sub>k=l..L−1</sub> F<sub>k</sub>(x<sup>(k)</sup>))
+      </div>
+
+      <div class="study-prose">
+        <p>
+          Look at the <code>+ I</code> (identity matrix) inside the backward Jacobian above: even if the intermediate weight matrices inside <code>F<sub>k</sub></code> have small singular values, the error gradient <code>∂L/∂x<sup>(L)</sup></code> from the loss head is <strong>added directly</strong> to every earlier layer <code>∂L/∂x<sup>(l)</sup></code> without being multiplied through a chain of <code>L − l</code> matrices!
+        </p>
+      </div>
+
+      <div class="nn-grid">
+        <div class="nn-panel">
+          <h3>Interactive 16-Layer Deep Residual &amp; Normalization Lab</h3>
+          <div class="fields">
+            <div>
+              <label for="resnet-depth">Network Depth L (Stacked Blocks)</label>
+              <select id="resnet-depth">
+                <option value="12">12 Layers Deep</option>
+                <option value="16">16 Layers Deep (Extreme Depth Test)</option>
+                <option value="8">8 Layers Deep</option>
+                <option value="4">4 Layers (Shallow Baseline)</option>
+              </select>
+            </div>
+            <div>
+              <label for="resnet-skip">Residual Skip Connection</label>
+              <select id="resnet-skip">
+                <option value="residual">Residual Highway: x^(l) = x^(l-1) + F(x)</option>
+                <option value="plain">Plain Deep Stack: x^(l) = F(x) (No Skip Path!)</option>
+              </select>
+            </div>
+            <div>
+              <label for="resnet-norm">Layer Normalization</label>
+              <select id="resnet-norm">
+                <option value="rmsnorm">Pre-RMSNorm Enabled</option>
+                <option value="none">No Normalization (Raw Activations)</option>
+              </select>
+            </div>
+            <div>
+              <label for="resnet-init">Weight Initialization Scale σ_w</label>
+              <select id="resnet-init">
+                <option value="he">Kaiming He Init (√(2/D) — Balanced)</option>
+                <option value="xavier">Xavier / Glorot Init (√(1/D))</option>
+                <option value="small">Too Small Init (0.22/√D — Vanishing Signal)</option>
+                <option value="large">Too Large Init (2.1/√D — Exploding Signal)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button type="button" id="resnet-train-btn">Train Deep Network (25 Steps)</button>
+            <button type="button" id="resnet-reset-btn" class="secondary">Re-Initialize &amp; Probe Gradients</button>
+          </div>
+
+          <div class="metrics-strip">
+            <div class="metric-box">
+              <div class="metric-label">Step</div>
+              <div id="resnet-step" class="metric-val">0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">BCE Loss</div>
+              <div id="resnet-loss" class="metric-val">—</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Accuracy</div>
+              <div id="resnet-acc" class="metric-val">—</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Layer 1 / Layer L Grad</div>
+              <div id="resnet-grad-ratio" class="metric-val">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="nn-panel">
+          <h3>Per-Layer Activation RMS &amp; Gradient Norm Profile (Layer 1 → Layer L)</h3>
+          <p class="small">
+            Switch <strong>Residual Skip Connection</strong> to <em>Plain Deep Stack</em> and <strong>Normalization</strong> to <em>No Normalization</em> at <code>16 Layers</code> to watch Layer 1's gradient collapse to <code>0.0000</code>!
+          </p>
+          <div id="resnet-depth-bars" class="grad-bars" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div id="resnet-stepper"></div>
+
+      <div class="section-code-widget" data-code-blueprint="deep_resnet"></div>
+    </section>
+
+    <!-- =====================================================================
+         CHAPTER 5: TRANSFORMERS & SELF-ATTENTION
+         ===================================================================== -->
+    <section id="transformer-lab" class="nn-section">
+      <h2>5. Transformers &amp; Scaled Dot-Product Self-Attention (2017–Present)</h2>
+
+      <div class="study-prose">
+        <p>
+          Even with Gated GRUs and LSTMs, recurrent networks suffer from two structural bottlenecks: (1) step <code>t</code> cannot be computed until step <code>t − 1</code> finishes, preventing parallel GPU/TPU training across the sequence dimension <code>T</code>; and (2) all historical information from tokens <code>0 … t − 1</code> must be compressed into a single fixed-width vector <code>h<sub>t−1</sub> ∈ ℝ<sup>D</sup></code>.
+        </p>
+        <p>
+          In <em>Attention Is All You Need</em> (2017), Vaswani et al. eliminated recurrence entirely in favor of <strong>Multi-Head Self-Attention</strong>. Every token position <code>i ∈ {0 … T−1}</code> projects its representation <code>x<sub>i</sub></code> into three distinct subspace vectors for each head <code>h</code>:
+        </p>
+        <ul>
+          <li><strong>Query <code>q<sub>i</sub> = x<sub>i</sub> W<sub>Q</sub><sup>(h)</sup></code>:</strong> What feature or context is token <code>i</code> looking for?</li>
+          <li><strong>Key <code>k<sub>j</sub> = x<sub>j</sub> W<sub>K</sub><sup>(h)</sup></code>:</strong> What routing descriptor or address does token <code>j</code> advertise?</li>
+          <li><strong>Value <code>v<sub>j</sub> = x<sub>j</sub> W<sub>V</sub><sup>(h)</sup></code>:</strong> What payload content should token <code>j</code> transmit if attended to?</li>
+        </ul>
+        <p>
+          <strong>Why the <code>1 / √d<sub>k</sub></code> Scaling Factor Is Critical:</strong>
+          If the components of <code>q<sub>i</sub></code> and <code>k<sub>j</sub></code> have zero mean and unit variance, their dot product <code>q<sub>i</sub> · k<sub>j</sub> = ∑<sub>m=1..d<sub>k</sub></sub> q<sub>im</sub> k<sub>jm</sub></code> has mean <code>0</code> and variance <code>d<sub>k</sub></code> (standard deviation <code>√d<sub>k</sub></code>). For large head dimension <code>d<sub>k</sub></code>, unscaled dot products grow large in magnitude, pushing <code>softmax</code> into extreme one-hot saturation where the Softmax Jacobian <code>∂P<sub>ij</sub>/∂S<sub>ik</sub> = P<sub>ij</sub>(δ<sub>jk</sub> − P<sub>ik</sub>)</code> vanishes to zero! Dividing by <code>√d<sub>k</sub></code> restores unit variance prior to softmax.
+        </p>
+      </div>
+
+      <div class="equation-box">
+        Attention(Q, K, V) = softmax((Q K<sup>T</sup>) / √d<sub>k</sub> + M) V &nbsp;|&nbsp;
+        Softmax Row Jacobian: ∂L / ∂S<sub>i,j</sub> = P<sub>i,j</sub> · (∂L/∂P<sub>i,j</sub> − ∑<sub>k</sub> P<sub>i,k</sub> · ∂L/∂P<sub>i,k</sub>)
+      </div>
+
+      <div class="nn-grid">
+        <div class="nn-panel">
+          <h3>Train a Micro-Transformer on Algorithmic Sequence Tasks</h3>
+          <div class="fields">
+            <div>
+              <label for="tf-task">Sequence Algorithmic Task</label>
+              <select id="tf-task">
+                <option value="reverse">Reverse Sequence ([A,B,C,D] → [D,C,B,A])</option>
+                <option value="copy">Identity Copy ([A,B,C,D] → [A,B,C,D])</option>
+                <option value="sort">Sort Tokens Ascending</option>
+              </select>
+            </div>
+            <div>
+              <label for="tf-mask">Attention Mask M</label>
+              <select id="tf-mask">
+                <option value="bidirectional">Bidirectional (Full Context — Encoder / Diffusion)</option>
+                <option value="causal">Causal Lower-Triangular Mask (j ≤ i — Autoregressive GPT)</option>
+              </select>
+            </div>
+          </div>
+
+          <label for="tf-input-seq">Probe Input Sequence (4 Tokens from A–H)</label>
+          <input type="text" id="tf-input-seq" value="A B C D">
+
+          <div class="actions">
+            <button type="button" id="tf-train-btn">Train Transformer (40 Epochs)</button>
+            <button type="button" id="tf-reset-btn" class="secondary">Reset Transformer</button>
+          </div>
+
+          <div class="metrics-strip">
+            <div class="metric-box">
+              <div class="metric-label">Epoch</div>
+              <div id="tf-epoch" class="metric-val">0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Token CE Loss</div>
+              <div id="tf-loss" class="metric-val">—</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Token Accuracy</div>
+              <div id="tf-acc" class="metric-val">—</div>
+            </div>
+          </div>
+
+          <div id="tf-pred-banner" class="status" aria-live="polite"></div>
+        </div>
+
+        <div class="nn-panel">
+          <h3>Live Multi-Head Attention Heatmaps (Head 1 &amp; Head 2)</h3>
+          <p class="small">Notice how training on <strong>Reverse</strong> causes the attention matrix to light up along the <em>anti-diagonal</em>, whereas <strong>Copy</strong> concentrates weight on the <em>main diagonal</em>. Try switching the Mask to <strong>Causal (j ≤ i)</strong> on Reverse to see why position 0 cannot peek ahead at position 3!</p>
+          <div id="tf-attn-heads" class="attn-heads-wrap"></div>
+        </div>
+      </div>
+
+      <div id="transformer-stepper"></div>
+
+      <div class="section-code-widget" data-code-blueprint="attention"></div>
+    </section>
+
+    <!-- =====================================================================
+         CHAPTER 6: DIFFUSION MODELS (IMAGE DDPM & DISCRETE MASKED TEXT DIFFUSION)
+         ===================================================================== -->
+    <section id="diffusion-lab" class="nn-section">
+      <h2>6. Diffusion Models: Continuous Image DDPM &amp; Discrete Masked Text Diffusion (2020–Present)</h2>
+
+      <div class="study-prose">
+        <p>
+          Directly mapping a single random latent vector <code>z ~ N(0, I)</code> to a complex high-dimensional data manifold (such as natural images or whole paragraphs of text) in a single pass forces a neural network to solve an intractable global coordination problem all at once: GANs suffer from adversarial mode collapse, while single-step VAEs average over modes and produce blurry outputs.
+        </p>
+        <p>
+          <strong>Diffusion Models</strong> (Sohl-Dickstein et al., 2015; Song &amp; Ermon, 2019; Ho, Jain &amp; Abbeel, 2020) decompose generation into a trajectory of easy, local denoising refinements. They pair a fixed, parameter-free <strong>forward corruption process</strong> <code>q(x<sub>1:T</sub> | x<sub>0</sub>)</code> that gradually destroys all structure in data <code>x<sub>0</sub></code> over <code>T</code> steps with a learned <strong>reverse generative process</strong> <code>p<sub>θ</sub>(x<sub>t−1</sub> | x<sub>t</sub>)</code> that reconstructs the signal step by step.
+        </p>
+
+        <h3>Part I — Mathematical Anatomy of Continuous Gaussian Diffusion (DDPM &amp; Score Matching)</h3>
+        <ol>
+          <li>
+            <strong>Forward Markov Chain &amp; the Closed-Form Marginal Shortcut:</strong>
+            Given a clean data vector <code>x<sub>0</sub> ∈ ℝ<sup>D</sup></code> and a variance schedule <code>β<sub>1</sub> &lt; β<sub>2</sub> &lt; … &lt; β<sub>T</sub> ∈ (0, 1)</code>, each forward step attenuates the signal by <code>√(1 − β<sub>t</sub>)</code> and injects Gaussian noise of variance <code>β<sub>t</sub></code>:
+            <code>q(x<sub>t</sub> | x<sub>t−1</sub>) = N(x<sub>t</sub>; √(1 − β<sub>t</sub>) x<sub>t−1</sub>, β<sub>t</sub> I)</code>.
+            Because the sum of independent Gaussians is still Gaussian, defining <code>α<sub>t</sub> = 1 − β<sub>t</sub></code> and the cumulative signal retention product <code>ᾱ<sub>t</sub> = ∏<sub>s=1..t</sub> α<sub>s</sub></code> yields a remarkable closed-form shortcut—we can sample noisy state <code>x<sub>t</sub></code> at <em>any</em> arbitrary timestep <code>t</code> in <code>O(1)</code> without unrolling steps <code>1 … t − 1</code>:
+            <div class="equation-box">
+              Closed-Form Forward Marginal: x<sub>t</sub> = √ᾱ<sub>t</sub> · x<sub>0</sub> + √(1 − ᾱ<sub>t</sub>) · ε, &nbsp;&nbsp; where ε ~ N(0, I), &nbsp;&nbsp; SNR(t) = ᾱ<sub>t</sub> / (1 − ᾱ<sub>t</sub>)
+            </div>
+          </li>
+          <li>
+            <strong>Variational Lower Bound (ELBO), Tweedie's Formula &amp; Stein Score Equivalence:</strong>
+            Although the true reverse transition <code>q(x<sub>t−1</sub> | x<sub>t</sub>)</code> is intractable without knowing <code>x<sub>0</sub></code>, Bayes' rule shows that <em>conditioned on</em> <code>x<sub>0</sub></code> it is an exact Gaussian <code>q(x<sub>t−1</sub> | x<sub>t</sub>, x<sub>0</sub>) = N(x<sub>t−1</sub>; μ̃<sub>t</sub>(x<sub>t</sub>, x<sub>0</sub>), β̃<sub>t</sub> I)</code>. Substituting our closed-form equation <code>x<sub>0</sub> = (x<sub>t</sub> − √(1 − ᾱ<sub>t</sub>) ε) / √ᾱ<sub>t</sub></code> into the KL divergence <code>D<sub>KL</sub>(q(x<sub>t−1</sub>|x<sub>t</sub>,x<sub>0</sub>) ‖ p<sub>θ</sub>(x<sub>t−1</sub>|x<sub>t</sub>))</code> collapses the entire variational bound into Ho et al.'s noise-prediction MSE objective:
+            <div class="equation-box">
+              L<sub>simple</sub>(θ) = E<sub>t ~ Uniform(1..T), x<sub>0</sub>, ε ~ N(0,I)</sub> [ ‖ ε − ε<sub>θ</sub>(√ᾱ<sub>t</sub> x<sub>0</sub> + √(1 − ᾱ<sub>t</sub>) ε, t) ‖<sub>2</sub><sup>2</sup> ]
+            </div>
+            By <strong>Tweedie's Formula</strong>, predicting the noise vector <code>ε<sub>θ</sub>(x<sub>t</sub>, t)</code> is mathematically identical (up to a scalar factor) to estimating the <strong>Stein Score Function</strong>—the gradient of the log probability density of the noisy data distribution:
+            <code>∇<sub>x<sub>t</sub></sub> log q(x<sub>t</sub>) = − ε<sub>θ</sub>(x<sub>t</sub>, t) / √(1 − ᾱ<sub>t</sub>)</code>.
+            Every reverse step literally nudges <code>x<sub>t</sub></code> uphill along the log-density gradient toward high-probability data manifolds!
+          </li>
+          <li>
+            <strong>Reverse Sampling: Stochastic Langevin (DDPM) vs. Deterministic ODE (DDIM) &amp; Classifier-Free Guidance (CFG):</strong>
+            Starting from pure Gaussian noise <code>x<sub>T</sub> ~ N(0, I)</code>, the reverse sampler steps from <code>t = T</code> down to <code>1</code>:
+            <div class="equation-box">
+              Reverse Step: x<sub>t−1</sub> = (1 / √α<sub>t</sub>) · ( x<sub>t</sub> − ((1 − α<sub>t</sub>) / √(1 − ᾱ<sub>t</sub>)) · ε<sub>θ</sub>(x<sub>t</sub>, t) ) + σ<sub>t</sub> z, &nbsp;&nbsp; z ~ N(0, I)
+            </div>
+            Setting <code>σ<sub>t</sub> = √β<sub>t</sub></code> yields stochastic ancestral DDPM sampling (overdamped Langevin dynamics); setting <code>σ<sub>t</sub> = 0</code> (Song et al.'s <strong>DDIM</strong>) converts the process into a deterministic <strong>Probability Flow ODE</strong> that can skip steps (e.g., 1000 → 20 steps). To condition generation on a prompt or class label <code>c</code>, <strong>Classifier-Free Guidance (Ho &amp; Salimans, 2022)</strong> linearly extrapolates away from the unconditional score:
+            <code>ε̃<sub>θ</sub>(x<sub>t</sub>, t, c) = (1 + w) · ε<sub>θ</sub>(x<sub>t</sub>, t, c) − w · ε<sub>θ</sub>(x<sub>t</sub>, t, ∅)</code>.
+          </li>
+        </ol>
+
+        <h3>Part II — Discrete Masked Text Diffusion (D3PM, SEDD &amp; MDLM / Mercury)</h3>
+        <p>
+          Why can't we apply standard Gaussian DDPM directly to text tokens? Because token IDs (<code>"neural" = 412</code>, <code>"gradients" = 891</code>) are discrete categorical indices—adding <code>0.15 · ε</code> to an integer index has no geometry. Instead, <strong>Discrete Diffusion Models</strong> (Austin et al., 2021 D3PM; Lou et al., 2024 SEDD; Sahoo et al., 2024 <strong>MDLM</strong>) define a <strong>Continuous-Time Markov Chain (CTMC)</strong> directly over the discrete vocabulary <code>V ∪ {[MASK]}</code> using an <strong>absorbing state</strong> <code>[MASK]</code>:
+        </p>
+        <ul>
+          <li>
+            <strong>Forward Masking Schedule:</strong> At noise level <code>t ∈ [0, 1]</code> with survival probability <code>α<sub>t</sub> = 1 − t</code>, each token <code>x<sub>0</sub><sup>(i)</sup></code> independently remains intact with probability <code>α<sub>t</sub></code> or transitions to the absorbing <code>[MASK]</code> state with probability <code>1 − α<sub>t</sub></code>:
+            <code>q(z<sub>t</sub><sup>(i)</sup> | x<sub>0</sub><sup>(i)</sup>) = α<sub>t</sub> δ<sub>x<sub>0</sub><sup>(i)</sup></sub> + (1 − α<sub>t</sub>) δ<sub>[MASK]</sub></code>. At <code>t = 1</code>, the entire sequence is <code>[MASK, MASK, …, MASK]</code>.
+          </li>
+          <li>
+            <strong>SUBS Parameterization &amp; Bidirectional Denoising Objective:</strong>
+            Unlike an autoregressive GPT (which must use a causal triangular mask <code>j ≤ i</code> and can only condition on left context), a Masked Diffusion Language Model uses a <strong>full bidirectional Transformer encoder</strong>. Under the <strong>SUBS (Substitution) parameterization</strong>, any already-unmasked token at position <code>i</code> is copied through with probability 1 (carry-over unmasked tokens), and the cross-entropy loss is evaluated exclusively on currently masked positions weighted by the continuous-time NELBO rate <code>−α'<sub>t</sub> / (1 − α<sub>t</sub>) = 1 / t</code>:
+            <div class="equation-box">
+              L<sub>MDLM</sub>(θ) = E<sub>t ~ U(0,1), z<sub>t</sub> ~ q(z<sub>t</sub>|x<sub>0</sub>)</sub> [ (1 / t) · ∑<sub>i : z<sub>t</sub><sup>(i)</sup> = [MASK]</sub> − log p<sub>θ</sub>(x<sub>0</sub><sup>(i)</sup> | z<sub>t</sub>) ]
+            </div>
+          </li>
+          <li>
+            <strong>Parallel Confidence-Guided Unmasking (Why Diffusion LMs Generate in <code>O(K)</code> Steps Instead of <code>O(L)</code>):</strong>
+            To generate a sequence of length <code>L</code>, an autoregressive LLM must execute <code>L</code> sequential forward passes (token 1 → token 2 → … → token <code>L</code>). A Masked Diffusion LM starts with <code>L</code> <code>[MASK]</code> tokens, predicts categorical distributions <code>p<sub>θ</sub>(x<sub>0</sub><sup>(i)</sup> | z<sub>t</sub>)</code> across <em>all</em> masked positions in a single bidirectional pass, and unmasks the top-<code>k</code> positions with the highest confidence <code>max<sub>v</sub> p<sub>θ</sub>(v | z<sub>t</sub>)</code> in parallel—crystallizing islands of high-certainty words across the whole sentence simultaneously in <code>S ≪ L</code> steps!
+          </li>
+        </ul>
+
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Dimension</th>
+                <th>Continuous Gaussian Diffusion (DDPM / DiT)</th>
+                <th>Discrete Masked Diffusion (MDLM / SEDD)</th>
+                <th>Autoregressive LM (GPT Decoder)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>State Space</strong></td>
+                <td>Continuous vectors <code>x<sub>t</sub> ∈ ℝ<sup>D</sup></code></td>
+                <td>Discrete tokens <code>z<sub>t</sub> ∈ (V ∪ {[MASK]})<sup>L</sup></code></td>
+                <td>Discrete prefix <code>x<sub>1:i−1</sub> ∈ V<sup>i−1</sup></code></td>
+              </tr>
+              <tr>
+                <td><strong>Forward Corruption</strong></td>
+                <td>Additive Gaussian noise <code>√ᾱ<sub>t</sub>x<sub>0</sub> + √(1−ᾱ<sub>t</sub>)ε</code></td>
+                <td>Independent token masking w.p. <code>γ(t) = 1 − α<sub>t</sub></code></td>
+                <td>Causal shift (next-token teacher forcing)</td>
+              </tr>
+              <tr>
+                <td><strong>Attention Mask</strong></td>
+                <td>Bidirectional / 2D spatial self-attention</td>
+                <td>Bidirectional full-sequence attention</td>
+                <td>Strict lower-triangular causal mask (<code>j ≤ i</code>)</td>
+              </tr>
+              <tr>
+                <td><strong>Training Loss</strong></td>
+                <td>Noise/Score MSE <code>‖ε − ε<sub>θ</sub>(x<sub>t</sub>, t)‖²</code></td>
+                <td>Time-weighted masked CE <code>(1/t) ∑ −log p<sub>θ</sub>(x<sub>0</sub>|z<sub>t</sub>)</code></td>
+                <td>Next-token CE <code>∑ −log p<sub>θ</sub>(x<sub>i</sub> | x<sub>&lt;i</sub>)</code></td>
+              </tr>
+              <tr>
+                <td><strong>Inference Passes</strong></td>
+                <td><code>S</code> parallel denoising steps (e.g. 16–50)</td>
+                <td><code>S</code> parallel unmasking steps (<code>S ≪ L</code>)</td>
+                <td>Strictly <code>L</code> sequential steps (1 per token)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="nn-grid">
+        <!-- Continuous Image/Sprite DDPM -->
+        <div class="nn-panel">
+          <h3>Part A: Continuous 2D Pixel Sprite DDPM</h3>
+          <div class="fields">
+            <div>
+              <label for="ddpm-target">Target 6×6 Pixel Sprite x<sub>0</sub></label>
+              <select id="ddpm-target">
+                <option value="smiley">Smiley Icon</option>
+                <option value="cross">Plus Cross</option>
+                <option value="diamond">Hollow Diamond</option>
+              </select>
+            </div>
+            <div>
+              <label for="ddpm-step-slider">Inspect Reverse Step t: <output id="ddpm-step-val" for="ddpm-step-slider">0 (Denoised x₀)</output></label>
+              <input type="range" id="ddpm-step-slider" min="0" max="16" step="1" value="0">
+            </div>
+          </div>
+
+          <div class="actions">
+            <button type="button" id="ddpm-train-btn">Train Noise Predictor ε_θ (60 Steps)</button>
+            <button type="button" id="ddpm-sample-btn" class="secondary">Sample New Reverse Trajectory</button>
+          </div>
+
+          <div class="metrics-strip">
+            <div class="metric-box">
+              <div class="metric-label">Train Step</div>
+              <div id="ddpm-epoch" class="metric-val">0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Noise MSE Loss</div>
+              <div id="ddpm-loss" class="metric-val">—</div>
+            </div>
+          </div>
+
+          <div id="ddpm-strip" class="diffusion-strip" aria-live="polite"></div>
+        </div>
+
+        <!-- Discrete Masked Text Diffusion -->
+        <div class="nn-panel">
+          <h3>Part B: Discrete Masked Text Diffusion (Parallel Unmasking)</h3>
+          <div>
+            <label for="text-diff-prompt">Target Sequence Seed</label>
+            <select id="text-diff-prompt">
+              <option value="0">NEURAL NETS LEARN FROM RAW GRADIENTS</option>
+              <option value="1">DIFFUSION UNMASKS TOKENS IN PARALLEL STEPS</option>
+              <option value="2">ATTENTION ROUTES CONTEXT ACROSS ALL POSITIONS</option>
+              <option value="3">DECISION HEADS CALIBRATE CHOICE AND GATE</option>
+            </select>
+          </div>
+
+          <div class="actions">
+            <button type="button" id="text-diff-train-btn">Train Bidirectional Text Denoiser (45 Steps)</button>
+            <button type="button" id="text-diff-sample-btn" class="secondary">Run Parallel Unmasking</button>
+          </div>
+
+          <div class="metrics-strip">
+            <div class="metric-box">
+              <div class="metric-label">Denoiser Step</div>
+              <div id="text-diff-epoch" class="metric-val">0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Masked CE Loss</div>
+              <div id="text-diff-loss" class="metric-val">—</div>
+            </div>
+          </div>
+
+          <div id="text-diff-trajectory" class="text-diff-steps" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div id="diffusion-stepper"></div>
+
+      <div class="section-code-widget" data-code-blueprint="diffusion"></div>
+    </section>
+
+    <!-- =====================================================================
+         CHAPTER 7: DECISION MODELS & POINTER HEADS
+         ===================================================================== -->
+    <section id="decision-lab" class="nn-section">
+      <h2>7. Decision Models &amp; Single-Pass Pointer Readout Heads (2025–Present)</h2>
+
+      <div class="study-prose">
+        <p>
+          When software systems use an LLM to route a ticket, select a tool, or score risk, autoregressive token generation is both wasteful and brittle: the model must emit dozens of syntax tokens (<code>{"choice": "..."}</code>), token probabilities fragment across surface synonyms, and raw softmax probabilities are notoriously overconfident on out-of-distribution inputs.
+        </p>
+        <p>
+          As detailed in our <a href="../decision-models/">Decision Models report</a> (Jev, Kev, and Laya), a <strong>Decision Pointer Head</strong> packs the state and candidate options into a structured sequence with reserved option delimiters (<code>‹0› … ‹K−1›</code> or pre-mask slots), runs a <strong>single forward pass</strong>, and computes the inner product between the projected state representation <code>h<sub>state</sub></code> and each option delimiter's hidden vector <code>h<sub>‹k›</sub></code>. Crucially, it decouples <strong>Choice</strong> (which option wins under temperature-calibrated softmax) from the <strong>Act / Review Gate</strong> (which uses margin and entropy features of the raw distribution to abstain when evidence is ambiguous).
+        </p>
+      </div>
+
+      <div class="equation-box">
+        z<sub>k</sub> = (W<sub>q</sub> h<sub>state</sub>)<sup>T</sup> (W<sub>k</sub> h<sub>‹k›</sub>) / (√d · T), &nbsp;
+        p = softmax(z), &nbsp;
+        Confidence = 0.65 · p<sub>(1)</sub> + 0.35 · (p<sub>(1)</sub> − p<sub>(2)</sub>), &nbsp;
+        Gate ∈ {act, review}
+      </div>
+
+      <div class="nn-grid">
+        <div class="nn-panel">
+          <h3>Single-Pass Option Pointer &amp; Calibration Controls</h3>
+          <div>
+            <label for="dec-scenario">Incident Routing Scenario</label>
+            <select id="dec-scenario">
+              <option value="clear">High-Signal Match: ECC Memory Fault on Node 42</option>
+              <option value="ambiguous">Ambiguous Symptom: Slow Checkpoint Sync + Packet Jitter</option>
+              <option value="ood">Out-of-Distribution Input: Unfamiliar Sensor Payload</option>
+            </select>
+          </div>
+
+          <label for="dec-temp">Calibration Temperature T: <output id="dec-temp-val" for="dec-temp">1.00</output></label>
+          <input type="range" id="dec-temp" min="0.25" max="2.50" step="0.05" value="1.00">
+
+          <label for="dec-gate">Abstention Gate Threshold τ: <output id="dec-gate-val" for="dec-gate">0.55</output></label>
+          <input type="range" id="dec-gate" min="0.10" max="0.95" step="0.05" value="0.55">
+        </div>
+
+        <div class="nn-panel">
+          <h3>Calibrated Option Distribution &amp; Gate Decision</h3>
+          <div id="dec-output" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div id="decision-stepper"></div>
+
+      <div class="section-code-widget" data-code-blueprint="decision_head"></div>
+    </section>
+
+    <!-- =====================================================================
+         CHAPTER 8: EXTENSIBLE PLUG-AND-PLAY ARCHITECTURE BUILDER
+         ===================================================================== -->
+    <section id="block-builder" class="nn-section">
+      <h2>8. Extensible Plug-and-Play Neural Architecture Workbench</h2>
+      <p>
+        Modern foundation models are modular compositions of reusable primitives. Click any block below to append it to your live neural pipeline, inspect how tensor shapes, parameter counts, FLOPs, and forward/backward norms evolve across layers, or dynamically register a brand-new architecture block (such as <strong>Selective State-Space / Mamba SSM</strong> or <strong>Sparse Mixture-of-Experts Router</strong>) via <code>registerBlockType()</code>.
+      </p>
+
+      <div class="nn-panel">
+        <h3>Add Building Block to Pipeline</h3>
+        <div id="builder-palette" class="builder-palette" role="group" aria-label="Available neural network building blocks"></div>
+
+        <div class="actions">
+          <button type="button" id="btn-register-ssm" class="secondary">+ Register Custom Block: Mamba Selective SSM</button>
+          <button type="button" id="btn-register-moe" class="secondary">+ Register Custom Block: Sparse MoE Top-2 Router</button>
+          <button type="button" id="btn-reset-pipeline" class="secondary">Reset to Default Transformer-Decision Stack</button>
+        </div>
+
+        <div class="metrics-strip">
+          <div class="metric-box">
+            <div class="metric-label">Pipeline Depth</div>
+            <div id="builder-depth" class="metric-val">0 blocks</div>
+          </div>
+          <div class="metric-box">
+            <div class="metric-label">Total Parameters</div>
+            <div id="builder-params" class="metric-val">0</div>
+          </div>
+          <div class="metric-box">
+            <div class="metric-label">FLOPs / Sequence</div>
+            <div id="builder-flops" class="metric-val">0</div>
+          </div>
+          <div class="metric-box">
+            <div class="metric-label">Input Gradient Norm</div>
+            <div id="builder-grad" class="metric-val">—</div>
+          </div>
+        </div>
+
+        <div id="builder-stack" class="block-stack" aria-live="polite"></div>
+      </div>
+
+      <div id="builder-stepper"></div>
+    </section>
+
+    <!-- =====================================================================
+         CHAPTER 9: FIRST-PRINCIPLES REFERENCE MATRIX & ARCHITECTURE GUIDE
+         ===================================================================== -->
+    <section id="first-principles-guide" class="nn-section">
+      <h2>9. First-Principles Reference: Complete Architecture Matrix &amp; Hardware Execution Guide</h2>
+      <div class="reading">
+        <aside class="toc" aria-label="Reference contents">
+          <a href="#arch-matrix">Architecture Matrix</a>
+          <a href="#backend-comparison">JS vs WASM vs WebGPU</a>
+          <a href="#wasm-gemm-code">Raw WASM GEMM Kernel</a>
+          <a href="#backprop-code">Analytical Backprop</a>
+          <a href="#plugin-api-code">Plugin Block API</a>
+        </aside>
+
+        <article class="article">
+          <h3 id="arch-matrix">Historical Evolution &amp; Inductive Bias Matrix (1958–Present)</h3>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Era &amp; Family</th>
+                  <th>Core Primitive</th>
+                  <th>Inductive Bias</th>
+                  <th>Compute &amp; Memory Scaling</th>
+                  <th>What It Solved &amp; Where It Breaks</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Perceptron (1958)</strong></td>
+                  <td><code>y = step(w·x + b)</code></td>
+                  <td>Single linear hyperplane</td>
+                  <td><code>O(D)</code></td>
+                  <td>Solved linearly separable classification; fails on XOR and non-convex manifolds.</td>
+                </tr>
+                <tr>
+                  <td><strong>Feedforward MLP + Backprop (1986)</strong></td>
+                  <td><code>A = σ(XW + b)</code></td>
+                  <td>Universal function approximation over flat vectors</td>
+                  <td><code>O(L · D²)</code></td>
+                  <td>Learns arbitrary non-linear features via chain rule; lacks spatial or sequential invariance.</td>
+                </tr>
+                <tr>
+                  <td><strong>Convolutional Nets (1989–2012)</strong></td>
+                  <td><code>(I ∗ K)<sub>r,c</sub></code> + Pooling</td>
+                  <td>2D locality &amp; translation equivariance</td>
+                  <td><code>O(H · W · C<sub>in</sub> · C<sub>out</sub> · k²)</code></td>
+                  <td>Dramatically reduces parameters on grids/images; fixed local receptive field per layer.</td>
+                </tr>
+                <tr>
+                  <td><strong>Recurrent Nets &amp; LSTM/GRU (1986–1997)</strong></td>
+                  <td><code>h<sub>t</sub> = (1−z<sub>t</sub>)⊙h<sub>t−1</sub> + z<sub>t</sub>⊙h̃<sub>t</sub></code></td>
+                  <td>Markovian temporal state &amp; additive memory gate</td>
+                  <td><code>O(T · D²)</code> sequential steps</td>
+                  <td>Constant Error Carousel prevents temporal vanishing gradients; cannot parallelize across time <code>T</code>.</td>
+                </tr>
+                <tr>
+                  <td><strong>Deep Residual Nets / ResNets (2015)</strong></td>
+                  <td><code>x<sup>(l)</sup> = x<sup>(l−1)</sup> + F<sub>l</sub>(Norm(x<sup>(l−1)</sup>))</code></td>
+                  <td>Identity skip highway + variance standardization</td>
+                  <td><code>O(L · D²)</code> for <code>L &gt; 100</code></td>
+                  <td>Additive <code>+I</code> Jacobian prevents gradient shattering at extreme depth.</td>
+                </tr>
+                <tr>
+                  <td><strong>Transformers (2017)</strong></td>
+                  <td><code>softmax(QK<sup>T</sup>/√d<sub>k</sub>)V</code></td>
+                  <td>Dynamic all-to-all token routing</td>
+                  <td><code>O(T² · D + T · D²)</code></td>
+                  <td>Parallelizes sequence training &amp; eliminates recurrent bottlenecks; quadratic <code>O(T²)</code> KV-cache growth.</td>
+                </tr>
+                <tr>
+                  <td><strong>Continuous Image DDPM (2020)</strong></td>
+                  <td><code>ε<sub>θ</sub>(√ᾱ<sub>t</sub>x<sub>0</sub> + √(1−ᾱ<sub>t</sub>)ε, t)</code></td>
+                  <td>Iterative score/noise field reversal</td>
+                  <td><code>O(S · FLOPs<sub>backbone</sub>)</code> over <code>S</code> steps</td>
+                  <td>Stable high-dimensional distribution synthesis without adversarial collapse; requires multiple denoising steps.</td>
+                </tr>
+                <tr>
+                  <td><strong>Discrete Masked Text Diffusion (2024)</strong></td>
+                  <td><code>p<sub>θ</sub>(x<sub>0</sub> | z<sub>t</sub>)</code> over <code>[MASK]</code></td>
+                  <td>Bidirectional parallel token refinement</td>
+                  <td><code>O(S · T² · D)</code> with <code>S ≪ T</code></td>
+                  <td>Generates and edits tokens in parallel by confidence instead of strict left-to-right decoding.</td>
+                </tr>
+                <tr>
+                  <td><strong>Decision Pointer Heads (2025)</strong></td>
+                  <td><code>(W<sub>q</sub>h<sub>last</sub>)<sup>T</sup>(W<sub>k</sub>h<sub>‹k›</sub>)/T</code></td>
+                  <td>Bounded option scoring + calibrated abstention</td>
+                  <td>Single forward pass <code>O(T · D²)</code></td>
+                  <td>Eliminates multi-token JSON generation for classification/routing; cannot invent free-form prose.</td>
+                </tr>
+                <tr>
+                  <td><strong>Selective SSM / Mamba &amp; Sparse MoE</strong></td>
+                  <td><code>h<sub>t</sub> = Ā(x<sub>t</sub>)h<sub>t−1</sub> + B̄(x<sub>t</sub>)x<sub>t</sub></code></td>
+                  <td>Input-dependent linear recurrence / conditional capacity</td>
+                  <td><code>O(T · D)</code> state scan; active parameter sparsity</td>
+                  <td>Linear-time long context and massive parameter capacity at fixed FLOPs per token.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3 id="backend-comparison">Structuring Neural Network Kernels: Raw JS vs Raw WASM vs WebGPU</h3>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Runtime Target</th>
+                  <th>Memory Model</th>
+                  <th>Parallelism &amp; Dispatch</th>
+                  <th>Sweet Spot</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Raw JS (<code>Float32Array</code>)</strong></td>
+                  <td>TypedArray views on V8/JSC heap; zero copy to DOM/Canvas</td>
+                  <td>Single thread (or Web Workers); JIT loop unrolling when loop order is <code>i → k → j</code></td>
+                  <td>Micro-models (<code>D ≤ 64</code>), rapid prototyping, zero marshaling overhead</td>
+                </tr>
+                <tr>
+                  <td><strong>Raw WebAssembly (<code>wasm32</code>)</strong></td>
+                  <td>Contiguous linear arena <code>WebAssembly.Memory</code> with deterministic 4-byte <code>f32.load</code>/<code>f32.store</code></td>
+                  <td>Predictable AOT/JIT machine code, 128-bit <code>v128</code> SIMD (<code>f32x4.mul</code>), zero GC pauses</td>
+                  <td>CPU inference &amp; training from <code>D = 32</code> to <code>D = 1024</code> across all browsers</td>
+                </tr>
+                <tr>
+                  <td><strong>WebGPU (<code>WGSL @compute</code>)</strong></td>
+                  <td>Explicit device <code>storage</code> buffers + fast on-chip <code>var&lt;workgroup&gt;</code> shared SRAM tiles</td>
+                  <td>Thousands of concurrent GPU threads grouped into <code>@workgroup_size(8, 8)</code> tiles synchronized via <code>workgroupBarrier()</code></td>
+                  <td>Large batch/matrix sizes (<code>M, K, N ≥ 256</code>) where compute FLOPs amortize PCIe/queue submission latency</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3 id="wasm-gemm-code">How the In-Memory Raw WebAssembly (<code>wasm32</code>) GEMM Kernel Works</h3>
+          <p>
+            In <code>site/neural-networks/engine.js</code>, <code>buildWasmGemmBytes()</code> constructs a valid 183-byte WebAssembly binary module directly in a <code>Uint8Array</code>—with zero external <code>.wasm</code> files or C/Rust compilers. Both JavaScript and WebAssembly share a contiguous <code>WebAssembly.Memory</code> buffer viewed as a <code>Float32Array</code>:
+          </p>
+          <pre><code>;; Disassembly of the in-memory compiled gemm_f32(aPtr, bPtr, cPtr, M, K, N) kernel
+(func $gemm_f32 (export "gemm_f32")
+  (param $aPtr i32) (param $bPtr i32) (param $cPtr i32)
+  (param $M i32) (param $K i32) (param $N i32)
+  (local $i i32) (local $j i32) (local $k i32) (local $sum f32)
+  ;; Triple nested loop over M × N × K reading/writing linear memory in 4-byte f32 strides:
+  ;; sum += f32.load(aPtr + ((i * K + k) &lt;&lt; 2)) * f32.load(bPtr + ((k * N + j) &lt;&lt; 2))
+  ;; f32.store(cPtr + ((i * N + j) &lt;&lt; 2), sum)
+)</code></pre>
+
+          <h3 id="backprop-code">Reverse-Mode Autograd &amp; Decoupled AdamW Update</h3>
+          <p>
+            Every neural network training loop follows four exact steps: (1) forward pass caching intermediate pre-activations <code>z<sup>(l)</sup></code> and activations <code>a<sup>(l)</sup></code>, (2) loss evaluation at the output head, (3) reverse-mode chain-rule propagation of <code>δ<sup>(l)</sup> = ∂L / ∂z<sup>(l)</sup></code>, and (4) parameter update:
+          </p>
+          <pre><code>// Output layer gradient for Sigmoid + Binary Cross-Entropy simplifies to (p - y) / N
+for (let i = 0; i &lt; N; i++) dZ[i] = (probs[i] - Y[i]) / N;
+
+// Backpropagate through hidden layers l = L-1 ... 0
+for (let l = layers.length - 1; l &gt;= 0; l--) {
+  // 1. Parameter gradients: dW = prevA^T · dZ, db = sum(dZ)
+  // 2. Propagate error to previous layer: dPrevZ = (dZ · W^T) * activationGrad(prevZ)
+  // 3. Decoupled AdamW update:
+  m = beta1 * m + (1 - beta1) * g;
+  v = beta2 * v + (1 - beta2) * (g * g);
+  w = w * (1 - lr * weightDecay) - lr * (mHat / (Math.sqrt(vHat) + 1e-8));
+}</code></pre>
+
+          <h3 id="plugin-api-code">Extending the Workbench with <code>registerBlockType()</code></h3>
+          <p>
+            You can register new neural network paradigms into <code>BLOCK_REGISTRY</code> from the browser console or module code at any time:
+          </p>
+          <pre><code>import { registerBlockType } from "./engine.js";
+
+registerBlockType({
+  type: "griffin_rg_lru",
+  label: "Real-Gated Linear Recurrent Unit (RG-LRU)",
+  category: "recurrent",
+  description: "Diagonal gated linear recurrence with hardware-efficient scan.",
+  computeStats(shape) {
+    return {
+      outShape: { ...shape },
+      params: 3 * shape.d * shape.d,
+      flops: 6 * shape.t * shape.d * shape.d
+    };
+  }
+});</code></pre>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      <a href="../index.html">← Back to Learnings Hub</a> ·
+      <a href="../celld/">celld &amp; Durable Object Fleets</a> ·
+      <a href="../decision-models/">Decision Models (Jev, Kev, Laya)</a> ·
+      <a href="../opt-chronicles/">The OPT-175B Chronicles</a>
+    </p>
+  </footer>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

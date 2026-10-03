@@ -107,7 +107,13 @@ try{
  check('image lab no mobile horizontal overflow',await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
  await p.screenshot(out+'/mobile-image-lab.png',{fullPage:true});
  await p.emulateViewport({width:390,height:844,mobile:true,scale:1});
- await p.goto(base+'neural-networks/');await p.waitFor(()=>document.querySelector('#mlp-epoch').textContent!=='0');
+ await p.goto(base+'neural-networks/');await p.waitFor(()=>document.querySelectorAll('#nn-stack > li[data-slug]').length>0);
+ check('neural-networks chapter hub renders the chapter stack and native MathML without overflow',await p.evaluate(()=>document.querySelectorAll('#nn-stack > li[data-slug]').length>=15&&document.querySelectorAll('main math').length>=3&&innerWidth===390&&document.documentElement.scrollWidth<=innerWidth));
+ await p.goto(base+'neural-networks/gradient-descent.html');await p.waitFor(()=>document.querySelectorAll('#gd-results tr').length===6);
+ check('gradient-descent race draws six optimisers, sidebar marks the chapter, MathML renders, no mobile overflow',await p.evaluate(()=>document.querySelectorAll('#gd-results tr').length===6&&document.querySelector('[data-chapter-nav] a[aria-current="page"]')!==null&&document.querySelectorAll('main math').length>=8&&innerWidth===390&&document.documentElement.scrollWidth<=innerWidth));
+ await p.click('#gd-compare');await p.waitFor(()=>document.querySelectorAll('#gd-results tr').length===2);
+ check('gradient-descent stability demo: eta 0.19 reaches the minimum and 0.21 diverges',await p.evaluate(()=>{const r=[...document.querySelectorAll('#gd-results tr')].map((t)=>t.textContent);return r[0].includes('Reached')&&r[1].includes('Diverged');}));
+ await p.goto(base+'neural-networks/lab.html');await p.waitFor(()=>document.querySelector('#mlp-epoch').textContent!=='0');
  check('neural-networks WASM GEMM kernel and interactive trainers render',await p.evaluate(()=>document.querySelector('#kernel-readout').textContent.includes('WebAssembly')&&document.querySelectorAll('#builder-stack .block-item').length===6));
  await p.click('#stepper-next-btn');await p.click('#cnn-step-next-btn');await p.click('#rnn-step-next-btn');await p.click('#tf-step-next-btn');
  check('neural-networks node graph and all 8 section step-by-step debuggers advance micro-steps',await p.evaluate(()=>document.querySelectorAll('#nn-stepper-svg .svg-node').length===11&&document.querySelector('#stepper-stage-title').textContent.includes('Stage 2')&&document.querySelector('#cnn-step-stage-title').textContent.includes('Stage 2')&&document.querySelector('#rnn-step-stage-title').textContent.includes('Stage 2')&&document.querySelector('#tf-step-stage-title').textContent.includes('Stage 2')&&['#nn-stepper-svg','#cnn-step-svg','#rnn-step-svg','#resnet-step-svg','#tf-step-svg','#diff-step-svg','#dec-step-svg','#bld-step-svg'].every(sel=>document.querySelectorAll(sel+' .svg-node').length>=4)));
