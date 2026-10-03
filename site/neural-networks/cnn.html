@@ -9,6 +9,7 @@
   <meta name="description" content="Watch a receptive field scan an image, compute nine products and write a feature map.">
   <link rel="stylesheet" href="../style.css">
   <link rel="stylesheet" href="./chapter.css">
+  <link rel="stylesheet" href="./nn.css">
   <link rel="stylesheet" href="./playgrounds.css">
 </head>
 <body data-nn-root="./" data-chapter="cnn.html">
@@ -18,12 +19,94 @@
     <p class="crumbs"><a href="./">Neural networks</a> › Convolution, hands on</p>
     <h1>Convolution, hands on</h1><p class="lead">Watch a receptive field scan an image, compute nine products and write a feature map.</p>
     <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
-      <section class="prose"><h2>Why share weights?</h2><p>A dense layer learns a different weight for every input-output connection. An image edge should be recognisable in many positions, so a convolutional layer reuses one small kernel over the spatial grid. Fukushima’s neocognitron (1980) combined local receptive fields and hierarchical feature extraction; LeCun and collaborators trained convolutional networks with backpropagation for handwritten ZIP codes in 1989.</p><p>A 3 × 3 kernel takes a weighted sum of nine pixels. CNN libraries usually call this convolution even though they do not flip the kernel; mathematically it is cross-correlation. Each filter makes one feature map. Multiple input channels contribute sums to that map, with a learned bias added once.</p></section><section class="prose"><h2>Stride, padding and shape</h2><math display="block"><msub><mi>W</mi><mtext>out</mtext></msub><mo>=</mo><mo>⌊</mo><mfrac><mrow><mi>W</mi><mo>−</mo><mi>K</mi><mo>+</mo><mn>2</mn><mi>P</mi></mrow><mi>S</mi></mfrac><mo>⌋</mo><mo>+</mo><mn>1</mn></math><p>With W = 8, K = 3, stride S = 1 and no padding, the output is 6 × 6. Padding P = 1 preserves 8 × 8. Stride 2 skips positions, reducing resolution. Outside-image entries are zero; they participate in the displayed products but do not correspond to editable pixels.</p></section><section data-widget="convolution"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Receptive fields and pooling</h2><p>Choose Sobel horizontal, then invert a pixel on a horizontal edge. The output responds to brightness changes from top to bottom; Sobel vertical responds to left-right changes. A blur averages nearby pixels, while sharpen amplifies their difference from the centre.</p><p>Stacking stride-1 3 × 3 convolutions increases the receptive field: two layers can see a 5 × 5 input patch. More generally, if a layer has receptive field r and jump j between centres, the next kernel grows r by (K − 1)j and multiplies j by its stride. Padding changes border behaviour, not the theoretical receptive-field size.</p><p>Max pooling selects the largest value in a window; it adds no learned weights. Open the pooling panel to inspect 2 × 2 windows of the complete output. Pooling discards location and sign information; a full CNN often applies ReLU before pooling, but this demonstration pools the raw signed convolution so the operations remain distinguishable.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://doi.org/10.1007/BF00344251">Fukushima (1980), Neocognitron</a></li><li><a href="https://doi.org/10.1162/neco.1989.1.4.541">LeCun et al. (1989), Backpropagation Applied to Handwritten Zip Code Recognition</a></li></ul></section>
+      <section class="prose"><h2>Why share weights?</h2><p>A dense layer learns a different weight for every input-output connection. An image edge should be recognisable in many positions, so a convolutional layer reuses one small kernel over the spatial grid. Fukushima’s neocognitron (1980) combined local receptive fields and hierarchical feature extraction; LeCun and collaborators trained convolutional networks with backpropagation for handwritten ZIP codes in 1989.</p><p>A 3 × 3 kernel takes a weighted sum of nine pixels. CNN libraries usually call this convolution even though they do not flip the kernel; mathematically it is cross-correlation. Each filter makes one feature map. Multiple input channels contribute sums to that map, with a learned bias added once.</p></section><section class="prose"><h2>Stride, padding and shape</h2><math display="block"><msub><mi>W</mi><mtext>out</mtext></msub><mo>=</mo><mo>⌊</mo><mfrac><mrow><mi>W</mi><mo>−</mo><mi>K</mi><mo>+</mo><mn>2</mn><mi>P</mi></mrow><mi>S</mi></mfrac><mo>⌋</mo><mo>+</mo><mn>1</mn></math><p>With W = 8, K = 3, stride S = 1 and no padding, the output is 6 × 6. Padding P = 1 preserves 8 × 8. Stride 2 skips positions, reducing resolution. Outside-image entries are zero; they participate in the displayed products but do not correspond to editable pixels.</p></section><section data-widget="convolution"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Receptive fields and pooling</h2><p>Choose Sobel horizontal, then invert a pixel on a horizontal edge. The output responds to brightness changes from top to bottom; Sobel vertical responds to left-right changes. A blur averages nearby pixels, while sharpen amplifies their difference from the centre.</p><p>Stacking stride-1 3 × 3 convolutions increases the receptive field: two layers can see a 5 × 5 input patch. More generally, if a layer has receptive field r and jump j between centres, the next kernel grows r by (K − 1)j and multiplies j by its stride. Padding changes border behaviour, not the theoretical receptive-field size.</p><p>Max pooling selects the largest value in a window; it adds no learned weights. Open the pooling panel to inspect 2 × 2 windows of the complete output. Pooling discards location and sign information; a full CNN often applies ReLU before pooling, but this demonstration pools the raw signed convolution so the operations remain distinguishable.</p></section>
+
+    <!-- =====================================================================
+         INTEGRATED FULL TRAINERS & LIVE BENCHMARK DEMOS
+         ===================================================================== -->
+
+<section id="cnn-lab" class="nn-section">
+      <h2>2. Convolutional Neural Networks: Spatial Priors, Weight Sharing &amp; Pooling (1989–2012)</h2>
+
+      <div class="study-prose">
+        <p>
+          Why not feed images directly into a dense MLP? Consider a modest <code>256 × 256</code> RGB image (<code>196,608</code> inputs). A single dense layer with <code>1,000</code> hidden units requires <code>196.6 million</code> weights—and worse, if an object shifts by just 2 pixels, every input lands on a completely different weight, forcing the network to re-learn edge detectors at every (x, y) coordinate from scratch.
+        </p>
+        <p>
+          <strong>Convolutional Neural Networks</strong>—pioneered by Fukushima's Neocognitron (1980), LeCun's LeNet-5 (1989/1998) for handwritten zip codes, and scaled to GPUs by Krizhevsky, Sutskever, and Hinton's AlexNet (2012)—encode two physical priors of natural signals directly into the architecture:
+        </p>
+        <ul>
+          <li>
+            <strong>Locality &amp; Sparse Connectivity:</strong> Early visual features (oriented edges, corners, strokes) depend only on a small local neighborhood <code>k × k</code> (here <code>3 × 3</code> pixels). Stacking convolutional layers grows the <strong>effective receptive field</strong> linearly with depth (two <code>3 × 3</code> layers see a <code>5 × 5</code> window; three see <code>7 × 7</code>).
+          </li>
+          <li>
+            <strong>Spatial Weight Sharing (Translation Equivariance):</strong> The exact same <code>3 × 3</code> kernel tensor <code>K<sup>(f)</sup></code> (only 9 weights + 1 bias!) is slid across every row <code>r</code> and column <code>c</code> of the image. Shifting the input shifts the resulting feature map identically: <code>f(T<sub>Δr,Δc</sub> I) = T<sub>Δr,Δc</sub> f(I)</code>.
+          </li>
+          <li>
+            <strong>Local Max-Pooling &amp; Switch Routing:</strong> A <code>2 × 2</code> stride-2 MaxPool layer outputs the maximum activation in each <code>2 × 2</code> patch, granting local translation invariance. During backpropagation, MaxPool acts as a router: it records the <code>argmax</code> index during the forward pass and routes 100% of the upstream gradient <code>∂L/∂p</code> exclusively to that winning pixel while zeroing the other three.
+          </li>
+        </ul>
+      </div>
+
+      <div class="equation-box">
+        Forward: Z<sup>(f)</sup><sub>r,c</sub> = b<sub>f</sub> + ∑<sub>u=0..2</sub> ∑<sub>v=0..2</sub> I<sub>r+u, c+v</sub> · K<sup>(f)</sup><sub>u,v</sub> &nbsp;|&nbsp;
+        Backward Filter Grad: ∂L/∂K<sup>(f)</sup><sub>u,v</sub> = ∑<sub>r,c</sub> I<sub>r+u, c+v</sub> · δ<sup>(f)</sup><sub>r,c</sub> &nbsp;|&nbsp;
+        Input Grad: ∂L/∂I = δ ∗ rot<sub>180°</sub>(K)
+      </div>
+
+      <div class="nn-grid">
+        <div class="nn-panel">
+          <h3>Draw or Load an 8×8 Glyph &amp; Train Kernels</h3>
+          <p class="small">Click cells to toggle pixels, or load a preset pattern to inspect how each 3×3 filter responds.</p>
+          <div class="actions">
+            <button type="button" class="secondary" data-glyph-preset="0">Preset: Vertical |</button>
+            <button type="button" class="secondary" data-glyph-preset="1">Preset: Horizontal —</button>
+            <button type="button" class="secondary" data-glyph-preset="2">Preset: Diagonal /</button>
+            <button type="button" class="secondary" data-glyph-preset="3">Preset: Box □</button>
+          </div>
+
+          <div id="cnn-pixel-grid" class="pixel-grid-8" role="group" aria-label="8 by 8 drawable pixel grid"></div>
+
+          <div class="actions">
+            <button type="button" id="cnn-train-btn">Train CNN (30 Epochs)</button>
+            <button type="button" id="cnn-reset-btn" class="secondary">Reset Kernels</button>
+          </div>
+
+          <div class="metrics-strip">
+            <div class="metric-box">
+              <div class="metric-label">CNN Epoch</div>
+              <div id="cnn-epoch" class="metric-val">0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">CE Loss</div>
+              <div id="cnn-loss" class="metric-val">—</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Train Accuracy</div>
+              <div id="cnn-acc" class="metric-val">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="nn-panel">
+          <h3>Live Learned 3×3 Kernels, 6×6 Feature Maps &amp; Class Probabilities</h3>
+          <div id="cnn-probs" aria-live="polite"></div>
+          <div id="cnn-feature-maps" class="feature-maps-row"></div>
+        </div>
+      </div>
+
+      <div id="cnn-stepper"></div>
+
+      <div class="section-code-widget" data-code-blueprint="conv2d"></div>
+    </section>
+
+    <section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://doi.org/10.1007/BF00344251">Fukushima (1980), Neocognitron</a></li><li><a href="https://doi.org/10.1162/neco.1989.1.4.541">LeCun et al. (1989), Backpropagation Applied to Handwritten Zip Code Recognition</a></li></ul></section>
       <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
     </article></div>
   </main>
   <footer>Small, inspectable numerical experiments. No accounts, model downloads or external inference calls.</footer>
   <script type="module" src="./chapters.js"></script>
   <script type="module" src="./widgets.js"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>

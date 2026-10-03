@@ -9,6 +9,7 @@
   <meta name="description" content="Inspect queries, keys, values and the row-wise softmax that mixes token information.">
   <link rel="stylesheet" href="../style.css">
   <link rel="stylesheet" href="./chapter.css">
+  <link rel="stylesheet" href="./nn.css">
   <link rel="stylesheet" href="./playgrounds.css">
 </head>
 <body data-nn-root="./" data-chapter="transformer.html">
@@ -18,12 +19,104 @@
     <p class="crumbs"><a href="./">Neural networks</a> › The Transformer</p>
     <h1>The Transformer</h1><p class="lead">Inspect queries, keys, values and the row-wise softmax that mixes token information.</p>
     <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
-      <section class="prose"><h2>Attention is a learned lookup</h2><p>Each token representation is projected into a query Q, key K and value V. A query’s dot product with every key gives compatibility scores. Softmax over keys makes a distribution; its weighted average of values is the output. Q and K choose where to read; V supplies what gets read.</p><math display="block"><mtext>Attention</mtext><mo>(</mo><mi>Q</mi><mo>,</mo><mi>K</mi><mo>,</mo><mi>V</mi><mo>)</mo><mo>=</mo><mtext>softmax</mtext><mo>(</mo><mfrac><mrow><mi>Q</mi><msup><mi>K</mi><mi>T</mi></msup></mrow><msqrt><msub><mi>d</mi><mi>k</mi></msub></msqrt></mfrac><mo>)</mo><mi>V</mi></math><p>If query and key components are independent, zero-mean and unit variance, their dot-product variance grows with dₖ. Dividing by √dₖ controls that scale. It is not a cosine normalization. The toy below fixes dₖ = 2 and displays every vector, so every cell can be checked by hand.</p></section><section data-widget="attention"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Masks, heads and grouping</h2><p>A causal decoder masks future keys to −∞ before softmax, making their weights zero. An encoder can use bidirectional attention. Position information must enter separately; otherwise permuting input tokens just permutes attention’s rows and columns.</p><p>Multi-head attention (MHA) learns separate Q/K/V projections for each head, concatenates head outputs and applies an output projection. The heatmap above shows one head only. Multi-query attention (MQA) shares one K/V head across all query heads. Grouped-query attention (GQA) is in between: several query heads share each K/V head. Q head count stays fixed while K/V storage falls.</p><p>The calculator below compares 8 query heads with 8, 2 or 1 K/V heads. This is a cache-size calculation, not a simulation of learned multi-head behaviour. Fewer K/V heads can reduce decoding bandwidth, but model quality depends on training.</p></section><section data-widget="modern"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://arxiv.org/abs/1706.03762">Vaswani et al. (2017), Attention Is All You Need</a></li><li><a href="https://arxiv.org/abs/1911.02150">Shazeer (2019), Fast Transformer Decoding</a></li><li><a href="https://arxiv.org/abs/2305.13245">Ainslie et al. (2023), GQA</a></li></ul></section>
+      <section class="prose"><h2>Attention is a learned lookup</h2><p>Each token representation is projected into a query Q, key K and value V. A query’s dot product with every key gives compatibility scores. Softmax over keys makes a distribution; its weighted average of values is the output. Q and K choose where to read; V supplies what gets read.</p><math display="block"><mtext>Attention</mtext><mo>(</mo><mi>Q</mi><mo>,</mo><mi>K</mi><mo>,</mo><mi>V</mi><mo>)</mo><mo>=</mo><mtext>softmax</mtext><mo>(</mo><mfrac><mrow><mi>Q</mi><msup><mi>K</mi><mi>T</mi></msup></mrow><msqrt><msub><mi>d</mi><mi>k</mi></msub></msqrt></mfrac><mo>)</mo><mi>V</mi></math><p>If query and key components are independent, zero-mean and unit variance, their dot-product variance grows with dₖ. Dividing by √dₖ controls that scale. It is not a cosine normalization. The toy below fixes dₖ = 2 and displays every vector, so every cell can be checked by hand.</p></section><section data-widget="attention"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Masks, heads and grouping</h2><p>A causal decoder masks future keys to −∞ before softmax, making their weights zero. An encoder can use bidirectional attention. Position information must enter separately; otherwise permuting input tokens just permutes attention’s rows and columns.</p><p>Multi-head attention (MHA) learns separate Q/K/V projections for each head, concatenates head outputs and applies an output projection. The heatmap above shows one head only. Multi-query attention (MQA) shares one K/V head across all query heads. Grouped-query attention (GQA) is in between: several query heads share each K/V head. Q head count stays fixed while K/V storage falls.</p><p>The calculator below compares 8 query heads with 8, 2 or 1 K/V heads. This is a cache-size calculation, not a simulation of learned multi-head behaviour. Fewer K/V heads can reduce decoding bandwidth, but model quality depends on training.</p></section><section data-widget="modern"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section>
+
+    <!-- =====================================================================
+         INTEGRATED FULL TRAINERS & LIVE BENCHMARK DEMOS
+         ===================================================================== -->
+
+<section id="transformer-lab" class="nn-section">
+      <h2>5. Transformers &amp; Scaled Dot-Product Self-Attention (2017–Present)</h2>
+
+      <div class="study-prose">
+        <p>
+          Even with Gated GRUs and LSTMs, recurrent networks suffer from two structural bottlenecks: (1) step <code>t</code> cannot be computed until step <code>t − 1</code> finishes, preventing parallel GPU/TPU training across the sequence dimension <code>T</code>; and (2) all historical information from tokens <code>0 … t − 1</code> must be compressed into a single fixed-width vector <code>h<sub>t−1</sub> ∈ ℝ<sup>D</sup></code>.
+        </p>
+        <p>
+          In <em>Attention Is All You Need</em> (2017), Vaswani et al. eliminated recurrence entirely in favor of <strong>Multi-Head Self-Attention</strong>. Every token position <code>i ∈ {0 … T−1}</code> projects its representation <code>x<sub>i</sub></code> into three distinct subspace vectors for each head <code>h</code>:
+        </p>
+        <ul>
+          <li><strong>Query <code>q<sub>i</sub> = x<sub>i</sub> W<sub>Q</sub><sup>(h)</sup></code>:</strong> What feature or context is token <code>i</code> looking for?</li>
+          <li><strong>Key <code>k<sub>j</sub> = x<sub>j</sub> W<sub>K</sub><sup>(h)</sup></code>:</strong> What routing descriptor or address does token <code>j</code> advertise?</li>
+          <li><strong>Value <code>v<sub>j</sub> = x<sub>j</sub> W<sub>V</sub><sup>(h)</sup></code>:</strong> What payload content should token <code>j</code> transmit if attended to?</li>
+        </ul>
+        <p>
+          <strong>Why the <code>1 / √d<sub>k</sub></code> Scaling Factor Is Critical:</strong>
+          If the components of <code>q<sub>i</sub></code> and <code>k<sub>j</sub></code> have zero mean and unit variance, their dot product <code>q<sub>i</sub> · k<sub>j</sub> = ∑<sub>m=1..d<sub>k</sub></sub> q<sub>im</sub> k<sub>jm</sub></code> has mean <code>0</code> and variance <code>d<sub>k</sub></code> (standard deviation <code>√d<sub>k</sub></code>). For large head dimension <code>d<sub>k</sub></code>, unscaled dot products grow large in magnitude, pushing <code>softmax</code> into extreme one-hot saturation where the Softmax Jacobian <code>∂P<sub>ij</sub>/∂S<sub>ik</sub> = P<sub>ij</sub>(δ<sub>jk</sub> − P<sub>ik</sub>)</code> vanishes to zero! Dividing by <code>√d<sub>k</sub></code> restores unit variance prior to softmax.
+        </p>
+      </div>
+
+      <div class="equation-box">
+        Attention(Q, K, V) = softmax((Q K<sup>T</sup>) / √d<sub>k</sub> + M) V &nbsp;|&nbsp;
+        Softmax Row Jacobian: ∂L / ∂S<sub>i,j</sub> = P<sub>i,j</sub> · (∂L/∂P<sub>i,j</sub> − ∑<sub>k</sub> P<sub>i,k</sub> · ∂L/∂P<sub>i,k</sub>)
+      </div>
+
+      <div class="nn-grid">
+        <div class="nn-panel">
+          <h3>Train a Micro-Transformer on Algorithmic Sequence Tasks</h3>
+          <div class="fields">
+            <div>
+              <label for="tf-task">Sequence Algorithmic Task</label>
+              <select id="tf-task">
+                <option value="reverse">Reverse Sequence ([A,B,C,D] → [D,C,B,A])</option>
+                <option value="copy">Identity Copy ([A,B,C,D] → [A,B,C,D])</option>
+                <option value="sort">Sort Tokens Ascending</option>
+              </select>
+            </div>
+            <div>
+              <label for="tf-mask">Attention Mask M</label>
+              <select id="tf-mask">
+                <option value="bidirectional">Bidirectional (Full Context — Encoder / Diffusion)</option>
+                <option value="causal">Causal Lower-Triangular Mask (j ≤ i — Autoregressive GPT)</option>
+              </select>
+            </div>
+          </div>
+
+          <label for="tf-input-seq">Probe Input Sequence (4 Tokens from A–H)</label>
+          <input type="text" id="tf-input-seq" value="A B C D">
+
+          <div class="actions">
+            <button type="button" id="tf-train-btn">Train Transformer (40 Epochs)</button>
+            <button type="button" id="tf-reset-btn" class="secondary">Reset Transformer</button>
+          </div>
+
+          <div class="metrics-strip">
+            <div class="metric-box">
+              <div class="metric-label">Epoch</div>
+              <div id="tf-epoch" class="metric-val">0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Token CE Loss</div>
+              <div id="tf-loss" class="metric-val">—</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Token Accuracy</div>
+              <div id="tf-acc" class="metric-val">—</div>
+            </div>
+          </div>
+
+          <div id="tf-pred-banner" class="status" aria-live="polite"></div>
+        </div>
+
+        <div class="nn-panel">
+          <h3>Live Multi-Head Attention Heatmaps (Head 1 &amp; Head 2)</h3>
+          <p class="small">Notice how training on <strong>Reverse</strong> causes the attention matrix to light up along the <em>anti-diagonal</em>, whereas <strong>Copy</strong> concentrates weight on the <em>main diagonal</em>. Try switching the Mask to <strong>Causal (j ≤ i)</strong> on Reverse to see why position 0 cannot peek ahead at position 3!</p>
+          <div id="tf-attn-heads" class="attn-heads-wrap"></div>
+        </div>
+      </div>
+
+      <div id="transformer-stepper"></div>
+
+      <div class="section-code-widget" data-code-blueprint="attention"></div>
+    </section>
+
+    <section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://arxiv.org/abs/1706.03762">Vaswani et al. (2017), Attention Is All You Need</a></li><li><a href="https://arxiv.org/abs/1911.02150">Shazeer (2019), Fast Transformer Decoding</a></li><li><a href="https://arxiv.org/abs/2305.13245">Ainslie et al. (2023), GQA</a></li></ul></section>
       <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
     </article></div>
   </main>
   <footer>Small, inspectable numerical experiments. No accounts, model downloads or external inference calls.</footer>
   <script type="module" src="./chapters.js"></script>
   <script type="module" src="./widgets.js"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>

@@ -9,6 +9,7 @@
   <meta name="description" content="Separate mathematical changes from memory-system improvements in current sequence models.">
   <link rel="stylesheet" href="../style.css">
   <link rel="stylesheet" href="./chapter.css">
+  <link rel="stylesheet" href="./nn.css">
   <link rel="stylesheet" href="./playgrounds.css">
 </head>
 <body data-nn-root="./" data-chapter="modern-advancements.html">
@@ -18,12 +19,60 @@
     <p class="crumbs"><a href="./">Neural networks</a> › The modern stack</p>
     <h1>The modern stack</h1><p class="lead">Separate mathematical changes from memory-system improvements in current sequence models.</p>
     <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
-      <section class="prose"><h2>RMSNorm and rotary position embeddings</h2><p>RMSNorm divides a vector by √(mean(x²) + ε), then applies learned gains. Unlike LayerNorm it does not subtract the mean. Scale the vector below: normalized components stay nearly fixed, with a small ε effect.</p><p>RoPE rotates pairs of Q and K components by position-dependent angles. Relative positions affect their dot product. Rotating preserves each pair’s norm; it does not add a position embedding to V. Change position below to inspect the rotated vector.</p></section><section data-widget="modern"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>FlashAttention: same attention, different IO</h2><p>Naive attention materialises an N × N score/probability matrix in high-bandwidth memory (HBM). FlashAttention processes Q/K/V tiles in fast on-chip SRAM and maintains running softmax maxima, denominators and weighted-value accumulators. It avoids writing the full attention matrix to HBM; it does not replace exact softmax with a sparse approximation.</p><p>The calculator uses asymptotic element-traffic expressions with omitted constants. SRAM capacity controls how much can be tiled, but hardware, occupancy, precision and kernel implementation determine actual speed. These numbers are not a benchmark, and increasing tile size indefinitely is not a free optimization.</p></section><section class="prose"><h2>MoE: sparse parameter activation</h2><p>A mixture-of-experts router scores candidate feed-forward experts per token and selects a small subset. Our top-2 example normalises only the selected scores. Active parameters can be far fewer than total parameters, but routing, load balancing and device-to-device communication introduce costs. Attention layers and shared components are still used for every token.</p></section><section class="prose"><h2>Mamba: a different sequence operator</h2><p>Mamba (2023) uses selective state-space updates instead of an all-pairs attention matrix. A simplified recurrence is hₜ = Aₜhₜ₋₁ + Bₜxₜ, yₜ = Cₜhₜ. Input-dependent selection governs what information is retained. The real architecture includes learned projections, discretisation and a hardware-aware scan; a fixed scalar recurrence would not reproduce it.</p><p>State-space decoding keeps a recurrent state rather than a growing attention KV-cache. This changes memory scaling but does not imply identical retrieval capabilities or universally better performance. Hybrid models may combine attention and state-space layers.</p></section><section class="prose"><h2>KV-cache: avoid recomputing the past</h2><p>Autoregressive decoding stores earlier keys and values for each attention layer. The cache grows linearly with tokens and K/V heads. GQA, quantisation, eviction policies and paged allocation target different costs: fewer entries, fewer bytes per entry, bounded history or less fragmentation. A cache is not a model’s long-term memory; it belongs to an inference context.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://arxiv.org/abs/1910.07467">Zhang & Sennrich (2019), RMSNorm</a></li><li><a href="https://arxiv.org/abs/2104.09864">Su et al. (2021), RoFormer / RoPE</a></li><li><a href="https://arxiv.org/abs/2205.14135">Dao et al. (2022), FlashAttention</a></li><li><a href="https://arxiv.org/abs/1701.06538">Shazeer et al. (2017), Sparsely-Gated Mixture-of-Experts</a></li><li><a href="https://arxiv.org/abs/2312.00752">Gu & Dao (2023), Mamba</a></li><li><a href="https://arxiv.org/abs/2309.06180">Kwon et al. (2023), PagedAttention</a></li></ul></section>
+      <section class="prose"><h2>RMSNorm and rotary position embeddings</h2><p>RMSNorm divides a vector by √(mean(x²) + ε), then applies learned gains. Unlike LayerNorm it does not subtract the mean. Scale the vector below: normalized components stay nearly fixed, with a small ε effect.</p><p>RoPE rotates pairs of Q and K components by position-dependent angles. Relative positions affect their dot product. Rotating preserves each pair’s norm; it does not add a position embedding to V. Change position below to inspect the rotated vector.</p></section><section data-widget="modern"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>FlashAttention: same attention, different IO</h2><p>Naive attention materialises an N × N score/probability matrix in high-bandwidth memory (HBM). FlashAttention processes Q/K/V tiles in fast on-chip SRAM and maintains running softmax maxima, denominators and weighted-value accumulators. It avoids writing the full attention matrix to HBM; it does not replace exact softmax with a sparse approximation.</p><p>The calculator uses asymptotic element-traffic expressions with omitted constants. SRAM capacity controls how much can be tiled, but hardware, occupancy, precision and kernel implementation determine actual speed. These numbers are not a benchmark, and increasing tile size indefinitely is not a free optimization.</p></section><section class="prose"><h2>MoE: sparse parameter activation</h2><p>A mixture-of-experts router scores candidate feed-forward experts per token and selects a small subset. Our top-2 example normalises only the selected scores. Active parameters can be far fewer than total parameters, but routing, load balancing and device-to-device communication introduce costs. Attention layers and shared components are still used for every token.</p></section><section class="prose"><h2>Mamba: a different sequence operator</h2><p>Mamba (2023) uses selective state-space updates instead of an all-pairs attention matrix. A simplified recurrence is hₜ = Aₜhₜ₋₁ + Bₜxₜ, yₜ = Cₜhₜ. Input-dependent selection governs what information is retained. The real architecture includes learned projections, discretisation and a hardware-aware scan; a fixed scalar recurrence would not reproduce it.</p><p>State-space decoding keeps a recurrent state rather than a growing attention KV-cache. This changes memory scaling but does not imply identical retrieval capabilities or universally better performance. Hybrid models may combine attention and state-space layers.</p></section><section class="prose"><h2>KV-cache: avoid recomputing the past</h2><p>Autoregressive decoding stores earlier keys and values for each attention layer. The cache grows linearly with tokens and K/V heads. GQA, quantisation, eviction policies and paged allocation target different costs: fewer entries, fewer bytes per entry, bounded history or less fragmentation. A cache is not a model’s long-term memory; it belongs to an inference context.</p></section>
+
+    <!-- =====================================================================
+         INTEGRATED FULL TRAINERS & LIVE BENCHMARK DEMOS
+         ===================================================================== -->
+
+<section id="block-builder" class="nn-section">
+      <h2>8. Extensible Plug-and-Play Neural Architecture Workbench</h2>
+      <p>
+        Modern foundation models are modular compositions of reusable primitives. Click any block below to append it to your live neural pipeline, inspect how tensor shapes, parameter counts, FLOPs, and forward/backward norms evolve across layers, or dynamically register a brand-new architecture block (such as <strong>Selective State-Space / Mamba SSM</strong> or <strong>Sparse Mixture-of-Experts Router</strong>) via <code>registerBlockType()</code>.
+      </p>
+
+      <div class="nn-panel">
+        <h3>Add Building Block to Pipeline</h3>
+        <div id="builder-palette" class="builder-palette" role="group" aria-label="Available neural network building blocks"></div>
+
+        <div class="actions">
+          <button type="button" id="btn-register-ssm" class="secondary">+ Register Custom Block: Mamba Selective SSM</button>
+          <button type="button" id="btn-register-moe" class="secondary">+ Register Custom Block: Sparse MoE Top-2 Router</button>
+          <button type="button" id="btn-reset-pipeline" class="secondary">Reset to Default Transformer-Decision Stack</button>
+        </div>
+
+        <div class="metrics-strip">
+          <div class="metric-box">
+            <div class="metric-label">Pipeline Depth</div>
+            <div id="builder-depth" class="metric-val">0 blocks</div>
+          </div>
+          <div class="metric-box">
+            <div class="metric-label">Total Parameters</div>
+            <div id="builder-params" class="metric-val">0</div>
+          </div>
+          <div class="metric-box">
+            <div class="metric-label">FLOPs / Sequence</div>
+            <div id="builder-flops" class="metric-val">0</div>
+          </div>
+          <div class="metric-box">
+            <div class="metric-label">Input Gradient Norm</div>
+            <div id="builder-grad" class="metric-val">—</div>
+          </div>
+        </div>
+
+        <div id="builder-stack" class="block-stack" aria-live="polite"></div>
+      </div>
+
+      <div id="builder-stepper"></div>
+    </section>
+
+    <section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://arxiv.org/abs/1910.07467">Zhang & Sennrich (2019), RMSNorm</a></li><li><a href="https://arxiv.org/abs/2104.09864">Su et al. (2021), RoFormer / RoPE</a></li><li><a href="https://arxiv.org/abs/2205.14135">Dao et al. (2022), FlashAttention</a></li><li><a href="https://arxiv.org/abs/1701.06538">Shazeer et al. (2017), Sparsely-Gated Mixture-of-Experts</a></li><li><a href="https://arxiv.org/abs/2312.00752">Gu & Dao (2023), Mamba</a></li><li><a href="https://arxiv.org/abs/2309.06180">Kwon et al. (2023), PagedAttention</a></li></ul></section>
       <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
     </article></div>
   </main>
   <footer>Small, inspectable numerical experiments. No accounts, model downloads or external inference calls.</footer>
   <script type="module" src="./chapters.js"></script>
   <script type="module" src="./widgets.js"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>

@@ -55,6 +55,7 @@ function heatClass(val, min = 0, max = 1) {
 // ============================================================================
 
 function initKernelBar() {
+  if (!$("btn-kernel-wasm") && !$("kernel-readout")) return;
   const btnWasm = $("btn-kernel-wasm");
   const btnJs = $("btn-kernel-js");
   const btnWebgpu = $("btn-kernel-webgpu");
@@ -127,6 +128,7 @@ function initKernelBar() {
 }
 
 function initCodeExplorers() {
+  if (!$("global-code-display") && !document.querySelector(".section-code-widget")) return;
   const opSelect = /** @type {HTMLSelectElement | null} */ ($("global-code-op"));
   const summaryEl = $("global-code-summary");
   const codeDisplay = $("global-code-display");
@@ -214,6 +216,7 @@ function initCodeExplorers() {
 // ============================================================================
 
 function initMlpLab() {
+  if (!$("mlp-train-btn") && !$("mlp-canvas")) return;
   const dsSelect = /** @type {HTMLSelectElement} */ ($("mlp-dataset"));
   const archSelect = /** @type {HTMLSelectElement} */ ($("mlp-arch"));
   const actSelect = /** @type {HTMLSelectElement} */ ($("mlp-act"));
@@ -1107,6 +1110,7 @@ function initMlpLab() {
 // ============================================================================
 
 function initCnnLab() {
+  if (!$("cnn-train-btn")) return;
   const gridEl = $("cnn-pixel-grid");
   if (!gridEl) return;
 
@@ -1244,6 +1248,7 @@ function initCnnLab() {
 // ============================================================================
 
 function initRnnLab() {
+  if (!$("rnn-train-btn")) return;
   const cellSelect = /** @type {HTMLSelectElement | null} */ ($("rnn-cell-type"));
   const lenSelect = /** @type {HTMLSelectElement | null} */ ($("rnn-seq-len"));
   const taskSelect = /** @type {HTMLSelectElement | null} */ ($("rnn-task"));
@@ -1334,6 +1339,7 @@ function initRnnLab() {
 // ============================================================================
 
 function initDeepResNetLab() {
+  if (!$("resnet-train-btn")) return;
   const depthSelect = /** @type {HTMLSelectElement | null} */ ($("resnet-depth"));
   const skipSelect = /** @type {HTMLSelectElement | null} */ ($("resnet-skip"));
   const normSelect = /** @type {HTMLSelectElement | null} */ ($("resnet-norm"));
@@ -1420,6 +1426,7 @@ function initDeepResNetLab() {
 // ============================================================================
 
 function initTransformerLab() {
+  if (!$("tf-train-btn")) return;
   const taskSelect = /** @type {HTMLSelectElement} */ ($("tf-task"));
   const maskSelect = /** @type {HTMLSelectElement} */ ($("tf-mask"));
   const seqInput = /** @type {HTMLInputElement} */ ($("tf-input-seq"));
@@ -1554,6 +1561,7 @@ function initTransformerLab() {
 // ============================================================================
 
 function initDiffusionLab() {
+  if (!$("ddpm-train-btn")) return;
   const targetSelect = /** @type {HTMLSelectElement} */ ($("ddpm-target"));
   const stepSlider = /** @type {HTMLInputElement} */ ($("ddpm-step-slider"));
   const stepVal = $("ddpm-step-val");
@@ -1704,6 +1712,7 @@ function initDiffusionLab() {
 // ============================================================================
 
 function initDecisionLab() {
+  if (!$("dec-temp")) return;
   const scenSelect = /** @type {HTMLSelectElement} */ ($("dec-scenario"));
   const tempInput = /** @type {HTMLInputElement} */ ($("dec-temp"));
   const gateInput = /** @type {HTMLInputElement} */ ($("dec-gate"));
@@ -1779,6 +1788,7 @@ function initDecisionLab() {
 // ============================================================================
 
 function initBlockBuilder() {
+  if (!$("builder-stack")) return;
   const paletteEl = $("builder-palette");
   const stackEl = $("builder-stack");
   if (!paletteEl || !stackEl) return;
