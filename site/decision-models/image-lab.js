@@ -13,9 +13,31 @@ import {
   sortImageBench
 } from './image-bench-data.js';
 
-export const $ = id => document.getElementById(id);
+export const $ = id => typeof document !== 'undefined' ? document.getElementById(id) : null;
 
 export function el(tag, text, cls) {
+  if (typeof document === 'undefined') {
+    return {
+      tagName: tag.toUpperCase(),
+      textContent: text || '',
+      className: cls || '',
+      style: {},
+      children: [],
+      append(...items) {
+        for (const item of items) {
+          if (typeof item === 'string') {
+            this.textContent += item;
+          } else {
+            this.children.push(item);
+            if (item.textContent) {
+              this.textContent += item.textContent;
+            }
+          }
+        }
+      },
+      setAttribute(k, v) { this[k] = v; }
+    };
+  }
   const n = document.createElement(tag);
   if (text !== undefined) n.textContent = text;
   if (cls) n.className = cls;
@@ -669,7 +691,7 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
 
   const start = performance.now();
 
-  // Engine 1: Client-side vision decision engine
+  // Engine 1: Demo Mode / Schema Preview (Simulated Fixture)
   if (engine === 'client') {
     // Check if matching a preset
     let presetKey = null;
@@ -682,10 +704,10 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
 
     let answers;
     if (presetKey && PRESETS[presetKey]) {
-      // Use preset calibrated outputs
+      // Use preset simulated fixture outputs
       answers = structuredClone(PRESETS[presetKey].answers);
     } else {
-      // Custom image: derive deterministic calibrated answers from questions and image hash
+      // Custom image: deterministic illustrative fixture for UI schema validation
       let hash = 0;
       for (let i = 0; i < Math.min(imagePayload.length, 1000); i++) {
         hash = (hash * 31 + imagePayload.charCodeAt(i)) >>> 0;
@@ -714,17 +736,21 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
       }
     }
 
-    // Simulate realistic lightweight inference latency (25-45ms)
-    await new Promise(r => setTimeout(r, 32));
+    // Yield to the browser frame cycle without faking model latency
+    await new Promise(r => setTimeout(r, 0));
     const elapsed = performance.now() - start;
 
     return {
       data: {
-        model: 'Imajev-4B (in-browser)',
+        model: 'Demo Mode / Schema Preview (Simulated Fixture)',
+        simulated: true,
+        simulationNotice: 'Notice: UI and schema validation simulation. Connect a local vision server (e.g. llama.cpp / vLLM / Kev serve) or multimodal API endpoint below to run actual model weights.',
         answers
       },
       elapsed,
-      source: 'Client-side Vision Decision Engine (Imajev-4B, in-tab)',
+      isSimulation: true,
+      simulationNotice: 'Notice: UI and schema validation simulation. Connect a local vision server (e.g. llama.cpp / vLLM / Kev serve) or multimodal API endpoint below to run actual model weights.',
+      source: 'Demo Mode / Schema Preview (Simulated Fixture)',
       requestedModel: model
     };
   }
@@ -770,18 +796,50 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
     if (!key.trim()) {
       throw new Error('Enter an API key for the multimodal adapter.');
     }
-    // Simulation / direct adapter
-    throw new Error('Direct provider call blocked by browser CORS. Use the Client-side Engine or serve locally with the relay.');
+    const payload = {
+      image: imagePayload,
+      questions: spec.questions,
+      model: model || 'wity-1'
+    };
+    const res = await fetch('https://api.typesafe.ai/v1/systemone', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${key.trim()}`
+      },
+      body: JSON.stringify(payload),
+      signal
+    });
+    if (!res.ok) {
+      throw new Error(`Multimodal API returned HTTP ${res.status}. Note: direct browser calls may require CORS configuration or local proxy relay.`);
+    }
+    const data = await res.json();
+    return {
+      data,
+      elapsed: performance.now() - start,
+      source: `Multimodal API (${model})`,
+      requestedModel: model
+    };
   }
 
   throw new Error(`Unknown engine: ${engine}`);
 }
 
 /**
- * Render visual decision answers with calibrated probabilities & meters.
+ * Render visual decision answers with decision distributions & meters.
  */
 export function renderImageAnswers(target, result, threshold = 0.8) {
   target.replaceChildren();
+  if (result.isSimulation || result.data?.simulated) {
+    const badge = el('div', undefined, 'notice');
+    badge.id = 'simulation-badge';
+    badge.style.marginBottom = '1rem';
+    badge.append(
+      el('strong', 'Notice: UI and schema validation simulation. '),
+      'Connect a local vision server (e.g. llama.cpp / vLLM / Kev serve) or multimodal API endpoint below to run actual model weights.'
+    );
+    target.append(badge);
+  }
   for (const [id, a] of Object.entries(result.data.answers)) {
     const box = el('section', undefined, 'answer');
     box.append(
@@ -881,13 +939,14 @@ export function renderBenchTable(container, data) {
 
     // Speed
     const tdSpeed = el('td');
-    const speedPill = el('span', `${Math.round(item.speed * 1000)}ms`, 'pill pill-speed');
+    const speedPill = el('span', `${item.speed.toFixed(2)}s`, 'pill pill-speed');
     tdSpeed.append(speedPill);
     tr.append(tdSpeed);
 
     // Cost
     const tdCost = el('td');
-    const costPill = el('span', `$${item.cost.toFixed(3)}`, 'pill pill-cost');
+    const costText = item.cost < 0.01 ? `$${item.cost.toFixed(4)}` : `$${item.cost.toFixed(3)}`;
+    const costPill = el('span', costText, 'pill pill-cost');
     tdCost.append(costPill);
     tr.append(tdCost);
 
@@ -1042,6 +1101,19 @@ export function setupImageLab() {
       const val = engineSelect.value;
       if (localField) localField.hidden = val !== 'local';
       if (apiField) apiField.hidden = val !== 'api';
+      const notice = $('engine-notice');
+      if (notice) {
+        if (val === 'client') {
+          notice.hidden = false;
+          notice.innerHTML = '<strong>Notice: UI and schema validation simulation.</strong> Connect a local vision server (e.g. llama.cpp / vLLM / Kev serve) or multimodal API endpoint below to run actual model weights.';
+        } else if (val === 'local') {
+          notice.hidden = false;
+          notice.innerHTML = '<strong>Local Vision Server mode:</strong> Connects to your local inference server (e.g. llama.cpp, vLLM, or Kev serve) on loopback for actual model execution.';
+        } else if (val === 'api') {
+          notice.hidden = false;
+          notice.innerHTML = '<strong>Multimodal API mode:</strong> Connects to external vision provider API. Direct browser requests may require CORS headers or local relay.';
+        }
+      }
     });
   }
 
@@ -1095,7 +1167,8 @@ export function setupImageLab() {
 
         lastResult = result;
         if (statusEl) {
-          statusEl.textContent = `Decision complete: ${Math.round(result.elapsed)}ms via ${result.source}`;
+          const simText = result.isSimulation ? ' (Simulated demo — no model runs)' : '';
+          statusEl.textContent = `Decision complete${simText}: ${Math.round(result.elapsed)}ms via ${result.source}`;
         }
         if (answersEl) {
           renderImageAnswers(answersEl, result, threshold);

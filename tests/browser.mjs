@@ -84,6 +84,8 @@ try{
  await p.click('#run-decision');await p.waitFor(()=>document.querySelector('#answers').children.length>0);
  check('image decision evaluates questions with distribution meters',await p.evaluate(()=>document.querySelectorAll('#answers meter').length>=7&&document.querySelector('#status').textContent.includes('Decision complete')));
  check('image decision renders gate verdicts',await p.evaluate(()=>document.querySelectorAll('#answers .gate').length>=3));
+ check('demo engine renders explicit simulation disclosure badge',await p.evaluate(()=>document.querySelector('#simulation-badge')!==null&&document.querySelector('#simulation-badge').textContent.includes('Notice: UI and schema validation simulation')));
+ check('engine notice discloses simulation when client engine selected',await p.evaluate(()=>document.querySelector('#engine-notice')!==null&&document.querySelector('#engine-notice').textContent.includes('Notice: UI and schema validation simulation')));
  await p.evaluate(()=>{
   const dt=new DataTransfer();
   const file=new File(['dummy-bytes'],'test-upload.png',{type:'image/png'});
