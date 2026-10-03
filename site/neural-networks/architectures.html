@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>Architectures: MLPs, CNNs and RNNs | Neural networks</title>
+  <meta name="description" content="The same weighted sums, with different assumptions about how information should flow.">
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="./chapter.css">
+  <link rel="stylesheet" href="./playgrounds.css">
+</head>
+<body data-nn-root="./" data-chapter="architectures.html">
+  <a class="skip" href="#main">Skip to content</a>
+  <header><a href="../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="./">Chapters</a><a href="./lab.html">Workbench</a></nav></header>
+  <main id="main" class="chapter">
+    <p class="crumbs"><a href="./">Neural networks</a> › Architectures: MLPs, CNNs and RNNs</p>
+    <h1>Architectures: MLPs, CNNs and RNNs</h1><p class="lead">The same weighted sums, with different assumptions about how information should flow.</p>
+    <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
+      <section class="prose"><h2>Three useful inductive biases</h2><p>An MLP connects every input to hidden units. It is flexible but does not inherently know that adjacent image pixels are related. A CNN shares local filters over space: features translate with the input away from borders, and pooling can reduce sensitivity to small shifts.</p><p>An RNN reuses a state update hₜ = f(Wxₜ + Uhₜ₋₁ + b) over time. Its parameter count does not grow with sequence length, but training unfolds the recurrence and backpropagates through every step. Long products of recurrent Jacobians can vanish or explode. LSTM and GRU add gates to regulate state updates.</p><p>A residual block computes h + F(h), making an identity path available when shapes match. Its derivative includes I + ∂F/∂h rather than only ∂F/∂h. This helps optimization but does not guarantee that every deep model trains.</p></section><section data-widget="activations"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Explore a complete trainer</h2><p>The scalar depth experiment above isolates gradient flow. For actual trainable architecture examples, use the <a href="./lab.html#mlp-backprop">MLP trainer</a>, <a href="./lab.html#cnn-lab">CNN trainer</a>, <a href="./lab.html#rnn-lab">RNN/GRU trainer</a> or <a href="./lab.html#deep-resnet-lab">deep residual trainer</a>. Each has a different data shape and learning problem; do not compare their losses as if they were benchmarks on the same task.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://doi.org/10.1162/neco.1997.9.8.1735">Hochreiter & Schmidhuber (1997), Long Short-Term Memory</a></li><li><a href="https://arxiv.org/abs/1512.03385">He et al. (2015), Deep Residual Learning for Image Recognition</a></li></ul></section>
+      <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
+    </article></div>
+  </main>
+  <footer>Small, inspectable numerical experiments. No accounts, model downloads or external inference calls.</footer>
+  <script type="module" src="./chapters.js"></script>
+  <script type="module" src="./widgets.js"></script>
+</body>
+</html>

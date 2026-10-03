@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>How it runs: five backends | Neural networks</title>
+  <meta name="description" content="The same matrix product can travel through very different memory and execution systems.">
+  <link rel="stylesheet" href="../../style.css">
+  <link rel="stylesheet" href="../chapter.css">
+  <link rel="stylesheet" href="../playgrounds.css">
+</head>
+<body data-nn-root="../" data-chapter="backends/index.html">
+  <a class="skip" href="#main">Skip to content</a>
+  <header><a href="../../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="../">Chapters</a><a href="../lab.html">Workbench</a></nav></header>
+  <main id="main" class="chapter">
+    <p class="crumbs"><a href="../">Neural networks</a> › How it runs: five backends</p>
+    <h1>How it runs: five backends</h1><p class="lead">The same matrix product can travel through very different memory and execution systems.</p>
+    <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
+      <section class="prose"><h2>One equation, several execution paths</h2><p>For A[M,K] and B[K,N], C[i,j] = Σₖ A[i,k]B[k,j]. The arithmetic is the same, but where arrays live, who schedules work and how results return differ. Start with the real JavaScript product below, then visit each runtime.</p><ul><li><a href="./javascript.html">JavaScript</a>: typed arrays, JIT and loop order.</li><li><a href="./webassembly.html">WebAssembly</a>: a real scalar f32 kernel and linear memory; SIMD explained separately.</li><li><a href="./webgpu.html">WebGPU</a>: a real WGSL compute dispatch when an adapter is available.</li><li><a href="./litert.html">LiteRT</a>: model conversion, delegates and a local int8 quantization experiment.</li><li><a href="./pytorch.html">PyTorch</a>: runnable Python example plus a JavaScript mirror of reverse-mode autograd.</li></ul></section><section data-widget="backend" data-backend="javascript"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Make comparisons fair</h2><p>A tiny 2 × 2 multiply tests correctness, not throughput. GPU setup and readback dominate at this size. For meaningful benchmarks, warm up kernels, fix shapes and dtypes, synchronize before stopping the timer, separate transfer time from compute time, and check numerical tolerances. Different reduction orders need not be bit-identical.</p><p>These pages do not pretend that a JavaScript emulation is native PyTorch or LiteRT. Their runtime requirements and experiment boundaries are explicit.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://webassembly.org/">WebAssembly specification and tools</a></li><li><a href="https://www.w3.org/TR/webgpu/">WebGPU specification</a></li><li><a href="https://pytorch.org/docs/stable/index.html">PyTorch documentation</a></li></ul></section>
+      <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
+    </article></div>
+  </main>
+  <footer>Small, inspectable numerical experiments. No accounts, model downloads or external inference calls.</footer>
+  <script type="module" src="../chapters.js"></script>
+  <script type="module" src="../widgets.js"></script>
+</body>
+</html>

@@ -108,9 +108,102 @@ try{
  await p.screenshot(out+'/mobile-image-lab.png',{fullPage:true});
  await p.emulateViewport({width:390,height:844,mobile:true,scale:1});
  const blockMathOnOneLine=()=>[...document.querySelectorAll('main math[display="block"]')].every((m)=>{const ks=[...m.children].map((k)=>k.getBoundingClientRect()).filter((r)=>r.height>0);return getComputedStyle(m).display==='block math'&&Math.max(...ks.map((r)=>r.top))<Math.min(...ks.map((r)=>r.bottom));});
+ await p.send('Page.addScriptToEvaluateOnNewDocument',{source:`window.__nnErrors=[];addEventListener('error',e=>window.__nnErrors.push(e.message));addEventListener('unhandledrejection',e=>window.__nnErrors.push(String(e.reason)));addEventListener('securitypolicyviolation',e=>window.__nnErrors.push(e.violatedDirective+': '+e.blockedURI));`});
  await p.goto(base+'neural-networks/');await p.waitFor(()=>document.querySelectorAll('#nn-stack > li[data-slug]').length>0);
  check('neural-networks hub: every block formula lays out on one line (display: block math)',await p.evaluate(blockMathOnOneLine));
  check('neural-networks chapter hub renders the chapter stack and native MathML without overflow',await p.evaluate(()=>document.querySelectorAll('#nn-stack > li[data-slug]').length>=15&&document.querySelectorAll('main math').length>=3&&innerWidth===390&&document.documentElement.scrollWidth<=innerWidth));
+ // Each new playground is exercised, not just counted. Native keyboard input drives sliders.
+ const widgetControl=(kind,key)=>`[data-widget="${kind}"] [data-control="${key}"]`;
+ const widgetAction=(kind,key)=>`[data-widget="${kind}"] [data-action="${key}"]`;
+ async function chooseWidget(kind,key,value){await p.evaluate((sel,v)=>{const input=document.querySelector(sel);input.value=v;input.dispatchEvent(new Event('change',{bubbles:true}));},widgetControl(kind,key),value);}
+ async function rangeKey(kind,key,name){await p.click(widgetControl(kind,key));await p.send('Input.dispatchKeyEvent',{type:'keyDown',key:name,code:name});await p.send('Input.dispatchKeyEvent',{type:'keyUp',key:name,code:name});}
+ async function widgetScreenshot(kind,name=kind){
+  await p.emulateViewport({width:1440,height:1000,mobile:false,scale:1});
+  const clip=await p.evaluate(k=>{const r=document.querySelector(`[data-widget="${k}"]`).getBoundingClientRect();return {x:r.left+scrollX,y:r.top+scrollY,width:r.width,height:r.height,scale:1};},kind);
+  const {data}=await p.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:true,clip});
+  await writeFile(out+`/nn-${name}-interaction.png`,Buffer.from(data,'base64'));
+  await p.emulateViewport({width:390,height:844,mobile:true,scale:1});
+ }
+ check('all sixteen chapter cards are active links',await p.evaluate(()=>document.querySelectorAll('#nn-stack h3 a').length===16&&!document.querySelector('#nn-stack').textContent.includes('planned')));
+ await p.evaluate(()=>{const c=document.querySelector('[data-widget="perceptron"] canvas'),ctx=c.getContext('2d'),original=ctx.lineTo;ctx.lineTo=function(x,y){c.__boundary=[x,y];return original.call(this,x,y);};});
+ await rangeKey('perceptron','w1','Home');
+ const boundaryBefore=await p.evaluate(()=>document.querySelector('[data-widget="perceptron"] canvas').__boundary);
+ await rangeKey('perceptron','w1','End');
+ check('perceptron slider changes actual canvas boundary coordinates and numeric equation',await p.evaluate(old=>{const el=document.querySelector('[data-widget="perceptron"]');return el.querySelector('canvas').__boundary[1]!==old[1]&&el.querySelector('[data-status]').textContent.includes('Boundary: 4x₁');},boundaryBefore));
+ await chooseWidget('perceptron','preset','nand');
+ const weightsBefore=await p.evaluate(()=>['w1','w2','b'].map(k=>document.querySelector(`[data-widget="perceptron"] [data-control="${k}"]`).value));
+ await p.click(widgetAction('perceptron','step'));await p.click(widgetAction('perceptron','step'));await p.click(widgetAction('perceptron','step'));
+ check('perceptron training updates both weights and bias in visible controls',await p.evaluate(old=>{const values=['w1','w2','b'].map(k=>document.querySelector(`[data-widget="perceptron"] [data-control="${k}"]`).value);return values.every((v,i)=>v!==old[i]);},weightsBefore));
+ await chooseWidget('perceptron','preset','xor');await p.click(widgetAction('perceptron','step'));
+ check('XOR has mistakes and an explicit impossibility proof',await p.evaluate(()=>{const el=document.querySelector('[data-widget="perceptron"]');return !el.querySelector('[data-status]').textContent.startsWith('4/4')&&el.querySelector('[data-proof]').textContent.includes('contradiction');}));
+ await widgetScreenshot('perceptron');
+ await chooseWidget('landscape','optimizer','adam');
+ const lossBefore=await p.evaluate(()=>document.querySelector('[data-widget="landscape"] [data-status]').textContent);
+ await p.click(widgetAction('landscape','run'));
+ await p.waitFor(()=>/Step ([2-9]|\d{2,}):/.test(document.querySelector('[data-widget="landscape"] [data-status]').textContent));
+ await p.click(widgetAction('landscape','stop'));
+ check('selected Adam optimizer advances the trajectory and changes coordinates and loss',await p.evaluate(old=>{const s=document.querySelector('[data-widget="landscape"] [data-status]').textContent;return s!==old&&!s.includes('(1.8, 1.5)')&&!s.includes('loss 12.87');},lossBefore));
+ await widgetScreenshot('landscape');
+ await chooseWidget('landscape','surface','doubleWell');
+ check('landscape change clears a previous path and explains local minima',await p.evaluate(()=>document.querySelector('[data-widget="landscape"] [data-status]').textContent.includes('Step 0:')&&document.querySelector('[data-widget="landscape"] [data-status]').textContent.includes('shallow local')));
+ await p.click(widgetAction('backprop','forward'));
+ check('backprop forward click reveals a numerical node activation',await p.evaluate(()=>document.querySelector('[data-widget="backprop"] .active-node strong').textContent.match(/= -?\d/)!==null));
+ await widgetScreenshot('backprop','backprop-forward');
+ await p.evaluate(()=>{const b=document.querySelector('[data-widget="backprop"] [data-action="forward"]');while(!b.disabled)b.click();});
+ await p.click(widgetAction('backprop','backward'));
+ check('backward step displays exact local chain-rule multiplication',await p.evaluate(()=>document.querySelector('[data-widget="backprop"] [data-status]').textContent.includes('×')));
+ await widgetScreenshot('backprop','backprop-backward');
+ await p.evaluate(()=>{const b=document.querySelector('[data-widget="backprop"] [data-action="backward"]');while(!b.disabled)b.click();});
+ check('backprop reaches nonzero dL/dw11 matching an independent finite difference',await p.evaluate(async()=>{const m=await import('./math.js');const node=[...document.querySelectorAll('[data-widget="backprop"] .graph-node')].find(n=>n.querySelector('strong').textContent.startsWith('w11 ='));const actual=Number(node.querySelector('p:last-child').textContent.match(/= ([^;]+)/)[1]);const f=w=>m.buildTinyNetwork({...m.TINY_NET_DEFAULTS,params:{...m.TINY_NET_DEFAULTS.params,w11:w}}).loss.data;const expected=(f(.50001)-f(.49999))/.00002;return actual!==0&&Math.abs(actual-expected)<.00006;}));
+ await rangeKey('backprop','x1','Home');
+ check('editing a graph input invalidates stale forward values and gradients',await p.evaluate(()=>document.querySelector('[data-widget="backprop"] [data-action="backward"]').disabled&&[...document.querySelectorAll('[data-widget="backprop"] .graph-node strong')].every(n=>n.textContent.endsWith('?'))));
+ await p.click(widgetAction('convolution','step'));
+ const fieldBefore=await p.evaluate(()=>[...document.querySelectorAll('[data-widget="convolution"] .receptive')].map(b=>b.getAttribute('aria-label')).join('|'));
+ await p.click(widgetAction('convolution','step'));
+ check('CNN step moves nine highlighted pixels and writes the second output cell',await p.evaluate(old=>{const el=document.querySelector('[data-widget="convolution"]');return [...el.querySelectorAll('.receptive')].map(b=>b.getAttribute('aria-label')).join('|')!==old&&el.querySelectorAll('.receptive').length===9&&el.querySelectorAll('[data-output] td')[1].textContent!=='·'&&el.querySelectorAll('[data-output] td')[2].textContent==='·';},fieldBefore));
+ await widgetScreenshot('convolution');
+ await chooseWidget('convolution','padding','1');await chooseWidget('convolution','stride','2');
+ check('CNN stride and padding recalculate output dimensions and clear the scan',await p.evaluate(()=>document.querySelector('[data-widget="convolution"] [data-status]').textContent.startsWith('4 × 4')&&[...document.querySelectorAll('[data-widget="convolution"] [data-output] td')].every(td=>td.textContent==='·')));
+ await p.click('[data-widget="convolution"] [data-image] button');
+ check('CNN pixel input is editable with a native button',await p.evaluate(()=>document.querySelector('[data-widget="convolution"] [data-image] button').getAttribute('aria-pressed')==='true'));
+ const probBefore=await p.evaluate(()=>({p:document.querySelector('[data-widget="probabilities"] meter').value,s:document.querySelector('[data-widget="probabilities"] [data-status]').textContent}));
+ await rangeKey('probabilities','tau','End');
+ check('temperature changes visible probabilities and increases entropy while preserving sum one',await p.evaluate(old=>{const el=document.querySelector('[data-widget="probabilities"]'),s=el.querySelector('[data-status]').textContent;const entropy=t=>Number(t.match(/Entropy = ([\d.]+)/)[1]);return el.querySelector('meter').value<old.p&&el.querySelector('output').textContent!==''&&entropy(s)>entropy(old.s)&&Math.abs([...el.querySelectorAll('meter')].reduce((a,m)=>a+m.value,0)-1)<1e-12;},probBefore));
+ await widgetScreenshot('probabilities');
+ await chooseWidget('attention','token','1');
+ const attentionBefore=await p.evaluate(()=>document.querySelector('[data-widget="attention"] [data-vectors]').textContent);
+ await chooseWidget('attention','mask','causal');
+ await p.click('[data-widget="attention"] tbody tr:nth-child(2) td:nth-of-type(6) button');
+ check('attention mask zeroes future-token cells and updates weighted V output',await p.evaluate(old=>{const el=document.querySelector('[data-widget="attention"]');return el.querySelector('[data-status]').textContent.includes('masked to −∞')&&el.querySelector('[data-status]').textContent.includes('weight = 0')&&el.querySelector('[data-vectors]').textContent!==old;},attentionBefore));
+ await widgetScreenshot('attention');
+ await p.click('[data-widget="landscape"] canvas');
+ check('clicking the landscape drops a new start point and clears the old trajectory',await p.evaluate(()=>{const el=document.querySelector('[data-widget="landscape"]');return el.querySelector('[data-control="x"]').value!=='1.8'&&el.querySelector('[data-status]').textContent.startsWith('Step 0:');}));
+ await p.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+ await p.click(widgetAction('landscape','run'));await p.waitFor(()=>document.querySelector('[data-widget="landscape"] [data-status]').textContent.startsWith('Step 160:'));
+ await p.click(widgetAction('convolution','run'));
+ check('reduced-motion mode completes trajectories and convolution without a timed animation',await p.evaluate(()=>document.querySelector('[data-widget="landscape"] [data-status]').textContent.startsWith('Step 160:')&&[...document.querySelectorAll('[data-widget="convolution"] [data-output] td')].every(td=>td.textContent!=='·')));
+ await p.send('Emulation.setEmulatedMedia',{features:[]});
+ check('hub interactions produce no runtime or CSP errors',await p.evaluate(()=>window.__nnErrors.length===0));
+ // Each chapter mounts the same real widgets at its own URL, including nested backend roots.
+ const chapterPaths=await p.evaluate(()=>[...document.querySelectorAll('#nn-stack h3 a')].map(a=>a.href));
+ for(const url of chapterPaths){await p.goto(url);await p.waitFor(()=>document.querySelector('[data-chapter-nav] a[aria-current="page"]')!==null);check('chapter loads without overflow: '+new URL(url).pathname,await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth&&document.querySelector('main h1').textContent.length>0&&window.__nnErrors.length===0));}
+ await p.goto(base+'neural-networks/activations.html');await p.waitFor(()=>document.querySelector('[data-depth] tr')!==null);
+ const sigmoidGradient=await p.evaluate(()=>document.querySelector('[data-widget="activations"] [data-status]').textContent);
+ await chooseWidget('activations','activation','relu');
+ check('activation selection updates the ten-layer gradient calculation',await p.evaluate(old=>{const s=document.querySelector('[data-widget="activations"] [data-status]').textContent;return s!==old&&s.includes('first input: 1.');},sigmoidGradient));
+ await p.goto(base+'neural-networks/modern-advancements.html');await p.waitFor(()=>document.querySelector('[data-modern]')!==null);
+ const cacheBefore=await p.evaluate(()=>document.querySelector('[data-widget="modern"] [data-status]').textContent);
+ await chooseWidget('modern','heads','1');
+ check('GQA/MQA control reduces calculated KV-cache size',await p.evaluate(old=>{const size=t=>Number(t.match(/= ([\d.]+) MiB/)[1]);return size(document.querySelector('[data-widget="modern"] [data-status]').textContent)===size(old)/8;},cacheBefore));
+ await p.goto(base+'neural-networks/backends/litert.html');await p.waitFor(()=>document.querySelector('[data-quant]')!==null);
+ const quantBefore=await p.evaluate(()=>document.querySelector('[data-quant]').textContent);
+ await rangeKey('quantization','outlier','End');
+ check('LiteRT quantization example changes quantized and decoded values',await p.evaluate(old=>document.querySelector('[data-quant]').textContent!==old,quantBefore));
+ for(const kind of ['javascript','webassembly','webgpu']){
+  await p.goto(base+`neural-networks/backends/${kind}.html`);await p.waitFor(()=>document.querySelector('[data-widget="backend"] [data-action="run"]')!==null);
+  await p.click(widgetAction('backend','run'));await p.waitFor(()=>!document.querySelector('[data-widget="backend"] [data-action="run"]').disabled);
+  check(kind+' executes the known GEMM or explicitly reports unavailable GPU',await p.evaluate(k=>{const s=document.querySelector('[data-widget="backend"] [data-status]').textContent;return s.includes(`${k} result: [19, 22, 43, 50]`)||(k==='webgpu'&&s.startsWith('Cannot run:'));},kind));
+ }
  await p.goto(base+'neural-networks/gradient-descent.html');await p.waitFor(()=>document.querySelectorAll('#gd-results tr').length===6);
  check('gradient-descent race draws six optimisers, sidebar marks the chapter, MathML renders, no mobile overflow',await p.evaluate(()=>document.querySelectorAll('#gd-results tr').length===6&&document.querySelector('[data-chapter-nav] a[aria-current="page"]')!==null&&document.querySelectorAll('main math').length>=8&&innerWidth===390&&document.documentElement.scrollWidth<=innerWidth));
  check('gradient-descent: every block formula lays out on one line (display: block math)',await p.evaluate(blockMathOnOneLine));

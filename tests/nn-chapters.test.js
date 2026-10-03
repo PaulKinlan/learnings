@@ -64,6 +64,12 @@ test('softmax: sums to 1, shift-invariant, temperature sharpens and flattens', (
   assert.throws(() => softmax(z, 0));
 });
 
+test('cross-entropy does not cap confident mistakes at the temperature slider extremes', () => {
+  const p = softmax([5, -5, -5, -5], 0.1);
+  close(crossEntropy(p, 1), 100, 1e-10);
+  assert.equal(crossEntropy([1, 0], 1), Infinity);
+});
+
 test('softmax cross-entropy gradient (p − y) / T matches finite differences', () => {
   const z = [1.5, -0.3, 0.8, 0.1];
   for (const T of [0.5, 1, 2]) {

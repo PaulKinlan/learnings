@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>The Transformer | Neural networks</title>
+  <meta name="description" content="Inspect queries, keys, values and the row-wise softmax that mixes token information.">
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="./chapter.css">
+  <link rel="stylesheet" href="./playgrounds.css">
+</head>
+<body data-nn-root="./" data-chapter="transformer.html">
+  <a class="skip" href="#main">Skip to content</a>
+  <header><a href="../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="./">Chapters</a><a href="./lab.html">Workbench</a></nav></header>
+  <main id="main" class="chapter">
+    <p class="crumbs"><a href="./">Neural networks</a> › The Transformer</p>
+    <h1>The Transformer</h1><p class="lead">Inspect queries, keys, values and the row-wise softmax that mixes token information.</p>
+    <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
+      <section class="prose"><h2>Attention is a learned lookup</h2><p>Each token representation is projected into a query Q, key K and value V. A query’s dot product with every key gives compatibility scores. Softmax over keys makes a distribution; its weighted average of values is the output. Q and K choose where to read; V supplies what gets read.</p><math display="block"><mtext>Attention</mtext><mo>(</mo><mi>Q</mi><mo>,</mo><mi>K</mi><mo>,</mo><mi>V</mi><mo>)</mo><mo>=</mo><mtext>softmax</mtext><mo>(</mo><mfrac><mrow><mi>Q</mi><msup><mi>K</mi><mi>T</mi></msup></mrow><msqrt><msub><mi>d</mi><mi>k</mi></msub></msqrt></mfrac><mo>)</mo><mi>V</mi></math><p>If query and key components are independent, zero-mean and unit variance, their dot-product variance grows with dₖ. Dividing by √dₖ controls that scale. It is not a cosine normalization. The toy below fixes dₖ = 2 and displays every vector, so every cell can be checked by hand.</p></section><section data-widget="attention"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Masks, heads and grouping</h2><p>A causal decoder masks future keys to −∞ before softmax, making their weights zero. An encoder can use bidirectional attention. Position information must enter separately; otherwise permuting input tokens just permutes attention’s rows and columns.</p><p>Multi-head attention (MHA) learns separate Q/K/V projections for each head, concatenates head outputs and applies an output projection. The heatmap above shows one head only. Multi-query attention (MQA) shares one K/V head across all query heads. Grouped-query attention (GQA) is in between: several query heads share each K/V head. Q head count stays fixed while K/V storage falls.</p><p>The calculator below compares 8 query heads with 8, 2 or 1 K/V heads. This is a cache-size calculation, not a simulation of learned multi-head behaviour. Fewer K/V heads can reduce decoding bandwidth, but model quality depends on training.</p></section><section data-widget="modern"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://arxiv.org/abs/1706.03762">Vaswani et al. (2017), Attention Is All You Need</a></li><li><a href="https://arxiv.org/abs/1911.02150">Shazeer (2019), Fast Transformer Decoding</a></li><li><a href="https://arxiv.org/abs/2305.13245">Ainslie et al. (2023), GQA</a></li></ul></section>
+      <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
+    </article></div>
+  </main>
+  <footer>Small, inspectable numerical experiments. No accounts, model downloads or external inference calls.</footer>
+  <script type="module" src="./chapters.js"></script>
+  <script type="module" src="./widgets.js"></script>
+</body>
+</html>

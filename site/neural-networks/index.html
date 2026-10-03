@@ -9,6 +9,7 @@
   <meta name="description" content="A chapter-by-chapter guide to neural networks for readers starting from scratch: the perceptron, gradient descent, backpropagation, activations, loss, CNNs, Transformers, the modern stack and how it all runs on JavaScript, WebAssembly, WebGPU, LiteRT and PyTorch. Every chapter is interactive.">
   <link rel="stylesheet" href="../style.css">
   <link rel="stylesheet" href="./chapter.css">
+  <link rel="stylesheet" href="./playgrounds.css">
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -30,7 +31,9 @@
       you something to change and watch.
     </p>
 
-    <section class="prose" aria-labelledby="three-ideas">
+    <nav aria-label="Jump to a playground"><a href="#perceptron-playground">Perceptron</a><a href="#loss-landscape">Loss landscape</a><a href="#backprop-playground">Backpropagation</a><a href="#cnn-intro">Convolution</a><a href="#softmax-intro">Softmax</a><a href="#attention-intro">Attention</a><a href="#the-stack">All chapters</a></nav>
+
+    <section aria-labelledby="three-ideas">
       <h2 id="three-ideas">Three ideas carry the whole subject</h2>
       <p>
         <strong>A neuron is a weighted sum followed by a squash.</strong> Multiply each input by a weight,
@@ -42,6 +45,7 @@
           <msub><mi>w</mi><mi>i</mi></msub><msub><mi>x</mi><mi>i</mi></msub><mo>+</mo><mi>b</mi>
         <mo>)</mo></mrow>
       </math>
+      <section id="perceptron-playground" data-widget="perceptron"><p>Explore the <a href="./neuron-and-perceptron.html">perceptron chapter</a>. Enable JavaScript for the live playground.</p></section>
       <p>
         <strong>Learning means walking downhill on a loss.</strong> A loss <math><mi>L</mi></math> scores
         how wrong the network is. Each weight takes a small step <math><mi>η</mi></math> against its slope:
@@ -50,6 +54,7 @@
         <mi>w</mi><mo>←</mo><mi>w</mi><mo>−</mo><mi>η</mi>
         <mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><mi>w</mi></mrow></mfrac>
       </math>
+      <section id="loss-landscape" data-widget="landscape"><p>Explore <a href="./gradient-descent.html">gradient descent</a>. Enable JavaScript for the live playground.</p></section>
       <p>
         <strong>Backpropagation finds every slope at once</strong> by applying the chain rule from the
         output back towards the inputs:
@@ -60,12 +65,16 @@
         <mfrac><mrow><mo>∂</mo><mi>a</mi></mrow><mrow><mo>∂</mo><mi>z</mi></mrow></mfrac><mo>·</mo>
         <mfrac><mrow><mo>∂</mo><mi>z</mi></mrow><mrow><mo>∂</mo><mi>w</mi></mrow></mfrac>
       </math>
+      <section id="backprop-playground" data-widget="backprop"><p>Explore <a href="./backpropagation.html">backpropagation</a>. Enable JavaScript for the live playground.</p></section>
       <p>
         Everything else (convolutions, attention, mixture-of-experts) changes <em>which</em> weighted
         sums get computed and in what shape. These three ideas stay the same throughout.
       </p>
     </section>
 
+    <section aria-labelledby="cnn-intro"><h2 id="cnn-intro">Convolutional Neural Networks (CNNs)</h2><p>A shared filter looks for the same pattern everywhere. <a href="./cnn.html">Read the CNN chapter</a>.</p><section data-widget="convolution"><p>Enable JavaScript to slide the kernel.</p></section></section>
+    <section aria-labelledby="softmax-intro"><h2 id="softmax-intro">Softmax &amp; Temperature</h2><p>Scores are not probabilities. Change logits and temperature to see the difference. <a href="./loss-and-calibration.html">Explore losses and calibration</a>.</p><section data-widget="probabilities"><p>Enable JavaScript to explore distributions.</p></section></section>
+    <section aria-labelledby="attention-intro"><h2 id="attention-intro">Self-Attention (Transformer)</h2><p>Tokens choose which other tokens to read. <a href="./transformer.html">Explore the Transformer</a>.</p><section data-widget="attention"><p>Enable JavaScript to inspect attention weights.</p></section></section>
     <section aria-labelledby="the-stack">
       <h2 id="the-stack">The chapters</h2>
       <p class="small">
@@ -83,7 +92,7 @@
       <ol class="timeline">
         <li><span class="when">1943</span><span>McCulloch and Pitts show that networks of on/off threshold units can compute any logical function.</span></li>
         <li><span class="when">1958</span><span>Rosenblatt's perceptron learns its own weights from examples.</span></li>
-        <li><span class="when">1969</span><span>Minsky and Papert prove a single-layer perceptron cannot learn XOR. Research funding cools for a decade.</span></li>
+        <li><span class="when">1969</span><span>Minsky and Papert analyse restricted perceptrons; XOR illustrates the limitation of a single linear threshold.</span></li>
         <li><span class="when">1970</span><span>Linnainmaa describes reverse-mode automatic differentiation, the algorithm inside backpropagation.</span></li>
         <li><span class="when">1986</span><span>Rumelhart, Hinton and Williams show backpropagation teaching hidden layers useful features.</span></li>
         <li><span class="when">1989</span><span>LeCun trains a convolutional network to read handwritten ZIP codes.</span></li>
@@ -114,5 +123,6 @@
     original papers; each chapter lists its sources.
   </footer>
   <script type="module" src="./hub.js"></script>
+  <script type="module" src="./widgets.js"></script>
 </body>
 </html>

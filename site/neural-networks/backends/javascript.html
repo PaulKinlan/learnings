@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>JavaScript and typed arrays | Neural networks</title>
+  <meta name="description" content="Inspect and run a matrix product using contiguous Float32Array storage.">
+  <link rel="stylesheet" href="../../style.css">
+  <link rel="stylesheet" href="../chapter.css">
+  <link rel="stylesheet" href="../playgrounds.css">
+</head>
+<body data-nn-root="../" data-chapter="backends/javascript.html">
+  <a class="skip" href="#main">Skip to content</a>
+  <header><a href="../../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="../">Chapters</a><a href="../lab.html">Workbench</a></nav></header>
+  <main id="main" class="chapter">
+    <p class="crumbs"><a href="../">Neural networks</a> › JavaScript and typed arrays</p>
+    <h1>JavaScript and typed arrays</h1><p class="lead">Inspect and run a matrix product using contiguous Float32Array storage.</p>
+    <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
+      <section class="prose"><h2>Flat storage and loop order</h2><p>A row-major M × K matrix stores A[i,k] at i·K + k. Float32Array rounds stored values to 32-bit floats, though ordinary JavaScript arithmetic uses binary64 numbers. In this implementation every accumulated write rounds back to float32.</p><p>The i,k,j loop order loads A[i,k] once and walks contiguous rows of B and C. An i,j,k loop is mathematically equivalent but walks B with a stride of N. Cache behaviour and the JIT can matter more than reducing a few source lines.</p></section><section data-widget="backend" data-backend="javascript"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>When plain JavaScript is enough</h2><p>For small tensors, avoiding transfer and compilation overhead can beat a more elaborate backend. Reuse output arrays and avoid temporary objects in hot loops. Large synchronous loops block input and rendering; run substantial work in a worker or yield between bounded batches. This example is intentionally only four output cells.</p><p>The full <a href="../lab.html#backend-comparison">workbench backend comparison</a> has larger repeatable operations. Do not infer general runtime rankings from one shape or a single cold run.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://tc39.es/ecma262/#sec-typedarray-objects">ECMAScript typed array objects</a></li></ul></section>
+      <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
+    </article></div>
+  </main>
+  <footer>Small, inspectable numerical experiments. No accounts, model downloads or external inference calls.</footer>
+  <script type="module" src="../chapters.js"></script>
+  <script type="module" src="../widgets.js"></script>
+</body>
+</html>

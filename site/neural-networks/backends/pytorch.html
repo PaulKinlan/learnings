@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>PyTorch and autograd | Neural networks</title>
+  <meta name="description" content="Compare a small JavaScript tape with the tensor operations you would run in PyTorch.">
+  <link rel="stylesheet" href="../../style.css">
+  <link rel="stylesheet" href="../chapter.css">
+  <link rel="stylesheet" href="../playgrounds.css">
+</head>
+<body data-nn-root="../" data-chapter="backends/pytorch.html">
+  <a class="skip" href="#main">Skip to content</a>
+  <header><a href="../../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="../">Chapters</a><a href="../lab.html">Workbench</a></nav></header>
+  <main id="main" class="chapter">
+    <p class="crumbs"><a href="../">Neural networks</a> › PyTorch and autograd</p>
+    <h1>PyTorch and autograd</h1><p class="lead">Compare a small JavaScript tape with the tensor operations you would run in PyTorch.</p>
+    <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
+      <section class="prose"><h2>Tensors carry values, layouts and history</h2><p>A PyTorch tensor has a dtype, device, shape and strides. A transpose can change strides without copying storage; a contiguous conversion can allocate. Broadcasting and views affect which elements share storage and how gradients must be summed.</p><p>With requires_grad enabled, operations build an autograd graph. Calling backward on a scalar loss propagates vector-Jacobian products, accumulating into leaf parameter gradients. Clear gradients between optimizer steps unless accumulation is intentional. Hooks observe or modify gradients, but careless hooks can retain large graphs.</p></section><section data-widget="backprop"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Run the corresponding network in Python</h2><p>The browser graph above is a JavaScript reverse-mode mirror, not PyTorch in the browser. With PyTorch installed locally, run this Python program to compare gradients. It uses float64 to make comparison to JavaScript numbers straightforward.</p><pre><code>import torch
+x = torch.tensor([1., -2.], dtype=torch.float64)
+W = torch.tensor([[.5, -.3], [-.4, .8]], dtype=torch.float64, requires_grad=True)
+b = torch.tensor([.1, 0.], dtype=torch.float64, requires_grad=True)
+v = torch.tensor([1.2, -.7], dtype=torch.float64, requires_grad=True)
+c = torch.tensor(.2, dtype=torch.float64, requires_grad=True)
+h = torch.tanh(W @ x + b)
+yhat = torch.sigmoid(v @ h + c)
+loss = (yhat - 1).square()
+loss.backward()
+print("prediction", yhat.item(), "loss", loss.item())
+print("dL/dW", W.grad, "dL/db", b.grad, "dL/dv", v.grad, "dL/dc", c.grad)
+assert torch.isfinite(W.grad).all()
+assert W.grad.abs().sum() > 0</code></pre><p>torch.compile captures supported regions and optimizes their execution. It does not replace the loss, autograd mathematics or validation. Compilation has startup cost and may encounter graph breaks when Python behaviour cannot be captured.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://pytorch.org/docs/stable/notes/autograd.html">PyTorch autograd mechanics</a></li><li><a href="https://pytorch.org/docs/stable/tensor_view.html">Tensor views and strides</a></li><li><a href="https://pytorch.org/docs/stable/torch.compiler.html">torch.compiler documentation</a></li></ul></section>
+      <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
+    </article></div>
+  </main>
+  <footer>Small, inspectable numerical experiments. No accounts, model downloads or external inference calls.</footer>
+  <script type="module" src="../chapters.js"></script>
+  <script type="module" src="../widgets.js"></script>
+</body>
+</html>

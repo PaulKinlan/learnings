@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>Making deep networks train | Neural networks</title>
+  <meta name="description" content="Architecture is only half the recipe: scales, initialization and evaluation matter.">
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="./chapter.css">
+  <link rel="stylesheet" href="./playgrounds.css">
+</head>
+<body data-nn-root="./" data-chapter="training-recipes.html">
+  <a class="skip" href="#main">Skip to content</a>
+  <header><a href="../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="./">Chapters</a><a href="./lab.html">Workbench</a></nav></header>
+  <main id="main" class="chapter">
+    <p class="crumbs"><a href="./">Neural networks</a> › Making deep networks train</p>
+    <h1>Making deep networks train</h1><p class="lead">Architecture is only half the recipe: scales, initialization and evaluation matter.</p>
+    <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
+      <section class="prose"><h2>Keep signal and gradient scales under control</h2><p>Xavier initialization balances variance for approximately linear or tanh networks; He initialization compensates for rectifier gating. Neither is a universal constant: fan-in, fan-out, activation and residual structure matter. The ten-layer experiment lets you see how even a scalar weight scale changes gradient magnitude.</p><p>Batch normalization uses batch statistics during training and typically running statistics during inference. Layer normalization uses features within each example and does not depend on other batch members. RMSNorm rescales without subtracting a mean. Normalization changes the computation, not just its numerical presentation.</p></section><section data-widget="activations"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Regularisation, precision and compute budgets</h2><p>Dropout randomly removes activations during training and rescales the retained values; it is normally disabled at inference. Weight decay discourages large weights. AdamW decouples decay from the adaptive gradient update rather than treating an L2 term identically to plain SGD.</p><p>Mixed precision computes many operations in lower precision but often accumulates sensitive sums or optimizer state in FP32. FP16 may require loss scaling to keep gradients representable; BF16 has a wider exponent range but fewer mantissa bits. Lower precision is not automatically faster on every runtime.</p><p>Scaling laws are empirical fits over particular datasets and compute regimes, not guarantees. More parameters do not compensate for contaminated test data or poor data quality. Split training, validation and test data before tuning; compare runs using a fixed seed, task and budget.</p><p>Try <a href="./gradient-descent.html">the optimizer race</a> for update rules and <a href="./lab.html#deep-resnet-lab">the residual-network trainer</a> for trainable depth.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://proceedings.mlr.press/v9/glorot10a.html">Glorot & Bengio (2010), Initialization</a></li><li><a href="https://arxiv.org/abs/1502.03167">Ioffe & Szegedy (2015), Batch Normalization</a></li><li><a href="https://arxiv.org/abs/1607.06450">Ba et al. (2016), Layer Normalization</a></li><li><a href="https://arxiv.org/abs/2203.15556">Hoffmann et al. (2022), Training Compute-Optimal Large Language Models</a></li></ul></section>
+      <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
+    </article></div>
+  </main>
+  <footer>Small, inspectable numerical experiments. No accounts, model downloads or external inference calls.</footer>
+  <script type="module" src="./chapters.js"></script>
+  <script type="module" src="./widgets.js"></script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>WebGPU compute shaders | Neural networks</title>
+  <meta name="description" content="Dispatch a tiled WGSL matrix multiplication, or see an honest unsupported-device result.">
+  <link rel="stylesheet" href="../../style.css">
+  <link rel="stylesheet" href="../chapter.css">
+  <link rel="stylesheet" href="../playgrounds.css">
+</head>
+<body data-nn-root="../" data-chapter="backends/webgpu.html">
+  <a class="skip" href="#main">Skip to content</a>
+  <header><a href="../../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="../">Chapters</a><a href="../lab.html">Workbench</a></nav></header>
+  <main id="main" class="chapter">
+    <p class="crumbs"><a href="../">Neural networks</a> › WebGPU compute shaders</p>
+    <h1>WebGPU compute shaders</h1><p class="lead">Dispatch a tiled WGSL matrix multiplication, or see an honest unsupported-device result.</p>
+    <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
+      <section class="prose"><h2>A compute pipeline, not a synchronous function call</h2><p>WebGPU needs a secure context and a browser/device exposing a suitable adapter. Creating a device, shader module and pipeline precedes dispatch. The existing engine uses 8 × 8 workgroups, storage buffers for matrices and workgroup memory for tiles.</p><p>Each workgroup cooperatively loads tiles, waits at a barrier, accumulates products and writes guarded output cells. Out-of-bounds invocations still participate in barriers. Returning some invocations early before a required barrier can deadlock or invalidate a shader.</p></section><section data-widget="backend" data-backend="webgpu"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Readback has a cost</h2><p>A storage buffer is not directly a JavaScript array. The engine encodes compute work, copies output to a MAP_READ buffer, submits commands, awaits mapping, copies the bytes and releases buffers. GPU execution is asynchronous. Small operations may cost more in submission and transfer than they save in arithmetic.</p><p>This page intentionally does not fall back silently: an unavailable adapter produces an explanatory result. The <a href="./javascript.html">JavaScript chapter</a> runs everywhere this course runs. The full workbench supports explicit backend comparisons.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://www.w3.org/TR/webgpu/">WebGPU specification</a></li><li><a href="https://www.w3.org/TR/WGSL/">WebGPU Shading Language specification</a></li></ul></section>
+      <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
+    </article></div>
+  </main>
+  <footer>Small, inspectable numerical experiments. No accounts, model downloads or external inference calls.</footer>
+  <script type="module" src="../chapters.js"></script>
+  <script type="module" src="../widgets.js"></script>
+</body>
+</html>

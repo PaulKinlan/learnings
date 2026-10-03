@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>Loss, softmax and calibration | Neural networks</title>
+  <meta name="description" content="Turn scores into probabilities, compare scoring rules and test the effect of temperature.">
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="./chapter.css">
+  <link rel="stylesheet" href="./playgrounds.css">
+</head>
+<body data-nn-root="./" data-chapter="loss-and-calibration.html">
+  <a class="skip" href="#main">Skip to content</a>
+  <header><a href="../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="./">Chapters</a><a href="./lab.html">Workbench</a></nav></header>
+  <main id="main" class="chapter">
+    <p class="crumbs"><a href="./">Neural networks</a> › Loss, softmax and calibration</p>
+    <h1>Loss, softmax and calibration</h1><p class="lead">Turn scores into probabilities, compare scoring rules and test the effect of temperature.</p>
+    <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
+      <section class="prose"><h2>A loss defines what learning rewards</h2><p>Mean squared error averages squared differences between predictions and targets. It is natural for real-valued regression. Cross-entropy for a labelled class is −log p(true class), so confident mistakes receive a large penalty. For logits z, softmax exponentiates and normalises them; subtracting the largest logit before exponentiation prevents avoidable overflow without changing the result.</p><math display="block"><msub><mi>p</mi><mi>i</mi></msub><mo>=</mo><mfrac><msup><mi>e</mi><mrow><msub><mi>z</mi><mi>i</mi></msub><mo>/</mo><mi>τ</mi></mrow></msup><mrow><munder><mo>∑</mo><mi>j</mi></munder><msup><mi>e</mi><mrow><msub><mi>z</mi><mi>j</mi></msub><mo>/</mo><mi>τ</mi></mrow></msup></mrow></mfrac></math></section><section data-widget="probabilities"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Brier score is not the same reduction as MSE</h2><p>Here the multiclass Brier score is Σᵢ(pᵢ − yᵢ)², while MSE averages those same four terms. Brier is therefore four times the displayed MSE and ranges from 0 to 2. Some libraries use different scaling conventions; always state yours. Both cross-entropy and Brier are proper scoring rules in expectation.</p><p>Entropy −Σp log p measures uncertainty, not accuracy. Lowering temperature can make a wrong answer more confidently wrong. Make class 1’s logit largest, choose class 4 as the target, then lower τ. Accuracy is unchanged but cross-entropy rises sharply.</p><p>A calibrated predictor gets about 80% of its 80%-confidence predictions correct on representative held-out data. One prediction cannot demonstrate calibration. Temperature scaling fits a positive τ on a held-out calibration set, typically by minimising cross-entropy, then evaluates on a separate test set. It does not change the argmax class or repair distribution shift automatically.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://doi.org/10.1175/1520-0493(1950)078%3C0001:VOFEIT%3E2.0.CO;2">Brier (1950), Verification of forecasts expressed in terms of probability</a></li><li><a href="https://proceedings.mlr.press/v70/guo17a.html">Guo et al. (2017), On Calibration of Modern Neural Networks</a></li></ul></section>
+      <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
+    </article></div>
+  </main>
+  <footer>Small, inspectable numerical experiments. No accounts, model downloads or external inference calls.</footer>
+  <script type="module" src="./chapters.js"></script>
+  <script type="module" src="./widgets.js"></script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>Backpropagation | Neural networks</title>
+  <meta name="description" content="Trace the forward values and reverse derivatives of a two-layer network, one operation at a time.">
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="./chapter.css">
+  <link rel="stylesheet" href="./playgrounds.css">
+</head>
+<body data-nn-root="./" data-chapter="backpropagation.html">
+  <a class="skip" href="#main">Skip to content</a>
+  <header><a href="../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="./">Chapters</a><a href="./lab.html">Workbench</a></nav></header>
+  <main id="main" class="chapter">
+    <p class="crumbs"><a href="./">Neural networks</a> › Backpropagation</p>
+    <h1>Backpropagation</h1><p class="lead">Trace the forward values and reverse derivatives of a two-layer network, one operation at a time.</p>
+    <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
+      <section class="prose"><h2>Three milestones, not one invention</h2><p>Seppo Linnainmaa’s 1970 thesis gave a general reverse accumulation method for differentiating compositions of elementary operations. This is reverse-mode automatic differentiation: record a calculation, then traverse its dependencies backwards.</p><p>Paul Werbos’s 1974 Harvard thesis described using such derivatives to adapt nonlinear systems, including the foundations for training multilayer networks. The mathematics predates the wave of popular neural-network applications.</p><p>David Rumelhart, Geoffrey Hinton and Ronald Williams’s 1986 <cite>Nature</cite> paper, “Learning representations by back-propagating errors”, demonstrated learning useful hidden representations and popularised the method. Backpropagation computes gradients; gradient descent is the separate algorithm that uses them to change weights.</p></section><section class="prose"><h2>The chain rule on a graph</h2><math display="block"><mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><mi>w</mi></mrow></mfrac><mo>=</mo><mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><mi>a</mi></mrow></mfrac><mo>·</mo><mfrac><mrow><mo>∂</mo><mi>a</mi></mrow><mrow><mo>∂</mo><mi>z</mi></mrow></mfrac><mo>·</mo><mfrac><mrow><mo>∂</mo><mi>z</mi></mrow><mrow><mo>∂</mo><mi>w</mi></mrow></mfrac></math><p>For z = wx + b, the local derivative ∂z/∂w is x. For tanh(z), it is 1 − tanh²(z). For sigmoid(z), it is a(1 − a). Seed ∂L/∂L = 1, multiply along each edge, and <strong>add</strong> contributions when a value feeds multiple paths. The displayed decimals are rounded; the graph propagates full JavaScript floating-point values.</p></section><section data-widget="backprop"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Read the trace</h2><p>The graph is in topological order: every operand appears before the operation using it. A multiplication records both operands, because each operand’s derivative depends on the other. Each reverse click pushes the active node’s accumulated derivative to its children. Intermediate gradients can change again when another downstream path contributes; only a completed reverse pass gives every final gradient.</p><p>Try setting v1 to zero. The first hidden unit’s incoming weights then have zero influence on the output, so their gradients vanish. Change the target and repeat: the loss derivative changes sign when prediction crosses target. No numerical finite-difference estimation is needed by backpropagation; the tests use finite differences as an independent check.</p><p>A scalar output’s reverse pass visits each graph edge once. Saving intermediate activations costs memory; checkpointing trades extra forward computation for less storage. In practical training, gradients are accumulated across examples before the optimizer updates parameters.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://doi.org/10.1007/BF01931367">Linnainmaa (1976), published account of reverse accumulation developed in his 1970 thesis</a></li><li><a href="https://www.werbos.com/1974Thesis.htm">Werbos, Beyond Regression (1974 thesis)</a></li><li><a href="https://doi.org/10.1038/323533a0">Rumelhart, Hinton & Williams (1986), Nature</a></li></ul></section>
+      <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
+    </article></div>
+  </main>
+  <footer>Small, inspectable numerical experiments. No accounts, model downloads or external inference calls.</footer>
+  <script type="module" src="./chapters.js"></script>
+  <script type="module" src="./widgets.js"></script>
+</body>
+</html>

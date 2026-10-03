@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>The neuron and the perceptron | Neural networks</title>
+  <meta name="description" content="Change weights, move a boundary, and discover exactly why one neuron cannot learn XOR.">
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="./chapter.css">
+  <link rel="stylesheet" href="./playgrounds.css">
+</head>
+<body data-nn-root="./" data-chapter="neuron-and-perceptron.html">
+  <a class="skip" href="#main">Skip to content</a>
+  <header><a href="../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="./">Chapters</a><a href="./lab.html">Workbench</a></nav></header>
+  <main id="main" class="chapter">
+    <p class="crumbs"><a href="./">Neural networks</a> › The neuron and the perceptron</p>
+    <h1>The neuron and the perceptron</h1><p class="lead">Change weights, move a boundary, and discover exactly why one neuron cannot learn XOR.</p>
+    <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
+      <section class="prose"><h2>From logical neurons to learned weights</h2><p>In 1943, Warren McCulloch and Walter Pitts described idealised all-or-nothing neurons. Their threshold units linked neural activity to propositional logic: networks of these units could represent logical expressions. The weights were designed, not learned, and the model was not a biological simulation.</p><p>Frank Rosenblatt’s 1958 perceptron paper introduced a learning procedure for a pattern-recognition system. The Mark I project at Cornell Aeronautical Laboratory connected a camera-like input to adjustable weights. The 1958 public demonstration used an IBM computer simulation; the physical Mark I was completed later. The important change was learning a decision rule from labelled examples rather than specifying every connection by hand.</p><p>In <cite>Perceptrons</cite> (1969), Marvin Minsky and Seymour Papert analysed limitations of restricted perceptron architectures. XOR is the simplest illustration of the single-linear-threshold limitation, not a proof that all neural networks are useless. Accounts attributing the entire subsequent AI funding winter to this one book overstate a complex history.</p></section><section class="prose"><h2>One weighted sum, one decision</h2><math display="block"><mi>z</mi><mo>=</mo><msub><mi>w</mi><mn>1</mn></msub><msub><mi>x</mi><mn>1</mn></msub><mo>+</mo><msub><mi>w</mi><mn>2</mn></msub><msub><mi>x</mi><mn>2</mn></msub><mo>+</mo><mi>b</mi></math><p>Predict 1 when z &gt; 0, otherwise 0. This playground uses a hard threshold rather than a smooth squash. A mistake updates each weight by η(target − prediction)input. Training visits all four points repeatedly; a correct point leaves weights unchanged.</p></section><section data-widget="perceptron"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Try it, then explain it</h2><p>Start with AND. Increase the bias until (0,1) turns positive: the line moved without rotating. Reverse one weight: the line tilts. Train on OR until all four predictions are correct. Then select XOR and watch the mistake ring migrate rather than disappear.</p><p>XOR’s positive corners are diagonally opposite. Any half-plane containing both also contains at least one negative corner. Two hidden threshold units can instead detect OR and NAND, and an output AND combines them: XOR = AND(OR(x₁,x₂), NAND(x₁,x₂)). Depth changes which shapes a network can express.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://doi.org/10.1007/BF02478259">McCulloch & Pitts (1943), A Logical Calculus of the Ideas Immanent in Nervous Activity</a></li><li><a href="https://doi.org/10.1037/h0042519">Rosenblatt (1958), The Perceptron</a></li><li><a href="https://mitpress.mit.edu/9780262631112/perceptrons/">Minsky & Papert (1969), Perceptrons</a></li></ul></section>
+      <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
+    </article></div>
+  </main>
+  <footer>Small, inspectable numerical experiments. No accounts, model downloads or external inference calls.</footer>
+  <script type="module" src="./chapters.js"></script>
+  <script type="module" src="./widgets.js"></script>
+</body>
+</html>

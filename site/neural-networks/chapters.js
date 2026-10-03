@@ -20,7 +20,6 @@ export const CHAPTERS = [
     summary:
       "A weighted sum and a threshold. How McCulloch and Pitts turned neurons into logic, how Rosenblatt made them learn, and why one layer can never learn XOR.",
     buildsOn: [],
-    planned: true,
   },
   {
     slug: "gradient-descent.html",
@@ -39,7 +38,6 @@ export const CHAPTERS = [
     summary:
       "The chain rule, run backwards. Why a gradient for every weight costs about as much as one forward pass, and who worked that out.",
     buildsOn: ["gradient-descent.html"],
-    planned: true,
   },
   {
     slug: "activations.html",
@@ -49,7 +47,6 @@ export const CHAPTERS = [
     summary:
       "Why the nonlinearity matters, why deep sigmoid networks stopped learning, and how ReLU, GELU and SwiGLU fixed it.",
     buildsOn: ["backpropagation.html"],
-    planned: true,
   },
   {
     slug: "loss-and-calibration.html",
@@ -59,7 +56,6 @@ export const CHAPTERS = [
     summary:
       "What a network actually minimises, how softmax turns scores into probabilities, and why a confident model can be wrong about its own confidence.",
     buildsOn: ["backpropagation.html"],
-    planned: true,
   },
   {
     slug: "architectures.html",
@@ -69,7 +65,6 @@ export const CHAPTERS = [
     summary:
       "Stacking neurons into layers, building in assumptions about images and sequences, and the skip connection that made very deep networks trainable.",
     buildsOn: ["activations.html", "loss-and-calibration.html"],
-    planned: true,
   },
   {
     slug: "cnn.html",
@@ -79,7 +74,6 @@ export const CHAPTERS = [
     summary:
       "Slide a 3×3 kernel across an image one step at a time, change stride and padding, and build a CNN forward pass you can run in the console.",
     buildsOn: ["architectures.html"],
-    planned: true,
   },
   {
     slug: "transformer.html",
@@ -89,7 +83,6 @@ export const CHAPTERS = [
     summary:
       "Queries, keys and values; why attention divides by √d_k; and multi-head, multi-query and grouped-query attention.",
     buildsOn: ["architectures.html"],
-    planned: true,
   },
   {
     slug: "training-recipes.html",
@@ -99,7 +92,6 @@ export const CHAPTERS = [
     summary:
       "The unglamorous fixes that made depth work: careful initialisation, batch and layer normalisation, dropout, mixed precision, and the scaling laws that set model size.",
     buildsOn: ["activations.html", "architectures.html"],
-    planned: true,
   },
   {
     slug: "modern-advancements.html",
@@ -109,7 +101,6 @@ export const CHAPTERS = [
     summary:
       "RMSNorm, RoPE, FlashAttention, mixture-of-experts, state space models and KV-cache tricks: what changed between the 2017 Transformer and today's models.",
     buildsOn: ["transformer.html"],
-    planned: true,
   },
   {
     slug: "backends/index.html",
@@ -119,7 +110,6 @@ export const CHAPTERS = [
     summary:
       "The same matrix multiply on five runtimes: what each one does with memory, threads and precision, and when to pick which.",
     buildsOn: ["architectures.html"],
-    planned: true,
   },
   {
     slug: "backends/javascript.html",
@@ -128,7 +118,6 @@ export const CHAPTERS = [
     years: "",
     summary: "Float32Array, loop order and the JIT: how fast plain JavaScript can multiply matrices.",
     buildsOn: ["backends/index.html"],
-    planned: true,
   },
   {
     slug: "backends/webassembly.html",
@@ -137,7 +126,6 @@ export const CHAPTERS = [
     years: "",
     summary: "Linear memory, a GEMM kernel built byte by byte, and four multiplies per instruction with 128-bit SIMD.",
     buildsOn: ["backends/javascript.html"],
-    planned: true,
   },
   {
     slug: "backends/webgpu.html",
@@ -146,7 +134,6 @@ export const CHAPTERS = [
     years: "",
     summary: "WGSL, workgroups, storage buffers and the asynchronous readback: matrix multiply on the GPU.",
     buildsOn: ["backends/javascript.html"],
-    planned: true,
   },
   {
     slug: "backends/litert.html",
@@ -155,7 +142,6 @@ export const CHAPTERS = [
     years: "",
     summary: "FlatBuffer models, delegates such as XNNPACK, and int8 quantisation you can watch happen.",
     buildsOn: ["backends/index.html"],
-    planned: true,
   },
   {
     slug: "backends/pytorch.html",
@@ -164,7 +150,6 @@ export const CHAPTERS = [
     years: "",
     summary: "Tensors, strides, the autograd tape, hooks and torch.compile, mirrored by a tape you can step through here.",
     buildsOn: ["backpropagation.html"],
-    planned: true,
   },
 ];
 

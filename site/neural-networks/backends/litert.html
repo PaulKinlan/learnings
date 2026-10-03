@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>LiteRT on phones and the edge | Neural networks</title>
+  <meta name="description" content="Understand conversion, delegates and quantization without confusing a numerical demo with model inference.">
+  <link rel="stylesheet" href="../../style.css">
+  <link rel="stylesheet" href="../chapter.css">
+  <link rel="stylesheet" href="../playgrounds.css">
+</head>
+<body data-nn-root="../" data-chapter="backends/litert.html">
+  <a class="skip" href="#main">Skip to content</a>
+  <header><a href="../../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="../">Chapters</a><a href="../lab.html">Workbench</a></nav></header>
+  <main id="main" class="chapter">
+    <p class="crumbs"><a href="../">Neural networks</a> › LiteRT on phones and the edge</p>
+    <h1>LiteRT on phones and the edge</h1><p class="lead">Understand conversion, delegates and quantization without confusing a numerical demo with model inference.</p>
+    <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
+      <section class="prose"><h2>From a trained graph to an edge runtime</h2><p>LiteRT is the on-device runtime evolved from TensorFlow Lite. A conversion step packages supported operators, tensor metadata and trained weights into a deployment model, commonly a .tflite FlatBuffer. Conversion can fold constants and apply quantization; it is not the same as training.</p><p>A delegate assigns supported subgraphs to an accelerated implementation such as XNNPACK on CPU or a device GPU/NPU backend. Unsupported operators may remain on another path, and crossings between paths can add copies and synchronization. Operator coverage, tensor shapes and hardware availability determine the actual execution plan.</p></section><section data-widget="quantization"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Precision is a deployment choice</h2><p>Affine quantization represents a real value approximately as (q − zeroPoint)·scale. The demo derives one scale for the whole tensor, includes zero in its range and clamps q to [−128,127]. A large outlier coarsens the step size for every smaller entry.</p><p>Real models may use per-channel weight scales and calibration data to estimate activation ranges. Post-training quantization can reduce size and bandwidth, but accuracy must be measured on representative data. Quantization-aware training simulates quantization effects while optimizing weights.</p><p>This page executes the quantizer in JavaScript only. It does not download a LiteRT runtime or claim to invoke a phone delegate. For browser decision-model inference integration, see the <a href="../../decision-models/playground.html">decision-model playground</a>, which states its model and runtime requirements.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://ai.google.dev/edge/litert">LiteRT documentation</a></li><li><a href="https://github.com/google/XNNPACK">XNNPACK inference operators</a></li></ul></section>
+      <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
+    </article></div>
+  </main>
+  <footer>Small, inspectable numerical experiments. No accounts, model downloads or external inference calls.</footer>
+  <script type="module" src="../chapters.js"></script>
+  <script type="module" src="../widgets.js"></script>
+</body>
+</html>

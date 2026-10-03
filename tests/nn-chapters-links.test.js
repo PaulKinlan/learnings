@@ -38,6 +38,20 @@ function resolveTarget(fromFile, url) {
   return p;
 }
 
+test('all sixteen chapters are live and the hub embeds all six playgrounds', () => {
+  assert.equal(CHAPTERS.length, 16);
+  assert.equal(readyChapters().length, CHAPTERS.length);
+  const hub = readFileSync(join(nn, 'index.html'), 'utf8');
+  for (const widget of ['perceptron', 'landscape', 'backprop', 'convolution', 'probabilities', 'attention']) {
+    assert.match(hub, new RegExp(`data-widget="${widget}"`));
+  }
+  for (const c of CHAPTERS.filter(c => c.slug !== 'gradient-descent.html')) {
+    const html = readFileSync(join(nn, c.slug), 'utf8');
+    assert.match(html, /data-widget="[a-z]+"/, `${c.slug} has an embedded experiment`);
+    assert.match(html, /Sources and further reading/, `${c.slug} cites its sources`);
+  }
+});
+
 test('every chapter has a known part, a unique slug and only known prerequisites', () => {
   const parts = new Set(PARTS.map((p) => p.id));
   const slugs = new Set();

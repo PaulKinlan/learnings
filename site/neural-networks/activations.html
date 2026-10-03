@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>Activation functions | Neural networks</title>
+  <meta name="description" content="Plot a nonlinearity and its derivative, then watch gradients pass through ten layers.">
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="./chapter.css">
+  <link rel="stylesheet" href="./playgrounds.css">
+</head>
+<body data-nn-root="./" data-chapter="activations.html">
+  <a class="skip" href="#main">Skip to content</a>
+  <header><a href="../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="./">Chapters</a><a href="./lab.html">Workbench</a></nav></header>
+  <main id="main" class="chapter">
+    <p class="crumbs"><a href="./">Neural networks</a> › Activation functions</p>
+    <h1>Activation functions</h1><p class="lead">Plot a nonlinearity and its derivative, then watch gradients pass through ten layers.</p>
+    <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
+      <section class="prose"><h2>Without a nonlinearity, depth collapses</h2><p>Composing two affine transforms gives another affine transform. Hidden layers become expressive only when something nonlinear separates them. Sigmoid maps to (0,1), tanh to (−1,1), and ReLU keeps positive values while zeroing negatives.</p><p>Sigmoid’s derivative never exceeds 1/4. With unit weights, ten chained derivatives are at most (1/4)¹⁰ ≈ 0.000000954. The table below multiplies the actual local derivatives, which may be even smaller. This is a scalar illustration, not the full matrix Jacobian of a wide network.</p></section><section data-widget="activations"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Which problem does each function solve?</h2><p>ReLU preserves slope 1 on positive inputs, but a negative preactivation receives no gradient. Leaky ReLU keeps a small negative slope. Tanh is zero-centred yet saturates in both tails. A hard step is useful for logical classification but its derivative is zero almost everywhere, so ordinary gradient descent cannot train it.</p><p>GELU smoothly gates by an approximation to a Gaussian cumulative distribution. This plot uses the documented tanh approximation. SiLU, also called Swish, is x·sigmoid(x). SwiGLU is not a scalar activation in this dropdown: it computes SiLU(xW₁) ⊙ (xW₂), followed by an output projection, so it has two learned branches.</p><p>Try sigmoid with weight 1 and input 3, then ReLU with input 0.5. Raise the weight to 2: preserving local slopes can now produce exploding gradients. Architecture, initialization, normalization and residual connections matter alongside the activation.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://proceedings.mlr.press/v9/glorot10a.html">Glorot & Bengio (2010), Understanding the difficulty of training deep feedforward neural networks</a></li><li><a href="https://arxiv.org/abs/1606.08415">Hendrycks & Gimpel (2016), GELU</a></li><li><a href="https://arxiv.org/abs/2002.05202">Shazeer (2020), GLU Variants Improve Transformer</a></li></ul></section>
+      <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
+    </article></div>
+  </main>
+  <footer>Small, inspectable numerical experiments. No accounts, model downloads or external inference calls.</footer>
+  <script type="module" src="./chapters.js"></script>
+  <script type="module" src="./widgets.js"></script>
+</body>
+</html>

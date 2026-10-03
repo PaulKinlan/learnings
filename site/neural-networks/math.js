@@ -209,7 +209,7 @@ export function entropy(p) {
 }
 
 export function crossEntropy(probs, target) {
-  return -Math.log(Math.max(probs[target], 1e-12));
+  return -Math.log(probs[target]);
 }
 
 export function mse(pred, target) {
