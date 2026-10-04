@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
   <meta name="referrer" content="no-referrer">
   <title>PyTorch and autograd | Neural networks</title>
-  <meta name="description" content="Compare a small JavaScript tape with the tensor operations you would run in PyTorch.">
+  <meta name="description" content="Tensors, strides and autograd: how PyTorch indexes storage without copying, how reverse-mode autodiff builds a DAG of vector-Jacobian products, and where compilation breaks.">
   <link rel="stylesheet" href="../../style.css">
   <link rel="stylesheet" href="../chapter.css">
   <link rel="stylesheet" href="../playgrounds.css">
@@ -16,22 +16,127 @@
   <header><a href="../../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="../">Chapters</a><a href="../lab.html">Workbench</a></nav></header>
   <main id="main" class="chapter">
     <p class="crumbs"><a href="../">Neural networks</a> › PyTorch and autograd</p>
-    <h1>PyTorch and autograd</h1><p class="lead">Compare a small JavaScript tape with the tensor operations you would run in PyTorch.</p>
+    <h1>PyTorch and autograd</h1><p class="lead">A PyTorch tensor is a lightweight metadata view over a flat storage buffer. Operations with <code>requires_grad=True</code> dynamically construct a directed acyclic graph of vector-Jacobian products. This chapter works through strides and non-contiguous views in memory, traces the exact autograd DAG for a 2-2-1 network, and inspects graph breaks under <code>torch.compile</code>.</p>
     <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
-      <section class="prose"><h2>Tensors carry values, layouts and history</h2><p>A PyTorch tensor has a dtype, device, shape and strides. A transpose can change strides without copying storage; a contiguous conversion can allocate. Broadcasting and views affect which elements share storage and how gradients must be summed.</p><p>With requires_grad enabled, operations build an autograd graph. Calling backward on a scalar loss propagates vector-Jacobian products, accumulating into leaf parameter gradients. Clear gradients between optimizer steps unless accumulation is intentional. Hooks observe or modify gradients, but careless hooks can retain large graphs.</p></section><section data-widget="backprop"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Run the corresponding network in Python</h2><p>The browser graph above is a JavaScript reverse-mode mirror, not PyTorch in the browser. With PyTorch installed locally, run this Python program to compare gradients. It uses float64 to make comparison to JavaScript numbers straightforward.</p><pre><code>import torch
+      <section class="prose"><h2>Run it first</h2><p>The interactive playground below runs a 2-2-1 network: input <var>x</var> ∈ ℝ², weight matrix <var>W</var> ∈ ℝ²ˣ², hidden layer <var>h</var> = tanh(<var>W</var><var>x</var> + <var>b</var>), output prediction <var>ŷ</var> = σ(<var>v</var>ᵀ<var>h</var> + <var>c</var>), and squared error loss <var>L</var> = (<var>ŷ</var> − 1)². Step through the forward and backward passes to inspect the local partial derivatives computed by the JavaScript tape.</p></section>
+      <section data-widget="backprop"><p>Enable JavaScript to use this local playground. The explanation and listings below work without it.</p></section>
+
+      <section class="prose"><h2>Tensors, strides and storage</h2><p>In PyTorch, a tensor's values live in an <code>UntypedStorage</code>: a 1D contiguous block of memory. The tensor object itself is only metadata: a pointer to the storage, a data type, a storage offset, a shape vector, and a strides vector. Element <code>t[i, j]</code> sits at an integer offset from the storage pointer:</p>
+<math display="block"><mtext>offset</mtext><mo>=</mo><mtext>storage_offset</mtext><mo>+</mo><munderover><mo>∑</mo><mrow><mi>d</mi><mo>=</mo><mn>0</mn></mrow><mrow><mi>D</mi><mo>−</mo><mn>1</mn></mrow></munderover><msub><mi>i</mi><mi>d</mi></msub><mo>·</mo><msub><mtext>stride</mtext><mi>d</mi></msub></math>
+<p>Take a 2 × 3 matrix filled with values 0 to 5. Stored in row-major order, its shape is <code>[2, 3]</code> and its strides are <code>(3, 1)</code>: advancing by one row skips 3 elements in memory; advancing by one column skips 1 element. Calling <code>.t()</code> transposes the tensor to shape <code>[3, 2]</code> simply by swapping the strides to <code>(1, 3)</code>. Not a single float is copied:</p>
+<pre class="diagram" role="img" aria-label="A 2 by 3 matrix and its transpose sharing the same flat 6-element storage buffer. The original tensor has strides (3, 1); the transpose has strides (1, 3).">UntypedStorage (6 float64 elements, 48 bytes):
+byte:    0      8      16     24     32     40
+index:   0      1      2      3      4      5
+value:  [0.0 │  1.0 │  2.0 │  3.0 │  4.0 │  5.0]
+
+Tensor t: shape [2, 3], strides (3, 1), offset 0:
+row 0:  [0.0]──(+1)──▶[1.0]──(+1)──▶[2.0]
+         │
+       (+3)
+         ▼
+row 1:  [3.0]──(+1)──▶[4.0]──(+1)──▶[5.0]     contiguous: True
+
+Tensor u = t.t(): shape [3, 2], strides (1, 3), offset 0:
+row 0:  [0.0]─────────(+3)─────────▶[3.0]
+row 1:  [1.0]─────────(+3)─────────▶[4.0]
+row 2:  [2.0]─────────(+3)─────────▶[5.0]     contiguous: False</pre>
+<p>Both tensors share the exact same <code>data_ptr()</code>. But <code>u</code> is no longer contiguous: reading along row 0 touches elements 0 and 3, which are 24 bytes apart in storage rather than adjacent. Calling <code>u.view(6)</code> fails immediately:</p>
+<pre class="listing-bad"><code>&gt;&gt;&gt; u = t.t()
+&gt;&gt;&gt; u.view(6)
+RuntimeError: view size is not compatible with input tensor's size and stride
+(at least one dimension spans across two contiguous subspaces). Use .reshape(...) instead.</code></pre>
+<p><code>.view()</code> requires contiguous row-major strides because it guarantees zero-copy indexing. To flatten <code>u</code>, one must call <code>.contiguous()</code>, which allocates a new <code>UntypedStorage</code> buffer and copies the elements into contiguous order <code>[0.0, 3.0, 1.0, 4.0, 2.0, 5.0]</code> with strides <code>(2, 1)</code>.</p></section>
+
+      <section class="prose"><h2>Broadcasting: expanding dimensions with stride zero</h2><p>Broadcasting allows arithmetic between tensors of different shapes without replicating data. Consider adding a bias vector <var>b</var> ∈ ℝ³ to a batch of activations <var>X</var> ∈ ℝ⁴ˣ³. When PyTorch broadcasts <var>b</var> across the batch dimension, it creates a view of shape <code>[4, 3]</code> with strides <code>(0, 1)</code>:</p>
+<math display="block"><mi>b</mi><mo>[</mo><mi>i</mi><mo>,</mo><mi>j</mi><mo>]</mo><mo>=</mo><mtext>storage</mtext><mo>[</mo><mi>i</mi><mo>·</mo><mn>0</mn><mo>+</mo><mi>j</mi><mo>·</mo><mn>1</mn><mo>]</mo><mo>=</mo><mtext>storage</mtext><mo>[</mo><mi>j</mi><mo>]</mo></math>
+<p>A stride of zero means that varying the row index <var>i</var> advances memory by 0 bytes. All 4 rows point to the exact same 3 numbers in storage. In the forward pass, this saves memory and memory bandwidth.</p>
+<p>In the backward pass, broadcasting imposes a mathematical requirement: because each element of <var>b</var> influenced all 4 rows of the output <var>Y</var>, its incoming gradients must be summed across the broadcast dimension:</p>
+<math display="block"><msub><mi>Y</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo><msub><mi>X</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>+</mo><msub><mi>b</mi><mi>j</mi></msub><mspace width="1em"></mspace><mo>⇒</mo><mspace width="1em"></mspace><mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><msub><mi>b</mi><mi>j</mi></msub></mrow></mfrac><mo>=</mo><munderover><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mn>0</mn></mrow><mn>3</mn></munderover><mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><msub><mi>Y</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mrow></mfrac></math>
+<p>Worked in numbers: if the upstream gradient matrix ∂L/∂Y is</p>
+<math display="block"><mo>[</mo><mtable><mtr><mtd><mn>1.0</mn></mtd><mtd><mn>0.0</mn></mtd><mtd><mn>2.0</mn></mtd></mtr><mtr><mtd><mn>0.5</mn></mtd><mtd><mn>1.0</mn></mtd><mtd><mo>−</mo><mn>1.0</mn></mtd></mtr><mtr><mtd><mn>0.0</mn></mtd><mtd><mn>3.0</mn></mtd><mtd><mn>1.0</mn></mtd></mtr><mtr><mtd><mo>−</mo><mn>2.0</mn></mtd><mtd><mn>1.0</mn></mtd><mtd><mn>0.5</mn></mtd></mtr></mtable><mo>]</mo><mspace width="1em"></mspace><mo>⇒</mo><mspace width="1em"></mspace><mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><mi>b</mi></mrow></mfrac><mo>=</mo><mo>[</mo><mtable><mtr><mtd><mo>−</mo><mn>0.5</mn><mo>,</mo></mtd><mtd><mn>5.0</mn><mo>,</mo></mtd><mtd><mn>2.5</mn></mtd></mtr></mtable><mo>]</mo></math>
+<p>The autograd engine automatically inserts a reduction node that sums across any dimension whose input stride was zero or whose dimension was prepended.</p></section>
+
+      <section class="prose"><h2>The autograd DAG and vector-Jacobian products</h2><p>Run the Python program below. It mirrors the exact architecture and weights from the interactive playground above, using <code>torch.float64</code> so every bit can be compared directly to JavaScript's standard binary64 numbers:</p>
+<figure class="listing"><figcaption>2-2-1 network in PyTorch</figcaption><pre><code>import torch
+
 x = torch.tensor([1., -2.], dtype=torch.float64)
 W = torch.tensor([[.5, -.3], [-.4, .8]], dtype=torch.float64, requires_grad=True)
 b = torch.tensor([.1, 0.], dtype=torch.float64, requires_grad=True)
 v = torch.tensor([1.2, -.7], dtype=torch.float64, requires_grad=True)
 c = torch.tensor(.2, dtype=torch.float64, requires_grad=True)
+
 h = torch.tanh(W @ x + b)
 yhat = torch.sigmoid(v @ h + c)
 loss = (yhat - 1).square()
 loss.backward()
-print("prediction", yhat.item(), "loss", loss.item())
-print("dL/dW", W.grad, "dL/db", b.grad, "dL/dv", v.grad, "dL/dc", c.grad)
-assert torch.isfinite(W.grad).all()
-assert W.grad.abs().sum() > 0</code></pre><p>torch.compile captures supported regions and optimizes their execution. It does not replace the loss, autograd mathematics or validation. Compilation has startup cost and may encounter graph breaks when Python behaviour cannot be captured.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://pytorch.org/docs/stable/notes/autograd.html">PyTorch autograd mechanics</a></li><li><a href="https://pytorch.org/docs/stable/tensor_view.html">Tensor views and strides</a></li><li><a href="https://pytorch.org/docs/stable/torch.compiler.html">torch.compiler documentation</a></li></ul></section>
+
+print("prediction:", yhat.item())
+print("loss:      ", loss.item())
+print("dL/dW:     ", W.grad.tolist())
+print("dL/db:     ", b.grad.tolist())
+print("dL/dv:     ", v.grad.tolist())
+print("dL/dc:     ", c.grad.item())</code></pre></figure>
+<p>During the forward pass, PyTorch builds a directed acyclic graph of <code>Node</code> objects. Calling <code>loss.backward()</code> traverses this graph in reverse topological order, passing an upstream gradient vector <var>g</var> into each node's vector-Jacobian product (VJP):</p>
+<div class="table-scroll"><table><thead><tr><th>graph node (<code>grad_fn</code>)</th><th>operation</th><th>vector-Jacobian product (VJP)</th></tr></thead><tbody>
+<tr><td><code>PowBackward0</code></td><td><var>L</var> = <var>u</var>²</td><td><var>g</var> · 2<var>u</var> = 2(<var>ŷ</var> − 1)</td></tr>
+<tr><td><code>SubBackward0</code></td><td><var>u</var> = <var>ŷ</var> − 1</td><td><var>g</var> · 1</td></tr>
+<tr><td><code>SigmoidBackward0</code></td><td><var>ŷ</var> = σ(<var>z</var>₂)</td><td><var>g</var> · <var>ŷ</var>(1 − <var>ŷ</var>)</td></tr>
+<tr><td><code>AddBackward0</code></td><td><var>z</var>₂ = <var>a</var> + <var>c</var></td><td>passes <var>g</var> to <var>a</var> and <var>c</var></td></tr>
+<tr><td><code>DotBackward0</code></td><td><var>a</var> = <var>v</var> · <var>h</var></td><td>pushes <var>g</var>·<var>h</var> to <var>v</var> and <var>g</var>·<var>v</var> to <var>h</var></td></tr>
+<tr><td><code>TanhBackward0</code></td><td><var>h</var> = tanh(<var>z</var>₁)</td><td><var>g</var> ⊙ (1 − <var>h</var>²)</td></tr>
+<tr><td><code>AddBackward0</code></td><td><var>z</var>₁ = <var>W</var><var>x</var> + <var>b</var></td><td>passes <var>g</var> to <var>W</var><var>x</var> and <var>b</var></td></tr>
+<tr><td><code>MvBackward0</code></td><td><var>W</var><var>x</var></td><td>pushes <var>g</var><var>x</var>ᵀ to <var>W</var></td></tr>
+</tbody></table></div>
+<h3>Numerical comparison: Python against JavaScript</h3><p>Because both runtimes evaluate binary64 arithmetic on IEEE 754 hardware, the browser's JavaScript reverse-mode tape and PyTorch's native autograd engine match to the last decimal place:</p>
+<div class="table-scroll"><table><thead><tr><th>quantity</th><th>PyTorch <code>torch.float64</code></th><th>JavaScript Float64 Tape (Playground)</th></tr></thead><tbody>
+<tr><td>prediction (<var>ŷ</var>)</td><td>0.8670593723174677</td><td>0.8670593723174677</td></tr>
+<tr><td>loss (<var>L</var>)</td><td>0.017673210488625683</td><td>0.017673210488625683</td></tr>
+<tr><td>∂L/∂W[0,0]</td><td>−0.01121770048376506</td><td>−0.01121770048376506</td></tr>
+<tr><td>∂L/∂W[0,1]</td><td>0.02243540096753011</td><td>0.02243540096753011</td></tr>
+<tr><td>∂L/∂W[1,0]</td><td>0.00151568711721548</td><td>0.00151568711721548</td></tr>
+<tr><td>∂L/∂W[1,1]</td><td>−0.00303137423443095</td><td>−0.00303137423443095</td></tr>
+<tr><td>∂L/∂b</td><td>[−0.01121770048376506, 0.00151568711721548]</td><td>[−0.01121770048376506, 0.00151568711721548]</td></tr>
+<tr><td>∂L/∂v</td><td>[−0.02554938420609376, 0.02954498280397404]</td><td>[−0.02554938420609376, 0.02954498280397404]</td></tr>
+<tr><td>∂L/∂c</td><td>−0.03064744558620454</td><td>−0.03064744558620454</td></tr>
+</tbody></table></div>
+</section>
+
+      <section class="prose"><h2>The gradient accumulation trap</h2><p>By default, calling <code>.backward()</code> <em>adds</em> incoming gradients into each leaf tensor's <code>.grad</code> field using <code>+=</code> rather than overwriting it:</p>
+<figure class="listing"><figcaption>accumulating gradients across steps</figcaption><pre><code>loss = forward()
+loss.backward()
+print(c.grad.item())    # -0.03064744558620454
+
+loss2 = forward()
+loss2.backward()
+print(c.grad.item())    # -0.06129489117240908 (doubled!)</code></pre></figure>
+<p>If an optimizer step is taken without clearing gradients, the second update sees twice the intended magnitude. In PyTorch, <code>optimizer.zero_grad(set_to_none=True)</code> sets each parameter's <code>.grad</code> to <code>None</code> instead of zeroing memory. Setting to <code>None</code> frees memory until the next backward pass and allows the memory allocator to reuse the buffer.</p>
+<p>This accumulation behavior is intentional: it makes <strong>gradient accumulation</strong> straightforward when training large batch sizes on memory-constrained GPUs. An application runs multiple forward and backward passes across micro-batches, accumulating gradients in place, before calling <code>optimizer.step()</code> and <code>optimizer.zero_grad()</code> once.</p>
+<p>Note also that PyTorch destroys the intermediate activation graph immediately upon completion of <code>backward()</code> to free memory. Calling <code>loss.backward()</code> a second time on the same loss tensor throws:</p>
+<pre class="listing-bad"><code>RuntimeError: Trying to backward through the graph a second time (or directly access saved
+tensors after they have already been freed). Saved intermediate values of the graph are freed
+when you call .backward() or autograd.grad(). Specify retain_graph=True if you need to backward
+through the graph a second time or if you need to access saved tensors after calling backward.</code></pre>
+</section>
+
+      <section class="prose"><h2>torch.compile and graph breaks</h2><p><code>torch.compile</code> (introduced in PyTorch 2.0) JIT-compiles PyTorch programs into fused kernels. It uses TorchDynamo to inspect Python bytecode via CPython's frame evaluation API (PEP 523), traces tensor operations into an AOTAutograd graph, and lowers the graph to optimized machine code or Triton GPU kernels via TorchInductor.</p><p>When Dynamo encounters Python code it cannot trace—such as data-dependent Python control flow—it halts compilation, executes the unsupported operation in standard CPython, and resumes tracing afterwards. This is a <strong>graph break</strong>:</p>
+<figure class="listing"><figcaption>graph break caused by data-dependent branching</figcaption><pre><code>import torch
+
+def f(x):
+    y = x.sin()
+    if y.sum() &gt; 0:       # DATA-DEPENDENT BREAK: requires evaluating tensor into Python bool
+        return y * 2
+    return y - 1
+
+compiled_f = torch.compile(f)
+compiled_f(torch.ones(4))</code></pre></figure>
+<p>Running this with <code>TORCH_LOGS="graph_breaks"</code> prints the exact compiler decision:</p>
+<pre class="listing-bad"><code>V1004 19:05:57 [0/0] [__graph_breaks] Graph break in user code at graph_break.py:5
+V1004 19:05:57 [0/0] [__graph_breaks] Graph Break Reason: Data-dependent branching
+V1004 19:05:57 [0/0] [__graph_breaks]   Explanation: Detected data-dependent branching
+(e.g. `if my_tensor.sum() &gt; 0:`). Dynamo does not support tracing dynamic control flow.</code></pre>
+<p>A graph break forces PyTorch to restart the Python interpreter, copy intermediate buffers, and restart execution, defeating kernel fusion and adding dispatch latency. Inspecting graph breaks with <code>torch._dynamo.explain(fn)</code> and replacing data-dependent branches with tensor operations like <code>torch.where(y.sum() &gt; 0, y * 2, y - 1)</code> eliminates the break and compiles the entire function into a single fused kernel.</p></section>
+
+      <section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://pytorch.org/docs/stable/notes/autograd.html">PyTorch documentation: Autograd mechanics</a> (reverse-mode autodiff, graph nodes, accumulation)</li><li><a href="https://pytorch.org/docs/stable/tensor_view.html">PyTorch documentation: Tensor views and strides</a> (storage offsets, contiguity)</li><li><a href="https://pytorch.org/docs/stable/torch.compiler.html">PyTorch documentation: torch.compiler</a> (TorchDynamo, AOTAutograd, Inductor)</li><li><a href="https://pytorch.org/docs/stable/torch.compiler_troubleshooting.html">PyTorch documentation: Diagnosing graph breaks</a></li><li><a href="https://proceedings.neurips.cc/paper/2019/hash/bdbca288fee7f92f2bfa9f7012727740-Abstract.html">Paszke et al. (2019), PyTorch: An Imperative Style, High-Performance Deep Learning Library</a></li><li><a href="https://peps.python.org/pep-0523/">PEP 523: Adding a frame evaluation API to CPython</a></li></ul></section>
       <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
     </article></div>
   </main>

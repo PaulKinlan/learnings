@@ -211,3 +211,24 @@ test('backends/webassembly.html prints the generator from engine.js and every mo
     assert.deepEqual([...f.subarray(0, n + 1)], [...C.map((c, j) => Math.fround(c + Math.fround(a * B[j]))), 0], `SIMD axpy wrong for n = ${n}`);
   }
 });
+
+test('backends/litert.html prints quantizers from math.js, open and in order', async () => {
+  const math = await import('../site/neural-networks/math.js');
+  const html = readFileSync(join(nn, 'backends/litert.html'), 'utf8');
+  assert.doesNotMatch(html, /<details/, 'litert.html must not hide code in <details>');
+  const shown = shownListings(html);
+  assert.deepEqual(Object.keys(shown).sort(), ['affine', 'symmetric'].sort());
+  assert.deepEqual(nonBlankLines(shown.affine), nonBlankLines(math.quantizeAffineInt8.toString().split('\n')), 'quantizeAffineInt8 drifted from math.js');
+  assert.deepEqual(nonBlankLines(shown.symmetric), nonBlankLines(math.quantizeSymmetricInt8.toString().split('\n')), 'quantizeSymmetricInt8 drifted from math.js');
+});
+
+test('backends/pytorch.html presents autograd graph and stride derivation openly', async () => {
+  const html = readFileSync(join(nn, 'backends/pytorch.html'), 'utf8');
+  assert.doesNotMatch(html, /<details/, 'pytorch.html must not hide code in <details>');
+  assert.match(html, /UntypedStorage/);
+  assert.match(html, /PowBackward0/);
+  assert.match(html, /MvBackward0/);
+  assert.match(html, /torch\.compile/);
+  assert.match(html, /graph_breaks/);
+});
+
