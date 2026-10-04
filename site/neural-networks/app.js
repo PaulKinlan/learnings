@@ -163,11 +163,11 @@ function initCodeExplorers() {
     const bp = KERNEL_CODE_BLUEPRINTS[key];
     if (!bp) return;
 
-    const details = document.createElement("details");
-    details.className = "chapter-code-details";
-    const summary = document.createElement("summary");
-    summary.textContent = `View First-Principles Code (Raw JS · Raw WASM WAT · WebGPU WGSL) — ${bp.title}`;
-    details.appendChild(summary);
+    const box = document.createElement("div");
+    box.className = "chapter-code-box";
+    const heading = document.createElement("h4");
+    heading.textContent = `First-Principles Implementation (Raw JS · Raw WASM WAT · WebGPU WGSL) — ${bp.title}`;
+    box.appendChild(heading);
 
     const body = document.createElement("div");
     body.className = "chapter-code-body";
@@ -206,8 +206,8 @@ function initCodeExplorers() {
     });
 
     body.append(tabBar, pre);
-    details.appendChild(body);
-    container.replaceChildren(details);
+    box.appendChild(body);
+    container.replaceChildren(box);
   });
 }
 

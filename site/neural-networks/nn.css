@@ -972,18 +972,18 @@
   margin-top: 1.35rem;
 }
 
-.chapter-code-details {
-  background: var(--wash);
+.chapter-code-box {
+  background: var(--card, #151d2f);
   border: 1px solid var(--line);
   border-radius: 6px;
-  padding: 0.7rem 1rem;
+  padding: 1rem 1.25rem;
 }
 
-.chapter-code-details summary {
-  cursor: pointer;
+.chapter-code-box h4 {
+  margin: 0 0 0.65rem;
   font-weight: 700;
-  font-size: 0.9rem;
-  color: var(--ink);
+  font-size: 0.95rem;
+  color: var(--ink, #f8fafc);
 }
 
 .chapter-code-body {
