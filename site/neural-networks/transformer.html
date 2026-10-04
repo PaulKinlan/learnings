@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
   <meta name="referrer" content="no-referrer">
   <title>The Transformer | Neural networks</title>
-  <meta name="description" content="Inspect queries, keys, values and the row-wise softmax that mixes token information.">
+  <meta name="description" content="Scaled dot-product attention from first principles: tensor shape progression, variance scaling proof, softmax Jacobian, causal masking, layer FLOPs breakdown, and the pre-norm block.">
   <link rel="stylesheet" href="../style.css">
   <link rel="stylesheet" href="./chapter.css">
   <link rel="stylesheet" href="./nn.css">
@@ -17,100 +17,135 @@
   <header><a href="../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="./">Chapters</a><a href="./lab.html">Workbench</a></nav></header>
   <main id="main" class="chapter">
     <p class="crumbs"><a href="./">Neural networks</a> › The Transformer</p>
-    <h1>The Transformer</h1><p class="lead">Inspect queries, keys, values and the row-wise softmax that mixes token information.</p>
+    <h1>The Transformer</h1><p class="lead">Vaswani et al. (2017) eliminated recurrence in favor of multi-head self-attention. This chapter derives tensor shapes through an attention layer, proves why dot products require √d_k scaling, derives the softmax Jacobian, analyzes attention vs FFN FLOP scaling, and walks through the pre-norm residual block.</p>
     <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
-      <section class="prose"><h2>Attention is a learned lookup</h2><p>Each token representation is projected into a query Q, key K and value V. A query’s dot product with every key gives compatibility scores. Softmax over keys makes a distribution; its weighted average of values is the output. Q and K choose where to read; V supplies what gets read.</p><math display="block"><mtext>Attention</mtext><mo>(</mo><mi>Q</mi><mo>,</mo><mi>K</mi><mo>,</mo><mi>V</mi><mo>)</mo><mo>=</mo><mtext>softmax</mtext><mo>(</mo><mfrac><mrow><mi>Q</mi><msup><mi>K</mi><mi>T</mi></msup></mrow><msqrt><msub><mi>d</mi><mi>k</mi></msub></msqrt></mfrac><mo>)</mo><mi>V</mi></math><p>If query and key components are independent, zero-mean and unit variance, their dot-product variance grows with dₖ. Dividing by √dₖ controls that scale. It is not a cosine normalization. The toy below fixes dₖ = 2 and displays every vector, so every cell can be checked by hand.</p></section><section data-widget="attention"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Masks, heads and grouping</h2><p>A causal decoder masks future keys to −∞ before softmax, making their weights zero. An encoder can use bidirectional attention. Position information must enter separately; otherwise permuting input tokens just permutes attention’s rows and columns.</p><p>Multi-head attention (MHA) learns separate Q/K/V projections for each head, concatenates head outputs and applies an output projection. The heatmap above shows one head only. Multi-query attention (MQA) shares one K/V head across all query heads. Grouped-query attention (GQA) is in between: several query heads share each K/V head. Q head count stays fixed while K/V storage falls.</p><p>The calculator below compares 8 query heads with 8, 2 or 1 K/V heads. This is a cache-size calculation, not a simulation of learned multi-head behaviour. Fewer K/V heads can reduce decoding bandwidth, but model quality depends on training.</p></section><section data-widget="modern"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section>
+      <section class="prose"><h2>Attention as a dynamic content-based lookup</h2><p>In feedforward layers, weights are static connections learned during training. In self-attention, the weights connecting tokens are computed dynamically on the fly based on token compatibility. Each input token representation <math display="inline"><msub><mi>x</mi><mi>i</mi></msub><mo>∈</mo><msup><mi>ℝ</mi><mi>d</mi></msup></math> is projected into three subspaces:</p><ul><li><strong>Query (<var>Q</var>)</strong>: what information token <var>i</var> is searching for.</li><li><strong>Key (<var>K</var>)</strong>: what features or context token <var>j</var> advertises.</li><li><strong>Value (<var>V</var>)</strong>: the actual content payload transmitted if attended to.</li></ul>
+<p>The matrix formulation evaluates all pairs simultaneously:</p>
+<math display="block"><mtext>Attention</mtext><mo>(</mo><mi>Q</mi><mo>,</mo><mi>K</mi><mo>,</mo><mi>V</mi><mo>)</mo><mo>=</mo><mtext>softmax</mtext><mo>(</mo><mfrac><mrow><mi>Q</mi><msup><mi>K</mi><mi>T</mi></msup></mrow><msqrt><msub><mi>d</mi><mi>k</mi></msub></msqrt></mfrac><mo>+</mo><mi>M</mi><mo>)</mo><mi>V</mi></math>
+</section>
 
-    <!-- =====================================================================
-         INTEGRATED FULL TRAINERS & LIVE BENCHMARK DEMOS
-         ===================================================================== -->
+      <section data-widget="attention"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section>
 
-<section id="transformer-lab" class="nn-section">
-      <h2>5. Transformers &amp; Scaled Dot-Product Self-Attention (2017–Present)</h2>
+      <section class="prose"><h2>Tensor shape progression across a single layer</h2><p>For an input sequence of length <var>T</var> with model dimension <var>d</var> and <var>H</var> attention heads (head dimension <math display="inline"><msub><mi>d</mi><mi>k</mi></msub><mo>=</mo><mi>d</mi><mo>/</mo><mi>H</mi></math>), shapes progress through the attention mechanism as follows:</p>
+<div class="table-scroll"><table><thead><tr><th>Tensor</th><th>Expression</th><th>Shape</th><th>Description</th></tr></thead><tbody>
+<tr><td><var>X</var></td><td>Input embeddings</td><td>[<var>T</var>, <var>d</var>]</td><td>Batch of <var>T</var> token vectors of width <var>d</var></td></tr>
+<tr><td><var>W</var><sub>Q</sub>, <var>W</var><sub>K</sub>, <var>W</var><sub>V</sub></td><td>Projection weights</td><td>[<var>d</var>, <var>d</var>]</td><td>Learned linear projection matrices</td></tr>
+<tr><td><var>Q</var><sub>h</sub>, <var>K</var><sub>h</sub>, <var>V</var><sub>h</sub></td><td><math display="inline"><mi>X</mi><msubsup><mi>W</mi><mrow><mi>Q</mi><mo>,</mo><mi>K</mi><mo>,</mo><mi>V</mi></mrow><mrow><mo>(</mo><mi>h</mi><mo>)</mo></mrow></msubsup></math></td><td>[<var>T</var>, <var>d</var><sub>k</sub>]</td><td>Per-head projected queries, keys, and values</td></tr>
+<tr><td><var>S</var><sub>h</sub></td><td><math display="inline"><msub><mi>Q</mi><mi>h</mi></msub><msubsup><mi>K</mi><mi>h</mi><mi>T</mi></msubsup><mo>/</mo><msqrt><msub><mi>d</mi><mi>k</mi></msub></msqrt><mo>+</mo><mi>M</mi></math></td><td>[<var>T</var>, <var>T</var>]</td><td>Pairwise scaled compatibility scores</td></tr>
+<tr><td><var>P</var><sub>h</sub></td><td><math display="inline"><mtext>softmax</mtext><mo>(</mo><msub><mi>S</mi><mi>h</mi></msub><mo>)</mo></math></td><td>[<var>T</var>, <var>T</var>]</td><td>Row-normalized attention probability weights (∑ⱼ <var>P</var><sub>ij</sub> = 1)</td></tr>
+<tr><td><var>O</var><sub>h</sub></td><td><math display="inline"><msub><mi>P</mi><mi>h</mi></msub><msub><mi>V</mi><mi>h</mi></msub></math></td><td>[<var>T</var>, <var>d</var><sub>k</sub>]</td><td>Weighted combination of values for head <var>h</var></td></tr>
+<tr><td><var>O</var><sub>concat</sub></td><td><math display="inline"><mo>[</mo><msub><mi>O</mi><mn>1</mn></msub><mo>,</mo><mo>…</mo><mo>,</mo><msub><mi>O</mi><mi>H</mi></msub><mo>]</mo></math></td><td>[<var>T</var>, <var>d</var>]</td><td>Concatenated outputs across all <var>H</var> heads</td></tr>
+<tr><td><var>Y</var></td><td><math display="inline"><msub><mi>O</mi><mtext>concat</mtext></msub><msub><mi>W</mi><mi>O</mi></msub></math></td><td>[<var>T</var>, <var>d</var>]</td><td>Final linear output projection</td></tr>
+</tbody></table></div>
+</section>
 
-      <div class="study-prose">
-        <p>
-          Even with Gated GRUs and LSTMs, recurrent networks suffer from two structural bottlenecks: (1) step <code>t</code> cannot be computed until step <code>t − 1</code> finishes, preventing parallel GPU/TPU training across the sequence dimension <code>T</code>; and (2) all historical information from tokens <code>0 … t − 1</code> must be compressed into a single fixed-width vector <code>h<sub>t−1</sub> ∈ ℝ<sup>D</sup></code>.
-        </p>
-        <p>
-          In <em>Attention Is All You Need</em> (2017), Vaswani et al. eliminated recurrence entirely in favor of <strong>Multi-Head Self-Attention</strong>. Every token position <code>i ∈ {0 … T−1}</code> projects its representation <code>x<sub>i</sub></code> into three distinct subspace vectors for each head <code>h</code>:
-        </p>
-        <ul>
-          <li><strong>Query <code>q<sub>i</sub> = x<sub>i</sub> W<sub>Q</sub><sup>(h)</sup></code>:</strong> What feature or context is token <code>i</code> looking for?</li>
-          <li><strong>Key <code>k<sub>j</sub> = x<sub>j</sub> W<sub>K</sub><sup>(h)</sup></code>:</strong> What routing descriptor or address does token <code>j</code> advertise?</li>
-          <li><strong>Value <code>v<sub>j</sub> = x<sub>j</sub> W<sub>V</sub><sup>(h)</sup></code>:</strong> What payload content should token <code>j</code> transmit if attended to?</li>
-        </ul>
-        <p>
-          <strong>Why the <code>1 / √d<sub>k</sub></code> Scaling Factor Is Critical:</strong>
-          If the components of <code>q<sub>i</sub></code> and <code>k<sub>j</sub></code> have zero mean and unit variance, their dot product <code>q<sub>i</sub> · k<sub>j</sub> = ∑<sub>m=1..d<sub>k</sub></sub> q<sub>im</sub> k<sub>jm</sub></code> has mean <code>0</code> and variance <code>d<sub>k</sub></code> (standard deviation <code>√d<sub>k</sub></code>). For large head dimension <code>d<sub>k</sub></code>, unscaled dot products grow large in magnitude, pushing <code>softmax</code> into extreme one-hot saturation where the Softmax Jacobian <code>∂P<sub>ij</sub>/∂S<sub>ik</sub> = P<sub>ij</sub>(δ<sub>jk</sub> − P<sub>ik</sub>)</code> vanishes to zero! Dividing by <code>√d<sub>k</sub></code> restores unit variance prior to softmax.
-        </p>
-      </div>
+      <section class="prose"><h2>Variance derivation: why divide by √d_k?</h2><p>Assume components of query <var>q</var> and key <var>k</var> are independent, zero-mean, unit-variance random variables: <math display="inline"><mi mathvariant="double-struck">E</mi><mo>[</mo><msub><mi>q</mi><mi>i</mi></msub><mo>]</mo><mo>=</mo><mi mathvariant="double-struck">E</mi><mo>[</mo><msub><mi>k</mi><mi>i</mi></msub><mo>]</mo><mo>=</mo><mn>0</mn></math> and <math display="inline"><mi>Var</mi><mo>(</mo><msub><mi>q</mi><mi>i</mi></msub><mo>)</mo><mo>=</mo><mi>Var</mi><mo>(</mo><msub><mi>k</mi><mi>i</mi></msub><mo>)</mo><mo>=</mo><mn>1</mn></math>. The dot product is <math display="inline"><mi>q</mi><mo>·</mo><mi>k</mi><mo>=</mo><msubsup><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn></mrow><msub><mi>d</mi><mi>k</mi></msub></msubsup><msub><mi>q</mi><mi>i</mi></msub><msub><mi>k</mi><mi>i</mi></msub></math>.</p><p>For each term, independence gives:</p>
+<math display="block"><mi mathvariant="double-struck">E</mi><mo>[</mo><msub><mi>q</mi><mi>i</mi></msub><msub><mi>k</mi><mi>i</mi></msub><mo>]</mo><mo>=</mo><mi mathvariant="double-struck">E</mi><mo>[</mo><msub><mi>q</mi><mi>i</mi></msub><mo>]</mo><mi mathvariant="double-struck">E</mi><mo>[</mo><msub><mi>k</mi><mi>i</mi></msub><mo>]</mo><mo>=</mo><mn>0</mn></math>
+<math display="block"><mi>Var</mi><mo>(</mo><msub><mi>q</mi><mi>i</mi></msub><msub><mi>k</mi><mi>i</mi></msub><mo>)</mo><mo>=</mo><mi mathvariant="double-struck">E</mi><mo>[</mo><msubsup><mi>q</mi><mi>i</mi><mn>2</mn></msubsup><msubsup><mi>k</mi><mi>i</mi><mn>2</mn></msubsup><mo>]</mo><mo>−</mo><msup><mrow><mo>(</mo><mi mathvariant="double-struck">E</mi><mo>[</mo><msub><mi>q</mi><mi>i</mi></msub><msub><mi>k</mi><mi>i</mi></msub><mo>]</mo><mo>)</mo></mrow><mn>2</mn></msup><mo>=</mo><mi mathvariant="double-struck">E</mi><mo>[</mo><msubsup><mi>q</mi><mi>i</mi><mn>2</mn></msubsup><mo>]</mo><mi mathvariant="double-struck">E</mi><mo>[</mo><msubsup><mi>k</mi><mi>i</mi><mn>2</mn></msubsup><mo>]</mo><mo>=</mo><mn>1</mn><mo>·</mo><mn>1</mn><mo>=</mo><mn>1</mn></math>
+<p>Because the components are mutually independent, the variance of the sum is the sum of the variances:</p>
+<math display="block"><mi>Var</mi><mo>(</mo><mi>q</mi><mo>·</mo><mi>k</mi><mo>)</mo><mo>=</mo><munderover><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn></mrow><msub><mi>d</mi><mi>k</mi></msub></munderover><mi>Var</mi><mo>(</mo><msub><mi>q</mi><mi>i</mi></msub><msub><mi>k</mi><mi>i</mi></msub><mo>)</mo><mo>=</mo><msub><mi>d</mi><mi>k</mi></msub><mo>,</mo><mspace width="1em"></mspace><mtext>StdDev</mtext><mo>(</mo><mi>q</mi><mo>·</mo><mi>k</mi><mo>)</mo><mo>=</mo><msqrt><msub><mi>d</mi><mi>k</mi></msub></msqrt></math>
+<p>As head dimension <math display="inline"><msub><mi>d</mi><mi>k</mi></msub></math> increases (e.g. <math display="inline"><msub><mi>d</mi><mi>k</mi></msub><mo>=</mo><mn>128</mn></math>), unscaled dot products have standard deviation <math display="inline"><msqrt><mn>128</mn></msqrt><mo>≈</mo><mn>11.3</mn></math>. Dividing by <math display="inline"><msqrt><msub><mi>d</mi><mi>k</mi></msub></msqrt></math> scales variance back to 1.0:</p>
+<math display="block"><mi>Var</mi><mo>(</mo><mfrac><mrow><mi>q</mi><mo>·</mo><mi>k</mi></mrow><msqrt><msub><mi>d</mi><mi>k</mi></msub></msqrt></mfrac><mo>)</mo><mo>=</mo><mfrac><mn>1</mn><msub><mi>d</mi><mi>k</mi></msub></mfrac><mi>Var</mi><mo>(</mo><mi>q</mi><mo>·</mo><mi>k</mi><mo>)</mo><mo>=</mo><mfrac><msub><mi>d</mi><mi>k</mi></msub><msub><mi>d</mi><mi>k</mi></msub></mfrac><mo>=</mo><mn>1</mn></math>
+<h3>The Softmax Jacobian and gradient saturation</h3><p>Why does unscaled variance matter? The derivative of the row-wise softmax <math display="inline"><msub><mi>P</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo><msup><mi>e</mi><msub><mi>S</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></msup><mo>/</mo><msub><mo>∑</mo><mi>k</mi></msub><msup><mi>e</mi><msub><mi>S</mi><mrow><mi>i</mi><mi>k</mi></mrow></msub></msup></math> with respect to input score <math display="inline"><msub><mi>S</mi><mrow><mi>i</mi><mi>m</mi></mrow></msub></math> is:</p>
+<math display="block"><mfrac><mrow><mo>∂</mo><msub><mi>P</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mrow><mrow><mo>∂</mo><msub><mi>S</mi><mrow><mi>i</mi><mi>m</mi></mrow></msub></mrow></mfrac><mo>=</mo><msub><mi>P</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>(</mo><msub><mi>δ</mi><mrow><mi>j</mi><mi>m</mi></mrow></msub><mo>−</mo><msub><mi>P</mi><mrow><mi>i</mi><mi>m</mi></mrow></msub><mo>)</mo><mo>=</mo><mo>{</mo><mtable><mtr><mtd><msub><mi>P</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>(</mo><mn>1</mn><mo>−</mo><msub><mi>P</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>)</mo></mtd><mtd><mi>j</mi><mo>=</mo><mi>m</mi></mtd></mtr><mtr><mtd><mo>−</mo><msub><mi>P</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><msub><mi>P</mi><mrow><mi>i</mi><mi>m</mi></mrow></msub></mtd><mtd><mi>j</mi><mo>≠</mo><mi>m</mi></mtd></mtr></mtable></math>
+<p>When scores <math display="inline"><msub><mi>S</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></math> have large variance, the largest score completely dominates the exponential sum, driving its probability <math display="inline"><msub><mi>P</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>→</mo><mn>1</mn></math> while all other probabilities <math display="inline"><msub><mi>P</mi><mrow><mi>i</mi><mi>m</mi></mrow></msub><mo>→</mo><mn>0</mn></math>. At <math display="inline"><msub><mi>P</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>≈</mo><mn>1</mn></math>, <math display="inline"><msub><mi>P</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>(</mo><mn>1</mn><mo>−</mo><msub><mi>P</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>)</mo><mo>≈</mo><mn>0</mn></math>. At <math display="inline"><msub><mi>P</mi><mrow><mi>i</mi><mi>m</mi></mrow></msub><mo>≈</mo><mn>0</mn></math>, <math display="inline"><mo>−</mo><msub><mi>P</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><msub><mi>P</mi><mrow><mi>i</mi><mi>m</mi></mrow></msub><mo>≈</mo><mn>0</mn></math>. The entire Jacobian matrix approaches zero, completely vanishing the gradient signal flowing back into <var>Q</var> and <var>K</var>. Scaling by <math display="inline"><mn>1</mn><mo>/</mo><msqrt><msub><mi>d</mi><mi>k</mi></msub></msqrt></math> prevents this saturation trap.</p></section>
 
-      <div class="equation-box">
-        Attention(Q, K, V) = softmax((Q K<sup>T</sup>) / √d<sub>k</sub> + M) V &nbsp;|&nbsp;
-        Softmax Row Jacobian: ∂L / ∂S<sub>i,j</sub> = P<sub>i,j</sub> · (∂L/∂P<sub>i,j</sub> − ∑<sub>k</sub> P<sub>i,k</sub> · ∂L/∂P<sub>i,k</sub>)
-      </div>
+      <section class="prose"><h2>Causal masking</h2><p>In autoregressive generation (GPT-style decoders), token <var>i</var> must not attend to future tokens <math display="inline"><mi>j</mi><mo>&gt;</mo><mi>i</mi></math>. An additive attention mask <var>M</var> is applied to scores before softmax:</p>
+<math display="block"><msub><mi>M</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo><mo>{</mo><mtable><mtr><mtd><mn>0</mn></mtd><mtd><mi>j</mi><mo>≤</mo><mi>i</mi></mtd></mtr><mtr><mtd><mo>−</mo><mo>∞</mo></mtd><mtd><mi>j</mi><mo>&gt;</mo><mi>i</mi></mtd></mtr></mtable></math>
+<pre class="diagram" role="img" aria-label="Causal lower-triangular attention mask grid: tokens attend to current and past positions; upper-triangular future entries are set to -infinity, producing 0 probability after softmax.">Causal Mask M (T = 4):                Softmax Attention Weights P:
+     j=0   j=1   j=2   j=3                  j=0   j=1   j=2   j=3
+i=0 ┌  0   -∞    -∞    -∞  ┐           i=0 ┌ 1.0    0     0     0  ┐
+i=1 │  0    0    -∞    -∞  │    ──▶    i=1 │ p10   p11    0     0  │
+i=2 │  0    0     0    -∞  │           i=2 │ p20   p21   p22    0  │
+i=3 └  0    0     0     0  ┘           i=3 └ p30   p31   p32   p33 ┘</pre>
+<p>Because <math display="inline"><msup><mi>e</mi><mrow><mo>−</mo><mo>∞</mo></mrow></msup><mo>=</mo><mn>0</mn></math>, future entries receive identically zero attention probability weight, preventing information leakage from future tokens during parallel teacher-forced training.</p></section>
 
-      <div class="nn-grid">
-        <div class="nn-panel">
-          <h3>Train a Micro-Transformer on Algorithmic Sequence Tasks</h3>
-          <div class="fields">
-            <div>
-              <label for="tf-task">Sequence Algorithmic Task</label>
-              <select id="tf-task">
-                <option value="reverse">Reverse Sequence ([A,B,C,D] → [D,C,B,A])</option>
-                <option value="copy">Identity Copy ([A,B,C,D] → [A,B,C,D])</option>
-                <option value="sort">Sort Tokens Ascending</option>
-              </select>
+      <section class="prose"><h2>Layer FLOPs: when does attention dominate the FFN?</h2><p>Consider a standard Transformer layer with sequence length <var>T</var>, model dimension <var>d</var>, and feedforward intermediate dimension <math display="inline"><mn>4</mn><mi>d</mi></math>. Counting multiply-accumulate operations (2 FLOPs per MAC):</p><ul><li><var>Q</var>, <var>K</var>, <var>V</var> projections: <math display="inline"><mn>3</mn><mo>·</mo><mn>2</mn><mi>T</mi><msup><mi>d</mi><mn>2</mn></msup><mo>=</mo><mn>6</mn><mi>T</mi><msup><mi>d</mi><mn>2</mn></msup></math></li><li>Attention score matrix (<math display="inline"><mi>Q</mi><msup><mi>K</mi><mi>T</mi></msup></math>): <math display="inline"><mn>2</mn><msup><mi>T</mi><mn>2</mn></msup><mi>d</mi></math></li><li>Value aggregation (<math display="inline"><mi>P</mi><mi>V</mi></math>): <math display="inline"><mn>2</mn><msup><mi>T</mi><mn>2</mn></msup><mi>d</mi></math></li><li>Output projection (<math display="inline"><msub><mi>W</mi><mi>O</mi></msub></math>): <math display="inline"><mn>2</mn><mi>T</mi><msup><mi>d</mi><mn>2</mn></msup></math></li><li>Feedforward layer (<math display="inline"><msub><mi>W</mi><mn>1</mn></msub><mo>∈</mo><msup><mi>ℝ</mi><mrow><mi>d</mi><mo>×</mo><mn>4</mn><mi>d</mi></mrow></msup><mo>,</mo><mspace width="0.4em"></mspace><msub><mi>W</mi><mn>2</mn></msub><mo>∈</mo><msup><mi>ℝ</mi><mrow><mn>4</mn><mi>d</mi><mo>×</mo><mi>d</mi></mrow></msup></math>): <math display="inline"><mn>2</mn><mo>·</mo><mn>2</mn><mi>T</mi><mo>(</mo><mi>d</mi><mo>·</mo><mn>4</mn><mi>d</mi><mo>)</mo><mo>=</mo><mn>16</mn><mi>T</mi><msup><mi>d</mi><mn>2</mn></msup></math></li></ul>
+<p>Total layer FLOPs:</p>
+<math display="block"><msub><mtext>FLOPs</mtext><mtext>layer</mtext></msub><mo>=</mo><munder><munder><mrow><mn>4</mn><msup><mi>T</mi><mn>2</mn></msup><mi>d</mi></mrow><mo>⏟</mo></munder><mrow><mi>O</mi><mo>(</mo><msup><mi>T</mi><mn>2</mn></msup><mo>)</mo><mtext> attention</mtext></mrow></munder><mo>+</mo><munder><munder><mrow><mn>24</mn><mi>T</mi><msup><mi>d</mi><mn>2</mn></msup></mrow><mo>⏟</mo></munder><mrow><mi>O</mi><mo>(</mo><mi>T</mi><mo>)</mo><mtext> linear projections</mtext></mrow></munder></math>
+<p>Attention FLOPs exceed linear projection FLOPs when:</p>
+<math display="block"><mn>4</mn><msup><mi>T</mi><mn>2</mn></msup><mi>d</mi><mo>&gt;</mo><mn>24</mn><mi>T</mi><msup><mi>d</mi><mn>2</mn></msup><mspace width="1em"></mspace><mo>⇒</mo><mspace width="1em"></mspace><mi>T</mi><mo>&gt;</mo><mn>6</mn><mi>d</mi></math>
+<p>For standard 7B/8B models where <var>d</var> = 4096, attention compute only dominates once sequence length <math display="inline"><mi>T</mi><mo>&gt;</mo><mn>6</mn><mo>×</mo><mn>4096</mn><mo>=</mo><mn>24 576</mn></math> tokens. At short contexts (<math display="inline"><mi>T</mi><mo>≤</mo><mn>4096</mn></math>), over 85% of total compute is spent in the feedforward projections.</p></section>
+
+      <section class="prose"><h2>The Pre-Norm Transformer block</h2><p>Original Transformers placed LayerNorm after the residual addition (Post-LN: <math display="inline"><mi>x</mi><mo>=</mo><mtext>LN</mtext><mo>(</mo><mi>x</mi><mo>+</mo><mtext>SubLayer</mtext><mo>(</mo><mi>x</mi><mo>)</mo><mo>)</mo></math>), which suffered from gradient vanishing and required warmup learning rate schedules. Modern models adopt <strong>Pre-LN</strong> (or Pre-RMSNorm):</p>
+<pre class="diagram" role="img" aria-label="Pre-Norm Transformer block: the input passes through an uninterrupted residual stream, branching through RMSNorm into Attention and FFN blocks before being added back.">            x ──┬─────────────────────────────(+)──▶
+                │                              ▲
+                ▼                              │
+             RMSNorm ──▶ Attention ──▶ W_O ────┘
+                │
+                ├──┬──────────────────────────(+)──▶ output
+                │  │                           ▲
+                │  ▼                           │
+                │ RMSNorm ──▶ FFN (SwiGLU) ────┘
+                ▼</pre>
+<math display="block"><msub><mi>x</mi><mtext>mid</mtext></msub><mo>=</mo><mi>x</mi><mo>+</mo><mtext>Attention</mtext><mo>(</mo><mtext>RMSNorm</mtext><mo>(</mo><mi>x</mi><mo>)</mo><mo>)</mo></math>
+<math display="block"><msub><mi>x</mi><mtext>out</mtext></msub><mo>=</mo><msub><mi>x</mi><mtext>mid</mtext></msub><mo>+</mo><mtext>FFN</mtext><mo>(</mo><mtext>RMSNorm</mtext><mo>(</mo><msub><mi>x</mi><mtext>mid</mtext></msub><mo>)</mo><mo>)</mo></math>
+<p>In Pre-LN, the identity highway <math display="inline"><mi>x</mi><mo>+</mo><mo>…</mo></math> is uninterrupted across the entire depth of the network. Gradients flow back from the loss directly to early token embeddings without attenuation.</p></section>
+
+      <section id="transformer-lab" class="nn-section">
+        <h2>Interactive Micro-Transformer Trainer</h2>
+        <p>Train a 2-layer, 2-head Micro-Transformer on algorithmic sequence tasks (Sequence Reversal, Identity Copy, Sorting). Observe how attention weights self-organize along the anti-diagonal for sequence reversal, and inspect the impact of causal versus bidirectional masking.</p>
+
+        <div class="nn-grid">
+          <div class="nn-panel">
+            <h3>Configuration &amp; Controls</h3>
+            <div class="fields">
+              <div>
+                <label for="tf-task">Algorithmic Task</label>
+                <select id="tf-task">
+                  <option value="reverse">Reverse Sequence ([A,B,C,D] → [D,C,B,A])</option>
+                  <option value="copy">Identity Copy ([A,B,C,D] → [A,B,C,D])</option>
+                  <option value="sort">Sort Tokens Ascending</option>
+                </select>
+              </div>
+              <div>
+                <label for="tf-mask">Attention Mask M</label>
+                <select id="tf-mask">
+                  <option value="bidirectional">Bidirectional (Full Context)</option>
+                  <option value="causal">Causal Lower-Triangular Mask (j ≤ i)</option>
+                </select>
+              </div>
             </div>
-            <div>
-              <label for="tf-mask">Attention Mask M</label>
-              <select id="tf-mask">
-                <option value="bidirectional">Bidirectional (Full Context — Encoder / Diffusion)</option>
-                <option value="causal">Causal Lower-Triangular Mask (j ≤ i — Autoregressive GPT)</option>
-              </select>
+
+            <label for="tf-input-seq">Probe Input Sequence (4 Tokens from A–H)</label>
+            <input type="text" id="tf-input-seq" value="A B C D">
+
+            <div class="actions">
+              <button type="button" id="tf-train-btn">Train Transformer (40 Epochs)</button>
+              <button type="button" id="tf-reset-btn" class="secondary">Reset Transformer</button>
             </div>
+
+            <div class="metrics-strip">
+              <div class="metric-box">
+                <div class="metric-label">Epoch</div>
+                <div id="tf-epoch" class="metric-val">0</div>
+              </div>
+              <div class="metric-box">
+                <div class="metric-label">Token CE Loss</div>
+                <div id="tf-loss" class="metric-val">—</div>
+              </div>
+              <div class="metric-box">
+                <div class="metric-label">Token Accuracy</div>
+                <div id="tf-acc" class="metric-val">—</div>
+              </div>
+            </div>
+
+            <div id="tf-pred-banner" class="status" aria-live="polite"></div>
           </div>
 
-          <label for="tf-input-seq">Probe Input Sequence (4 Tokens from A–H)</label>
-          <input type="text" id="tf-input-seq" value="A B C D">
-
-          <div class="actions">
-            <button type="button" id="tf-train-btn">Train Transformer (40 Epochs)</button>
-            <button type="button" id="tf-reset-btn" class="secondary">Reset Transformer</button>
+          <div class="nn-panel">
+            <h3>Multi-Head Attention Heatmaps (Head 1 &amp; Head 2)</h3>
+            <p class="small">Training on <strong>Reverse</strong> causes attention to concentrate along the anti-diagonal (position 0 attends to position 3). Under a <strong>Causal Mask</strong>, position 0 cannot attend ahead, demonstrating why bidirectional context is required for non-autoregressive tasks.</p>
+            <div id="tf-attn-heads" class="attn-heads-wrap"></div>
           </div>
-
-          <div class="metrics-strip">
-            <div class="metric-box">
-              <div class="metric-label">Epoch</div>
-              <div id="tf-epoch" class="metric-val">0</div>
-            </div>
-            <div class="metric-box">
-              <div class="metric-label">Token CE Loss</div>
-              <div id="tf-loss" class="metric-val">—</div>
-            </div>
-            <div class="metric-box">
-              <div class="metric-label">Token Accuracy</div>
-              <div id="tf-acc" class="metric-val">—</div>
-            </div>
-          </div>
-
-          <div id="tf-pred-banner" class="status" aria-live="polite"></div>
         </div>
 
-        <div class="nn-panel">
-          <h3>Live Multi-Head Attention Heatmaps (Head 1 &amp; Head 2)</h3>
-          <p class="small">Notice how training on <strong>Reverse</strong> causes the attention matrix to light up along the <em>anti-diagonal</em>, whereas <strong>Copy</strong> concentrates weight on the <em>main diagonal</em>. Try switching the Mask to <strong>Causal (j ≤ i)</strong> on Reverse to see why position 0 cannot peek ahead at position 3!</p>
-          <div id="tf-attn-heads" class="attn-heads-wrap"></div>
-        </div>
-      </div>
+        <div id="transformer-stepper"></div>
 
-      <div id="transformer-stepper"></div>
+        <div class="section-code-widget" data-code-blueprint="attention"></div>
+      </section>
 
-      <div class="section-code-widget" data-code-blueprint="attention"></div>
-    </section>
-
-    <section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://arxiv.org/abs/1706.03762">Vaswani et al. (2017), Attention Is All You Need</a></li><li><a href="https://arxiv.org/abs/1911.02150">Shazeer (2019), Fast Transformer Decoding</a></li><li><a href="https://arxiv.org/abs/2305.13245">Ainslie et al. (2023), GQA</a></li></ul></section>
+      <section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://arxiv.org/abs/1706.03762">Vaswani et al. (2017), Attention Is All You Need</a></li><li><a href="https://arxiv.org/abs/2002.04745">Xiong et al. (2020), On Layer Normalization in the Transformer Architecture (Pre-LN analysis)</a></li><li><a href="https://arxiv.org/abs/1911.02150">Shazeer (2019), Fast Transformer Decoding: One Write-Head is All You Need (MQA)</a></li><li><a href="https://arxiv.org/abs/2305.13245">Ainslie et al. (2023), GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints</a></li></ul></section>
       <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
     </article></div>
   </main>
