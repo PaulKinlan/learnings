@@ -134,3 +134,80 @@ test('backends/webgpu.html listings are the exact shader and host code from engi
     assert.deepEqual(nonBlank(shown[key]), nonBlank(text.split('\n')), `${key} listings drifted from engine.js`);
   }
 });
+
+// Listings marked data-listing="key" in a backend chapter, unescaped and concatenated in page order.
+function shownListings(html) {
+  const unescape = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const shown = {};
+  for (const m of html.matchAll(/<pre data-listing="(\w+)"><code>([\s\S]*?)<\/code><\/pre>/g)) (shown[m[1]] ??= []).push(...unescape(m[2]).split('\n'));
+  return shown;
+}
+const nonBlankLines = (lines) => lines.filter((l) => l.trim());
+
+test('backends/javascript.html prints jsMatmul from engine.js, open and in order', async () => {
+  const engine = await import('../site/neural-networks/engine.js');
+  const html = readFileSync(join(nn, 'backends/javascript.html'), 'utf8');
+  assert.doesNotMatch(html, /<details/, 'javascript.html must not hide code in <details>');
+  const shown = shownListings(html);
+  assert.deepEqual(Object.keys(shown), ['jsmatmul']);
+  assert.deepEqual(nonBlankLines(shown.jsmatmul), nonBlankLines(engine.jsMatmul.toString().split('\n')), 'jsMatmul listings drifted from engine.js');
+});
+
+test('backends/webassembly.html prints the generator from engine.js and every module byte with its instruction', async () => {
+  const engine = await import('../site/neural-networks/engine.js');
+  const html = readFileSync(join(nn, 'backends/webassembly.html'), 'utf8');
+  assert.doesNotMatch(html, /<details/, 'webassembly.html must not hide code in <details>');
+  const shown = shownListings(html);
+  const engineSrc = readFileSync(join(nn, 'engine.js'), 'utf8');
+  const sources = {
+    uleb: engineSrc.match(/^function uleb128[\s\S]*?^}/m)[0],
+    generator: engine.buildWasmGemmBytes.toString(),
+    backend: engine.getWasmBackend.toString(),
+  };
+  for (const [key, text] of Object.entries(sources)) {
+    assert.deepEqual(nonBlankLines(shown[key] ?? []), nonBlankLines(text.split('\n')), `${key} listings drifted from engine.js`);
+  }
+
+  // Hex rows: "offset  bytes │ meaning". Offsets must run on without gaps.
+  const OPS = { '02': 'block', '03': 'loop', '0b': 'end', '0c': 'br', '0d': 'br_if', '20': 'local.get', '21': 'local.set', '2a': 'f32.load', '38': 'f32.store', '41': 'i32.const', '43': 'f32.const', '4f': 'i32.ge_u', '6a': 'i32.add', '6c': 'i32.mul', '71': 'i32.and', '74': 'i32.shl', '92': 'f32.add', '94': 'f32.mul', 'fd 00': 'v128.load', 'fd 0b': 'v128.store', 'fd 13': 'f32x4.splat', 'fd e4 01': 'f32x4.add', 'fd e6 01': 'f32x4.mul' };
+  const parse = (key, start) => {
+    let at = start; const bytes = [];
+    for (const line of shown[key]) {
+      const m = line.match(/^([0-9a-f]{4})  ([0-9a-f ]+?)\s*│ (.*)$/);
+      assert.ok(m, `${key}: unparsable row ${line}`);
+      assert.equal(parseInt(m[1], 16), at, `${key}: row offset ${m[1]}`);
+      const hex = m[2].split(' ');
+      if (key !== 'wasmheader' && !m[3].startsWith('(local')) {
+        const op = [3, 2, 1].map((n) => hex.slice(0, n).join(' ')).find((k) => OPS[k]);
+        assert.equal(m[3].trim().split(/\s/)[0], OPS[op], `${key} @${m[1]}: ${m[2]} is not ${m[3].trim()}`);
+      }
+      bytes.push(...hex.map((h) => parseInt(h, 16)));
+      at += hex.length;
+    }
+    return bytes;
+  };
+  const module = parse('wasmheader', 0);
+  module.push(...parse('wasmcode', module.length));
+  assert.deepEqual(module, [...engine.buildWasmGemmBytes()], 'hex tables drifted from buildWasmGemmBytes()');
+
+  // The SIMD axpy listing is not in engine.js: assemble its bytes and check it against scalar f32 math.
+  const body = parse('simd', 0);
+  const leb = (n) => { const o = []; do { let b = n & 0x7f; n >>>= 7; if (n) b |= 0x80; o.push(b); } while (n); return o; };
+  const code = [1, ...leb(body.length), ...body];
+  const bytes = new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+    1, 8, 1, 0x60, 4, 0x7f, 0x7f, 0x7d, 0x7f, 0,       // (i32 cPtr, i32 bPtr, f32 a, i32 n) -> ()
+    3, 2, 1, 0, 5, 3, 1, 0, 1,
+    7, 14, 2, 4, 0x61, 0x78, 0x70, 0x79, 0, 0, 3, 0x6d, 0x65, 0x6d, 2, 0,
+    10, ...leb(code.length), ...code]);
+  assert.ok(WebAssembly.validate(bytes), 'SIMD listing is not a valid function body');
+  const { axpy, mem } = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+  const a = Math.fround(1.7);
+  for (let n = 0; n <= 13; n++) {
+    const f = new Float32Array(mem.buffer);
+    f.fill(0);
+    const C = Float32Array.from({ length: n }, (_, i) => i * 0.37 - 1), B = Float32Array.from({ length: n }, (_, i) => 2 - i * 0.11);
+    f.set(C, 0); f.set(B, 64);
+    axpy(0, 256, a, n);
+    assert.deepEqual([...f.subarray(0, n + 1)], [...C.map((c, j) => Math.fround(c + Math.fround(a * B[j]))), 0], `SIMD axpy wrong for n = ${n}`);
+  }
+});

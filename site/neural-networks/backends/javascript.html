@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
   <meta name="referrer" content="no-referrer">
   <title>JavaScript and typed arrays | Neural networks</title>
-  <meta name="description" content="Inspect and run a matrix product using contiguous Float32Array storage.">
+  <meta name="description" content="Inspect and run a matrix product using contiguous Float32Array storage: cache lines and loop order, float32 storage with float64 arithmetic, inline caches, and the main-thread frame budget.">
   <link rel="stylesheet" href="../../style.css">
   <link rel="stylesheet" href="../chapter.css">
   <link rel="stylesheet" href="../playgrounds.css">
@@ -16,9 +16,138 @@
   <header><a href="../../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="../">Chapters</a><a href="../lab.html">Workbench</a></nav></header>
   <main id="main" class="chapter">
     <p class="crumbs"><a href="../">Neural networks</a> › JavaScript and typed arrays</p>
-    <h1>JavaScript and typed arrays</h1><p class="lead">Inspect and run a matrix product using contiguous Float32Array storage.</p>
+    <h1>JavaScript and typed arrays</h1><p class="lead">Inspect and run a matrix product using contiguous Float32Array storage. The 15-line function that runs is <code>jsMatmul</code> from <code>engine.js</code>, printed below in full; every performance claim is tied to one of its lines or to a measurement whose conditions are stated.</p>
     <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
-      <section class="prose"><h2>Flat storage and loop order</h2><p>A row-major M × K matrix stores A[i,k] at i·K + k. Float32Array rounds stored values to 32-bit floats, though ordinary JavaScript arithmetic uses binary64 numbers. In this implementation every accumulated write rounds back to float32.</p><p>The i,k,j loop order loads A[i,k] once and walks contiguous rows of B and C. An i,j,k loop is mathematically equivalent but walks B with a stride of N. Cache behaviour and the JIT can matter more than reducing a few source lines.</p></section><section data-widget="backend" data-backend="javascript"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>When plain JavaScript is enough</h2><p>For small tensors, avoiding transfer and compilation overhead can beat a more elaborate backend. Reuse output arrays and avoid temporary objects in hot loops. Large synchronous loops block input and rendering; run substantial work in a worker or yield between bounded batches. This example is intentionally only four output cells.</p><p>The full <a href="../lab.html#backend-comparison">workbench backend comparison</a> has larger repeatable operations. Do not infer general runtime rankings from one shape or a single cold run.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://tc39.es/ecma262/#sec-typedarray-objects">ECMAScript typed array objects</a></li></ul></section>
+      <section class="prose"><h2>Run it first</h2><p>The button multiplies A = [1, 2; 3, 4] by B = [5, 6; 7, 8] with <code>jsMatmul</code>. The expected product is [19, 22; 43, 50]. The source printed under the button comes from <code>Function.prototype.toString</code> at run time, so it is the code that executes.</p></section>
+      <section data-widget="backend" data-backend="javascript"><p>Enable JavaScript to use this local playground. The explanation and listings below work without it.</p></section>
+
+      <section class="prose"><h2>Row-major storage and 64-byte cache lines</h2><p>A <code>Float32Array</code> is a view over one contiguous <code>ArrayBuffer</code>: element n occupies bytes 4n to 4n + 3. A matrix has no shape of its own in that buffer. The code decides that an M × K matrix is stored row after row (row-major), so element A[i, k] sits at index i·K + k:</p>
+<pre class="diagram" role="img" aria-label="A 2 by 3 matrix laid out row by row in a flat array: index equals i times 3 plus k, byte offset equals 4 times the index.">A (M = 2, K = 3)         Float32Array A, flat
+┌──────┬──────┬──────┐   index:  0     1     2     3     4     5
+│ A0,0 │ A0,1 │ A0,2 │         ┌─────┬─────┬─────┬─────┬─────┬─────┐
+├──────┼──────┼──────┤         │ A0,0│ A0,1│ A0,2│ A1,0│ A1,1│ A1,2│
+│ A1,0 │ A1,1 │ A1,2 │         └─────┴─────┴─────┴─────┴─────┴─────┘
+└──────┴──────┴──────┘   byte:   0     4     8    12    16    20
+                         A[i,k] → index i·3 + k → byte 4(i·3 + k)</pre>
+<math display="block"><mi>A</mi><mo>[</mo><mi>i</mi><mo>,</mo><mi>k</mi><mo>]</mo><mo>↦</mo><mtext>index </mtext><mi>i</mi><mi>K</mi><mo>+</mo><mi>k</mi><mo>,</mo><mspace width="0.6em"></mspace><mtext>byte </mtext><mn>4</mn><mo>(</mo><mi>i</mi><mi>K</mi><mo>+</mo><mi>k</mi><mo>)</mo><mo>,</mo><mspace width="0.6em"></mspace><mtext>cache line </mtext><mo>⌊</mo><mfrac><mrow><mi>i</mi><mi>K</mi><mo>+</mo><mi>k</mi></mrow><mn>16</mn></mfrac><mo>⌋</mo></math>
+<p class="equation-note">Assumes the buffer starts on a 64-byte boundary. Large <code>ArrayBuffer</code> backing stores usually do, but nothing in the language promises it; a misaligned start shifts every line boundary by the same amount and changes none of the counts below.</p>
+<p>The CPU never fetches one float. It moves memory between DRAM and its caches in fixed blocks called cache lines, 64 bytes on current x86 and Arm cores. One line holds 16 consecutive float32 values. The first read of any of them pays for the whole line; the other 15 are then nearly free while the line stays in the L1 data cache. The machine used for the measurements on this page (AMD Ryzen 9 9955HX) has a 48 KiB, 12-way L1d per core: 768 lines in 64 sets of 12.</p></section>
+
+      <section class="prose"><h2>Loop order decides the stride</h2><p>C = A·B needs, for every i, j and k, the product A[i,k]·B[k,j] added into C[i,j]. The three loops can nest in any order and the result is the same up to rounding. What changes is the address sequence the innermost loop produces. The textbook order is i, j, k: one dot product per output cell. This version is used only for the measurements below; it is not in <code>engine.js</code>:</p>
+<figure class="listing"><figcaption>ijk, benchmark only (not in engine.js)</figcaption><pre><code>function ijk(A, B, M, K, N, out) {
+  for (let i = 0; i &lt; M; i++)
+    for (let j = 0; j &lt; N; j++) {
+      let s = 0;
+      for (let k = 0; k &lt; K; k++) s += A[i * K + k] * B[k * N + j];
+      out[i * N + j] = s;
+    }
+  return out;
+}</code></pre></figure>
+<p>Its inner loop reads <code>A[i*K + k]</code> with stride 1, fine, and <code>B[k*N + j]</code> with stride N floats, 4N bytes. Once 4N ≥ 64, that is once N ≥ 16, every iteration of k lands on a different cache line and uses one float out of the sixteen it fetched. <code>jsMatmul</code> swaps the two inner loops to i, k, j. Its inner loop holds A[i,k] in a local and sweeps j, so both <code>B[kN + j]</code> and <code>out[iN + j]</code> advance by one float:</p>
+<pre class="diagram" role="img" aria-label="Memory addresses touched by the innermost loop. In i,j,k order, B is read with a stride of N floats, one float per 64-byte line. In i,k,j order, B and C are read with stride 1, all 16 floats of each line.">B, N = 256, one row = 1 024 bytes = 16 lines        ▓ = float read
+
+i,j,k inner loop (k = 0, 1, 2 …), fixed j = 0:
+row k=0 │▓···············│················│ … 16 lines
+row k=1 │▓···············│················│ …
+row k=2 │▓···············│················│ …
+         ↑ +1 024 bytes per step: a new line every read, 1 of 16 used
+
+i,k,j inner loop (j = 0, 1, 2 …), fixed k:
+row k   │▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│ … 16 lines
+         ↑ +4 bytes per step: each line fetched once, 16 of 16 used
+         (out[iN + j] walks row i of C the same way)</pre>
+</section>
+
+      <section class="prose"><h2>Counting cache-line loads for a 256 × 256 GEMM</h2><p>Take M = K = N = 256. Each matrix is 256 KiB, five times the L1. Count line fetches into L1 under two facts about this L1:</p><ul><li>A row of A or C is 1 KiB, 16 lines. It is reused across a whole inner sweep and stays resident.</li><li>A column of B is 256 floats, one per row, 1 024 bytes apart. With 64 sets and 64-byte lines, an address’s set is (address / 64) mod 64, so a 1 024-byte stride advances the set by 16 and the column lands in only 4 sets: 4 × 12 = 48 lines of capacity for 256 lines. The column is evicted before the next j could reuse it. Likewise all of B (4 096 lines) cannot survive from one i to the next.</li></ul>
+<p>In i, j, k order, every one of the M·N·K reads of B misses. A and C add one line per 16 floats of their rows:</p>
+<math display="block"><msub><mi>L</mi><mtext>ijk</mtext></msub><mo>≈</mo><munder><munder><mrow><mi>M</mi><mi>N</mi><mi>K</mi></mrow><mo>⏟</mo></munder><mtext>B</mtext></munder><mo>+</mo><munder><munder><mfrac><mrow><mi>M</mi><mi>K</mi></mrow><mn>16</mn></mfrac><mo>⏟</mo></munder><mtext>A</mtext></munder><mo>+</mo><munder><munder><mfrac><mrow><mi>M</mi><mi>N</mi></mrow><mn>16</mn></mfrac><mo>⏟</mo></munder><mtext>C</mtext></munder><mo>=</mo><mn>16 777 216</mn><mo>+</mo><mn>4 096</mn><mo>+</mo><mn>4 096</mn><mo>=</mo><mn>16 785 408</mn></math>
+<p>In i, k, j order, B is streamed in whole lines, so each of the M·K row sweeps costs N/16 lines:</p>
+<math display="block"><msub><mi>L</mi><mtext>ikj</mtext></msub><mo>≈</mo><munder><munder><mfrac><mrow><mi>M</mi><mi>K</mi><mi>N</mi></mrow><mn>16</mn></mfrac><mo>⏟</mo></munder><mtext>B</mtext></munder><mo>+</mo><munder><munder><mfrac><mrow><mi>M</mi><mi>K</mi></mrow><mn>16</mn></mfrac><mo>⏟</mo></munder><mtext>A</mtext></munder><mo>+</mo><munder><munder><mfrac><mrow><mi>M</mi><mi>N</mi></mrow><mn>16</mn></mfrac><mo>⏟</mo></munder><mtext>C</mtext></munder><mo>=</mo><mn>1 048 576</mn><mo>+</mo><mn>4 096</mn><mo>+</mo><mn>4 096</mn><mo>=</mo><mn>1 056 768</mn></math>
+<p>That is 16 785 408 × 64 B ≈ 1.07 GB moved into L1 against 1 056 768 × 64 B ≈ 67.6 MB, a ratio of 15.9: almost exactly the 16 floats per line that the strided order throws away. The model counts L1 fills and ignores hardware prefetchers, which detect constant strides and hide part of the latency.</p>
+<p>Where those fills come from decides how much they cost. Measured on the Ryzen 9 9955HX, Node 24.21, one warm run each:</p>
+<div class="table-scroll"><table><thead><tr><th>n</th><th>size of B</th><th>i,j,k</th><th>i,k,j (<code>jsMatmul</code>)</th><th>ratio</th></tr></thead><tbody><tr><td>256</td><td>256 KiB</td><td>26.5 ms</td><td>24.0 ms</td><td>1.1×</td></tr><tr><td>512</td><td>1 MiB</td><td>226.9 ms</td><td>177.7 ms</td><td>1.3×</td></tr><tr><td>1 024</td><td>4 MiB</td><td>4 305 ms</td><td>1 376 ms</td><td>3.1×</td></tr></tbody></table></div>
+<p>At n = 256 all of B fits in the 1 MiB L2 per core, so the 16 million extra L1 misses are L2 hits, a few nanoseconds each, and much of that is overlapped. At n = 1 024 B no longer fits in L2 and the strided misses go to L3 and DRAM. The ratio of fills is fixed by the loop order; the ratio of times depends on which level of the hierarchy serves them. Note that the i, j, k listing keeps its running sum in a local, which favours it; the gap is not caused by memory writes.</p></section>
+
+      <section class="prose"><h2>jsMatmul, line by line</h2><p>This is the complete function from <code>engine.js</code>, in five consecutive listings with nothing omitted. A test in <code>tests/nn-chapters-links.test.js</code> fails if they stop matching the source.</p>
+<figure class="listing"><figcaption>jsMatmul, lines 1–2</figcaption><pre data-listing="jsmatmul"><code>function jsMatmul(A, B, M, K, N, out = new Float32Array(M * N)) {
+  out.fill(0);</code></pre></figure>
+<p><code>out</code> defaults to a fresh zero-filled array, but callers may pass one in to avoid allocating per call; the training loops in <code>engine.js</code> do. Line 2 zeroes it either way, because line 10 accumulates with <code>+=</code>: a reused buffer would otherwise add this product to the previous one. Nothing checks that A has M·K elements. A short array gives <code>undefined</code> on an out-of-range read, <code>undefined * x</code> is <code>NaN</code>, and the <code>NaN</code> is stored silently.</p>
+<figure class="listing"><figcaption>jsMatmul, lines 3–5</figcaption><pre data-listing="jsmatmul"><code>  for (let i = 0; i &lt; M; i++) {
+    const iK = i * K;
+    const iN = i * N;</code></pre></figure>
+<p>The row offsets i·K and i·N are computed once per row instead of once per element. An optimising compiler would usually hoist these itself; writing them out keeps the inner loop to one add per address.</p>
+<figure class="listing"><figcaption>jsMatmul, lines 6–8</figcaption><pre data-listing="jsmatmul"><code>    for (let k = 0; k &lt; K; k++) {
+      const a = A[iK + k];
+      const kN = k * N;</code></pre></figure>
+<p>The middle loop walks k, and line 7 reads A[i,k] into the local <code>a</code>. That is the only read of A in the whole multiply, one per (i, k) pair: M·K reads of A in total instead of M·N·K. <code>kN</code> is the start of row k of B.</p>
+<figure class="listing"><figcaption>jsMatmul, lines 9–11</figcaption><pre data-listing="jsmatmul"><code>      for (let j = 0; j &lt; N; j++) {
+        out[iN + j] += a * B[kN + j];
+      }</code></pre></figure>
+<p>The hot loop. Per iteration: load <code>out[iN + j]</code>, load <code>B[kN + j]</code>, one multiply, one add, store <code>out[iN + j]</code>. Both indices step by 1, which is the whole cache argument above. It runs M·K·N times, 16 777 216 for n = 256. The read-modify-write of <code>out</code> is the price of this order: C’s row is reloaded and rewritten K times, but it stays in L1 while that happens.</p>
+<figure class="listing"><figcaption>jsMatmul, lines 12–15</figcaption><pre data-listing="jsmatmul"><code>    }
+  }
+  return out;
+}</code></pre></figure>
+<p>The function returns the same array it wrote, so <code>jsMatmul(A, B, M, K, N, buf)</code> can be used as an expression without a second allocation.</p></section>
+
+      <section class="prose"><h2>Float32 storage, float64 arithmetic</h2><p><code>Float32Array</code> stores IEEE 754 binary32: 24 significant bits. Every JavaScript number is IEEE 754 binary64: 53 significant bits. JavaScript has no float32 arithmetic. Line 10 therefore runs as follows:</p>
+<ol><li>Read <code>out[iN + j]</code> and <code>B[kN + j]</code>: binary32 → binary64. Exact; every binary32 value is a binary64 value.</li><li><code>a * B[kN + j]</code>: the exact product of two 24-bit significands has at most 48 bits, which fits in 53. Exact.</li><li><code>+</code>: rounded once, to binary64.</li><li>Store into <code>out</code>: rounded again, to binary32 (round to nearest, ties to even).</li></ol>
+<p>The second rounding happens on every one of the K additions into each output, because <code>out</code> is the accumulator. <code>Math.fround(x)</code> performs exactly that store-time rounding, so it can reproduce the effect without a typed array. Sum the binary32 value of 0.1 one million times:</p>
+<figure class="listing"><figcaption>float32 vs float64 accumulation (run in Node 24)</figcaption><pre><code>const x = Math.fround(0.1);           // 0.100000001490116119384765625
+let f32 = 0, f64 = 0;
+for (let n = 0; n &lt; 1e6; n++) {
+  f32 = Math.fround(f32 + x);         // what out[iN + j] += … does
+  f64 += x;                           // same inputs, binary64 accumulator
+}
+// after 10 adds:      f32 = 1.0000001192092896   f64 = 1.0000000149011612
+// after 1 000 000:    f32 = 100958.34375         f64 = 100000.00149011612
+// A Float32Array element updated with += gives the identical 100958.34375.</code></pre></figure>
+<p>The binary32 sum is 0.96% too high. The reason is spacing. A binary32 number between 2<sup>15</sup> and 2<sup>17</sup> has neighbours 2<sup>−8</sup> or 2<sup>−7</sup> apart, so adding 0.1 there must land on a multiple of that step. Measured: from 32 768 onward each add contributes 0.1015625 instead of 0.1. The sum passes 32 768 after 328 588 additions; the remaining 671 412 each overshoot by 0.0015625, about 1 049 in total, close to the 958 observed (the step below 32 768 undershoots slightly). The error is not random noise; it is a bias set by the accumulator’s magnitude.</p>
+<p>In a GEMM the same thing happens in each of the M·N outputs over K terms. Two consequences follow. First, a binary64 local accumulator, as in the i, j, k listing, rounds once at the end instead of K times; the i, k, j order cannot do that because each output is touched in K separate sweeps. Second, other backends round differently: the WebAssembly kernel rounds every product to binary32 before adding it. Over 2 000 random 16-term dot products with entries in (−1, 1), the two disagree in 1 150, each time by one unit in the last place. The <a href="./webassembly.html">WebAssembly chapter</a> shows the instruction responsible.</p></section>
+
+      <section class="prose"><h2>What the JIT needs: one element kind per access site</h2><p>V8, the engine in Chrome and Node, does not compile <code>jsMatmul</code> before its first call. It starts by interpreting it and records, at each property or element access in the source, which kinds of object have appeared there. That record is an inline cache. When the function is hot, an optimising compiler uses the recorded feedback to emit machine code specialised for what was seen, guarded by a cheap check that deoptimises back to the interpreter if a new kind turns up.</p><p>An access site that has seen one kind is monomorphic. For <code>B[kN + j]</code> with B always a <code>Float32Array</code>, the specialised code is: check B’s map once, check the index against B’s length, load 4 bytes, widen to a double. A site that has seen several kinds is polymorphic, and the compiled code must first branch on which kind it has, then use the matching load. The two calling patterns differ only in what the function was fed before the timing started:</p>
+<figure class="listing"><figcaption>monomorphic and polymorphic warm-up (n = 128, 50 timed calls)</figcaption><pre><code>// Monomorphic: every call sees Float32Array.
+for (let w = 0; w &lt; 20; w++) jsMatmul(A, B, n, n, n, out);
+
+// Polymorphic: the same sites first see plain Arrays of small integers,
+// then Float32Array. Line 7 and line 10 now have two element kinds each.
+const a = Array.from(A), b = Array.from(B);
+for (let w = 0; w &lt; 20; w++) jsMatmul(a, b, n, n, n, out);
+for (let w = 0; w &lt; 20; w++) jsMatmul(A, B, n, n, n, out);
+
+// Measured, Ryzen 9 9955HX, Node 24.21, separate processes, two runs each:
+// monomorphic 3.10, 3.01 ms per call; polymorphic 4.61, 4.53 ms per call.</code></pre></figure>
+<p>Identical inputs on the timed calls, about 1.5 times slower, because the feedback from the Array calls is permanent for that function. Keep hot numeric code fed with one typed-array type. Engine code that sometimes receives a plain <code>Array</code> should convert it once at the boundary with <code>Float32Array.from</code>.</p><h3>Bounds checks</h3><p>A typed-array read past its length returns <code>undefined</code>, and a write past it is ignored. The language requires that, so compiled code must compare every index with the length before touching memory, unless the compiler can prove the comparison always passes. For <code>for (let j = 0; j &lt; arr.length; j++) s += arr[j]</code> the loop condition is that proof, and range analysis can remove the per-iteration check. In <code>jsMatmul</code> the index is <code>iN + j</code> and the loop bound is the parameter N; nothing in the function ties N to <code>out.length</code>, so there is no proof available and the check stays. It costs a compare and a branch that never fails, so the branch predictor gets it right every time; it is small next to the loads it guards. Whether a particular V8 version removes a particular check can only be confirmed by reading its optimised code (Node’s <code>--print-opt-code</code>); this page does not claim more than the mechanism.</p></section>
+
+      <section class="prose"><h2>The main-thread budget and Web Workers</h2><p>JavaScript on the main thread shares it with input handling, style, layout and paint. At 60 frames per second a frame is 16.7 ms, and every millisecond of script comes out of it. The n = 256 run above took 23.1 ms in a warm process, 1.38 ns per multiply-add for n³ multiply-adds. Setting the whole frame aside for the multiply gives an upper bound:</p>
+<math display="block"><msup><mi>n</mi><mn>3</mn></msup><mo>·</mo><mn>1.38</mn><mtext> ns</mtext><mo>≤</mo><mn>16.7</mn><mtext> ms</mtext><mspace width="0.6em"></mspace><mo>⇒</mo><mspace width="0.6em"></mspace><mi>n</mi><mo>≤</mo><mroot><mrow><mn>1.21</mn><mo>×</mo><msup><mn>10</mn><mn>7</mn></msup></mrow><mn>3</mn></mroot><mo>≈</mo><mn>229</mn></math>
+<p class="equation-note">With a more realistic 10 ms for script the bound is n ≈ 193. Phones are several times slower per core, so the same arithmetic gives a much smaller n there. Measure on the target device.</p>
+<p>Past that, the multiply belongs on another thread. A Web Worker runs its own event loop and its own JavaScript heap. Messages between threads are copied by structured clone, unless the sender lists an <code>ArrayBuffer</code> in the transfer list: then ownership moves, the receiver gets the same memory without a copy, and the sender’s buffer is detached (length 0). This pattern is illustrative; this page does not run it.</p>
+<figure class="listing"><figcaption>matmul-worker.js (illustrative)</figcaption><pre><code>import { jsMatmul } from './engine.js';
+
+self.onmessage = ({ data: { id, a, b, M, K, N } }) =&gt; {
+  const out = jsMatmul(new Float32Array(a), new Float32Array(b), M, K, N);
+  self.postMessage({ id, c: out.buffer }, [out.buffer]);
+};</code></pre></figure>
+<figure class="listing"><figcaption>main thread (illustrative)</figcaption><pre><code>const worker = new Worker('./matmul-worker.js', { type: 'module' });
+const pending = new Map();
+let nextId = 0;
+worker.onmessage = ({ data }) =&gt; {
+  pending.get(data.id).resolve(new Float32Array(data.c));
+  pending.delete(data.id);
+};
+worker.onerror = (e) =&gt; { for (const p of pending.values()) p.reject(e); pending.clear(); };
+
+function matmulInWorker(A, B, M, K, N) {   // A and B are detached afterwards
+  return new Promise((resolve, reject) =&gt; {
+    const id = nextId++;
+    pending.set(id, { resolve, reject });
+    worker.postMessage({ id, a: A.buffer, b: B.buffer, M, K, N }, [A.buffer, B.buffer]);
+  });
+}</code></pre></figure>
+<p>Three details matter. Transfer moves the whole buffer, so A and B must each own their buffer exactly: a <code>subarray</code> view would ship its parent, and listing the same buffer twice throws a <code>DataCloneError</code>. Callers that still need the inputs must pass copies (<code>A.slice()</code>). The result travels back the same way, so neither direction copies M·N floats. And the worker only moves the cost off the main thread; for parallel speed-up the work has to be split across several workers, or across WebAssembly threads with shared memory.</p><p>The <a href="../lab.html#backend-comparison">workbench backend comparison</a> runs larger repeatable shapes. Do not rank runtimes from one shape or a single cold run.</p></section>
+
+      <section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://tc39.es/ecma262/#sec-typedarray-objects">ECMAScript: TypedArray objects</a> (element get and set, out-of-range behaviour)</li><li><a href="https://tc39.es/ecma262/#sec-ecmascript-language-types-number-type">ECMAScript: the Number type</a> (binary64 arithmetic)</li><li><a href="https://v8.dev/blog/elements-kinds">V8: Elements kinds in V8</a></li><li><a href="https://mathiasbynens.be/notes/shapes-ics">Bynens &amp; Meurer: JavaScript engine fundamentals, shapes and inline caches</a></li><li><a href="https://html.spec.whatwg.org/multipage/structured-data.html#transferable-objects">HTML: transferable objects</a></li><li><a href="https://people.freebsd.org/~lstewart/articles/cpumemory.pdf">Drepper (2007), What every programmer should know about memory</a></li><li><a href="https://doi.org/10.1145/103162.103163">Goldberg (1991), What every computer scientist should know about floating-point arithmetic</a></li></ul></section>
       <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
     </article></div>
   </main>
