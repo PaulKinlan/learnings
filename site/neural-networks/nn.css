@@ -342,18 +342,19 @@
 .mini-cell {
   aspect-ratio: 1;
   border-radius: 1px;
-  background: #e2e8f0;
+  background: #1e293b;
+  color: #f8fafc;
   font-size: 0.62rem;
   display: grid;
   place-items: center;
 }
 
-.heat-0 { background: #f1f5f9; color: #1e293b; }
-.heat-1 { background: #bae6fd; color: #082f49; }
-.heat-2 { background: #7dd3fc; color: #082f49; }
-.heat-3 { background: #0369a1; color: #ffffff; }
-.heat-4 { background: #0c4a6e; color: #ffffff; }
-.heat-neg { background: #fecaca; color: #7f1d1d; }
+.heat-0 { background: #1e293b; color: #94a3b8; }
+.heat-1 { background: #0369a1; color: #f8fafc; }
+.heat-2 { background: #0284c7; color: #f8fafc; }
+.heat-3 { background: #38bdf8; color: #0b0f19; }
+.heat-4 { background: #bae6fd; color: #0b0f19; }
+.heat-neg { background: #881337; color: #fecdd3; }
 
 /* Transformer Attention Matrix */
 .attn-heads-wrap {
@@ -627,8 +628,9 @@
 .stepper-stage-formula {
   font-family: ui-monospace, monospace;
   font-size: 0.88rem;
-  background: #f1f5f9;
-  color: var(--ink);
+  background: #0b0f19;
+  color: #38bdf8;
+  border: 1px solid #334155;
   padding: 0.5rem 0.7rem;
   border-radius: 4px;
   margin-bottom: 0.38rem;
@@ -735,9 +737,10 @@
   font-size: 0.78rem;
   padding: 0.3rem 0.62rem;
   border-radius: 4px;
-  background: #f1f5f9;
-  color: var(--ink);
-  border: 1px solid var(--line);
+  background: #1e293b;
+  color: #f8fafc;
+  border: 1px solid #475569;
+  cursor: pointer;
 }
 
 .node-select-pill.active {
@@ -745,6 +748,7 @@
   color: #facc15;
   border-color: #facc15;
   font-weight: 800;
+  box-shadow: 0 0 8px rgba(250, 204, 21, 0.3);
 }
 
 .inspector-node-header {
@@ -857,16 +861,25 @@
   font-size: 0.78rem;
   padding: 0.38rem 0.75rem;
   border-radius: 4px;
-  background: #f1f5f9;
-  color: var(--ink);
-  border: 1px solid var(--line);
+  background: #1e293b;
+  color: #f8fafc;
+  border: 1px solid #475569;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.code-lang-btn:hover {
+  background: #334155;
+  color: #ffffff;
+  border-color: #64748b;
 }
 
 .code-lang-btn.active {
-  background: #054a80;
+  background: #0284c7;
   color: #ffffff;
-  border-color: #03355c;
+  border-color: #38bdf8;
   font-weight: 700;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.25);
 }
 
 .kernel-code-summary {
@@ -940,9 +953,9 @@
 .hyperparam-eq {
   display: block;
   font-size: 0.75rem;
-  background: #f8fafc;
-  color: var(--ink);
-  border: 1px solid var(--line);
+  background: #0b0f19;
+  color: #38bdf8;
+  border: 1px solid #334155;
   border-radius: 3px;
   padding: 0.28rem 0.5rem;
   margin-bottom: 0.35rem;
