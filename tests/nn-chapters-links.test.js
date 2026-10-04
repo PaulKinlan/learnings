@@ -120,3 +120,17 @@ test('old workbench anchors redirect to lab.html; anything else stays on the hub
   const lab = readFileSync(join(nn, 'lab.html'), 'utf8');
   for (const id of LAB_ANCHORS) assert.match(lab, new RegExp(`id="${id}"`), `lab.html has no #${id}`);
 });
+
+test('backends/webgpu.html listings are the exact shader and host code from engine.js, open and in order', async () => {
+  const engine = await import('../site/neural-networks/engine.js');
+  const html = readFileSync(join(nn, 'backends/webgpu.html'), 'utf8');
+  assert.doesNotMatch(html, /<details/, 'webgpu.html must not hide code in <details>');
+  const unescape = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const shown = { wgsl: [], init: [], dispatch: [] };
+  for (const m of html.matchAll(/<pre data-listing="(\w+)"><code>([\s\S]*?)<\/code><\/pre>/g)) shown[m[1]].push(...unescape(m[2]).split('\n'));
+  const nonBlank = (lines) => lines.filter((l) => l.trim());
+  const sources = { wgsl: engine.WGSL_GEMM_SHADER, init: engine.initWebGPUBackend.toString(), dispatch: engine.webgpuMatmulAsync.toString() };
+  for (const [key, text] of Object.entries(sources)) {
+    assert.deepEqual(nonBlank(shown[key]), nonBlank(text.split('\n')), `${key} listings drifted from engine.js`);
+  }
+});

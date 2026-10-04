@@ -348,3 +348,36 @@ math[display="block"] {
     navigation: auto;
   }
 }
+
+/* Code listings and ASCII diagrams keep their columns: no wrapping, scroll sideways on narrow screens. */
+.listing {
+  margin: 1.25rem 0 0.5rem;
+  min-inline-size: 0;
+}
+
+.listing figcaption {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-block-end: 0.25rem;
+}
+
+.listing pre,
+.listing-bad,
+.diagram,
+.playground pre[data-source] {
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+  max-block-size: none;
+  margin-block: 0.5rem 1rem;
+}
+
+.listing-bad {
+  border-inline-start: 4px solid #fb7185;
+}
+
+.diagram {
+  font-size: 0.82rem;
+  line-height: 1.35;
+}

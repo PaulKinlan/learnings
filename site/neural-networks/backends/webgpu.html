@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
   <meta name="referrer" content="no-referrer">
   <title>WebGPU compute shaders | Neural networks</title>
-  <meta name="description" content="Dispatch a tiled WGSL matrix multiplication, or see an honest unsupported-device result.">
+  <meta name="description" content="A tiled WGSL matrix multiply, read line by line: SIMT execution, workgroup memory, arithmetic intensity, barriers, and the host code that dispatches it and reads the result back.">
   <link rel="stylesheet" href="../../style.css">
   <link rel="stylesheet" href="../chapter.css">
   <link rel="stylesheet" href="../playgrounds.css">
@@ -16,9 +16,241 @@
   <header><a href="../../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="../">Chapters</a><a href="../lab.html">Workbench</a></nav></header>
   <main id="main" class="chapter">
     <p class="crumbs"><a href="../">Neural networks</a> › WebGPU compute shaders</p>
-    <h1>WebGPU compute shaders</h1><p class="lead">Dispatch a tiled WGSL matrix multiplication, or see an honest unsupported-device result.</p>
+    <h1>WebGPU compute shaders</h1><p class="lead">This chapter reads one 57-line WGSL matrix-multiply shader and the 52-line JavaScript function that runs it, both copied verbatim from <code>engine.js</code>. Every hardware claim below is tied to a specific line.</p>
     <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
-      <section class="prose"><h2>A compute pipeline, not a synchronous function call</h2><p>WebGPU needs a secure context and a browser/device exposing a suitable adapter. Creating a device, shader module and pipeline precedes dispatch. The existing engine uses 8 × 8 workgroups, storage buffers for matrices and workgroup memory for tiles.</p><p>Each workgroup cooperatively loads tiles, waits at a barrier, accumulates products and writes guarded output cells. Out-of-bounds invocations still participate in barriers. Returning some invocations early before a required barrier can deadlock or invalidate a shader.</p></section><section data-widget="backend" data-backend="webgpu"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Readback has a cost</h2><p>A storage buffer is not directly a JavaScript array. The engine encodes compute work, copies output to a MAP_READ buffer, submits commands, awaits mapping, copies the bytes and releases buffers. GPU execution is asynchronous. Small operations may cost more in submission and transfer than they save in arithmetic.</p><p>This page intentionally does not fall back silently: an unavailable adapter produces an explanatory result. The <a href="./javascript.html">JavaScript chapter</a> runs everywhere this course runs. The full workbench supports explicit backend comparisons.</p></section><section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://www.w3.org/TR/webgpu/">WebGPU specification</a></li><li><a href="https://www.w3.org/TR/WGSL/">WebGPU Shading Language specification</a></li></ul></section>
+      <section class="prose"><h2>Run it first</h2><p>The button multiplies A = [1, 2; 3, 4] by B = [5, 6; 7, 8] on your GPU. The expected product is [19, 22; 43, 50]. If the browser exposes no <code>navigator.gpu</code>, or <code>requestAdapter()</code> returns <code>null</code> (common in headless browsers, virtual machines and blocklisted drivers), the widget says so and stops. It never prints a CPU result labelled as GPU output. The shader that runs is printed in full under the button.</p></section>
+      <section data-widget="backend" data-backend="webgpu"><p>Enable JavaScript to use this local playground. The explanation and listings below work without it.</p></section>
+
+      <section class="prose"><h2>How a GPU runs one function many thousand times</h2><p>You write a compute shader from the point of view of one <em>invocation</em>: one row index, one column index, one output cell. <code>dispatchWorkgroups(x, y, z)</code> launches that function x·y·z times per workgroup, and the GPU does not schedule those invocations one by one. It packs them into fixed-width groups that share a single instruction stream. WGSL calls such a group a <em>subgroup</em>. NVIDIA calls it a warp and uses 32 lanes. AMD calls it a wavefront, with 64 lanes on GCN and 32 or 64 on RDNA. Apple GPUs use 32. Intel GPUs compile to 8, 16 or 32 lanes depending on the shader.</p><p>A subgroup fetches one instruction and executes it in every active lane, each lane holding its own registers. That model is SIMT: single instruction, multiple threads. Each lane looks like a thread with its own program counter, but the lanes in a subgroup advance together. An 8 × 8 workgroup (64 invocations) occupies two 32-wide NVIDIA warps or one 64-wide AMD wavefront. WGSL does not tell you the subgroup width or which invocations share a subgroup, so the shader cannot rely on lockstep execution for correctness. Explicit barriers carry that guarantee, as the barrier section shows.</p><h3>Divergence</h3><p>When lanes in one subgroup take different sides of an <code>if</code>, the hardware cannot run both sides at once. It runs the <code>then</code> side with the disagreeing lanes masked off, then runs the <code>else</code> side with the first group masked off. The subgroup pays for both paths. A loop costs as many iterations as its slowest lane needs. The only data-dependent branches in this shader are bounds checks (lines 33, 39 and 54 of the listing). Every lane in an interior workgroup takes the same side. Only workgroups that overhang a matrix edge diverge, and each side of those branches is a single store, which compilers often lower to a branchless select.</p><h3>Latency hiding</h3><p>A load from device memory takes hundreds of cycles. A CPU core hides that latency with large caches and out-of-order execution. A GPU compute unit keeps many subgroups resident and, when one stalls on a load, issues instructions from another that is ready. How many subgroups fit at once (<em>occupancy</em>) is bounded by the register file and by on-chip workgroup memory, both divided among the resident workgroups. That makes register count and workgroup memory size performance parameters, not only correctness parameters.</p></section>
+
+      <section class="prose"><h2>Where the data lives, and why bandwidth is the limit</h2><p>WGSL exposes the memory hierarchy as address spaces. <code>var&lt;storage&gt;</code> buffers live in device memory: GDDR or HBM on a discrete card, shared system DRAM on integrated GPUs and Apple silicon. Every invocation in every workgroup can read it, and the bandwidth is hundreds of GB/s shared by the whole chip. <code>var&lt;workgroup&gt;</code> variables live in on-chip SRAM, called shared memory on NVIDIA and LDS (local data share) on AMD. Only the invocations of one workgroup can see it, it lasts only as long as that workgroup, and it is an order of magnitude faster to reach. WebGPU guarantees at least 16 384 bytes of workgroup storage per workgroup by default (<code>maxComputeWorkgroupStorageSize</code>). This shader uses 512 of them: two 8 × 8 tiles of 4-byte floats.</p><h3>Arithmetic intensity of the naive kernel</h3><p>Count the work for C[M×N] = A[M×K]·B[K×N]. Each output needs K multiply-adds, or 2K floating-point operations. In the naive kernel each invocation reads its whole row of A and its whole column of B straight from device memory, so it issues 2K four-byte loads:</p><math display="block"><mtext>FLOPs</mtext><mo>=</mo><mn>2</mn><mi>M</mi><mi>N</mi><mi>K</mi><mo>,</mo><mspace width="1em"></mspace><msub><mtext>loads</mtext><mtext>naive</mtext></msub><mo>=</mo><mn>2</mn><mi>M</mi><mi>N</mi><mi>K</mi><mo>,</mo><mspace width="1em"></mspace><msub><mi>I</mi><mtext>naive</mtext></msub><mo>=</mo><mfrac><mrow><mn>2</mn><mi>M</mi><mi>N</mi><mi>K</mi></mrow><mrow><mn>4</mn><mo>·</mo><mn>2</mn><mi>M</mi><mi>N</mi><mi>K</mi></mrow></mfrac><mo>=</mo><mfrac><mn>1</mn><mn>4</mn></mfrac><mtext> FLOP/byte</mtext></math><p class="equation-note">I is arithmetic intensity: floating-point operations performed per byte moved from device memory. The count assumes no cache reuse, which is the worst case; real L1/L2 caches will catch some repeats, but the kernel gives the hardware no structure to exploit.</p><p>The roofline model turns intensity into a speed limit. A kernel can go no faster than the chip’s peak arithmetic rate, and no faster than the rate at which memory can feed it:</p><math display="block"><mtext>attainable FLOP/s</mtext><mo>=</mo><mo>min</mo><mo>(</mo><msub><mi>P</mi><mtext>peak</mtext></msub><mo>,</mo><mspace width="0.3em"></mspace><mi>I</mi><mo>·</mo><mi>β</mi><mo>)</mo></math><p>Take an illustrative mid-range discrete GPU with P = 20 TFLOP/s of f32 and β = 500 GB/s of memory bandwidth. These are round numbers for the arithmetic, not a measurement of any product. The ridge point, where the two limits meet, is P/β = 40 FLOP/byte. At I = 0.25 the naive kernel is capped at 0.25 × 500 GB/s = 125 GFLOP/s, about 0.6% of peak. The arithmetic units spend more than 99% of their cycles waiting for operands. The kernel is memory-bound, and no amount of faster arithmetic changes that.</p><h3>Tiling divides the traffic by B</h3><p>Tiling uses the fact that every element of A is needed by N different outputs, and every element of B by M outputs. A workgroup that computes a B × B block of C loads a B × B tile of A and a B × B tile of B into workgroup memory once per step along K. All B² invocations then read those values from on-chip memory instead of fetching them again from device memory. There are (M/B)(N/B) workgroups, each runs K/B steps, and each step loads 2B² floats:</p><math display="block"><msub><mtext>loads</mtext><mtext>tiled</mtext></msub><mo>=</mo><mfrac><mi>M</mi><mi>B</mi></mfrac><mo>·</mo><mfrac><mi>N</mi><mi>B</mi></mfrac><mo>·</mo><mfrac><mi>K</mi><mi>B</mi></mfrac><mo>·</mo><mn>2</mn><msup><mi>B</mi><mn>2</mn></msup><mo>=</mo><mfrac><mrow><mn>2</mn><mi>M</mi><mi>N</mi><mi>K</mi></mrow><mi>B</mi></mfrac><mo>,</mo><mspace width="1em"></mspace><msub><mi>I</mi><mtext>tiled</mtext></msub><mo>=</mo><mfrac><mi>B</mi><mn>4</mn></mfrac><mtext> FLOP/byte</mtext></math><p>With B = 8, as in this shader, intensity rises eightfold to 2 FLOP/byte and the cap on the illustrative GPU rises to 1 TFLOP/s, 5% of peak. That is a large improvement and still memory-bound. Reaching the 40 FLOP/byte ridge would need B ≈ 160, and with one invocation per output cell, B is capped far below that. WebGPU’s default <code>maxComputeInvocationsPerWorkgroup</code> is 256, so B ≤ 16 and I ≤ 4 FLOP/byte for this design. Kernels that actually become compute-bound give each invocation a block of outputs held in registers. With 256 invocations each accumulating an 8 × 8 block, a workgroup covers a 128 × 128 tile of C, I reaches 128/4 = 32 FLOP/byte, and the illustrative cap rises to 16 TFLOP/s, 80% of peak. The section on what this kernel leaves on the table returns to that design.</p></section>
+
+      <section class="prose"><h2>Tiling geometry</h2><p>Take M = K = N = 16 with B = 8. The dispatch is <code>dispatchWorkgroups(ceil(N/8), ceil(M/8), 1)</code> = 2 × 2 workgroups. Workgroup <code>(wx, wy)</code> owns the 8 × 8 block of C whose rows start at 8·wy and whose columns start at 8·wx. It walks along K in <code>numTiles</code> = ceil(K/8) = 2 steps:</p>
+<pre class="diagram" role="img" aria-label="A 16 by 16 matrix multiply split into 8 by 8 tiles. Workgroup x=0, y=1 computes block C(1,0) as A(1,0) times B(0,0) plus A(1,1) times B(1,0).">            K →                       N →
+        ┌───────┬───────┐         ┌───────┬───────┐
+        │ A0,0  │ A0,1  │       K │▓B0,0▓▓│ B0,1  │
+   M    ├───────┼───────┤       ↓ ├───────┼───────┤
+   ↓    │▓A1,0▓▓│▓A1,1▓▓│         │▓B1,0▓▓│ B1,1  │
+        └───────┴───────┘         └───────┴───────┘
+          t = 0   t = 1          ▓ = column block 0
+
+                N →
+            ┌───────┬───────┐
+          M │ C0,0  │ C0,1  │   workgroup (wx=0, wy=1)
+          ↓ ├───────┼───────┤   computes C1,0:
+            │▓C1,0▓▓│ C1,1  │   t=0: += A1,0 · B0,0
+            └───────┴───────┘   t=1: += A1,1 · B1,0</pre>
+<p>Inside the workgroup, invocation <code>(lx, ly)</code> with lx, ly ∈ [0, 8) owns one output cell and loads one element of each tile per step:</p><math display="block"><mi>row</mi><mo>=</mo><mn>8</mn><msub><mi>w</mi><mi>y</mi></msub><mo>+</mo><msub><mi>l</mi><mi>y</mi></msub><mo>,</mo><mspace width="0.6em"></mspace><mi>col</mi><mo>=</mo><mn>8</mn><msub><mi>w</mi><mi>x</mi></msub><mo>+</mo><msub><mi>l</mi><mi>x</mi></msub><mo>,</mo><mspace width="0.6em"></mspace><msub><mtext>tileA</mtext><mrow><msub><mi>l</mi><mi>y</mi></msub><mo>,</mo><msub><mi>l</mi><mi>x</mi></msub></mrow></msub><mo>←</mo><msub><mi>A</mi><mrow><mi>row</mi><mo>,</mo><mn>8</mn><mi>t</mi><mo>+</mo><msub><mi>l</mi><mi>x</mi></msub></mrow></msub><mo>,</mo><mspace width="0.6em"></mspace><msub><mtext>tileB</mtext><mrow><msub><mi>l</mi><mi>y</mi></msub><mo>,</mo><msub><mi>l</mi><mi>x</mi></msub></mrow></msub><mo>←</mo><msub><mi>B</mi><mrow><mn>8</mn><mi>t</mi><mo>+</mo><msub><mi>l</mi><mi>y</mi></msub><mo>,</mo><mi>col</mi></mrow></msub></math><p>The 64 invocations together fill both tiles with 128 device-memory loads. After the barrier, each invocation reads a row of <code>tileA</code> and a column of <code>tileB</code>, 16 on-chip reads for 8 multiply-adds:</p>
+<pre class="diagram" role="img" aria-label="Invocation at local row 2, column 5 reads row 2 of tileA and column 5 of tileB to accumulate eight products.">          tileA (8×8)                  tileB (8×8)
+        ┌─────────────────┐          ┌─────────────────┐
+        │ · · · · · · · · │          │ · · · · · ▓ · · │
+        │ · · · · · · · · │          │ · · · · · ▓ · · │
+  ly=2 →│ ▓ ▓ ▓ ▓ ▓ ▓ ▓ ▓ │          │ · · · · · ▓ · · │
+        │ · · · · · · · · │          │ · · · · · ▓ · · │
+        │ · · · · · · · · │          │ · · · · · ▓ · · │
+        │ · · · · · · · · │          │ · · · · · ▓ · · │
+        │ · · · · · · · · │          │ · · · · · ▓ · · │
+        │ · · · · · · · · │          │ · · · · · ▓ · · │
+        └─────────────────┘          └─────────────────┘
+                                                 ↑ lx=5
+   acc += tileA[2][k] * tileB[k][5]   for k = 0 … 7</pre>
+<p>Without the tiles, the same 64 invocations would issue 64 × 16 = 1 024 device loads for that step, eight times as many.</p><h3>Coalescing</h3><p>The shader maps <code>global_id.x</code> to the column, so neighbouring lanes (consecutive <code>lx</code>) read neighbouring addresses. In <code>A[row * K + aCol]</code> the eight lanes of one row of the workgroup read eight consecutive floats, 32 contiguous bytes. In <code>B[bRow * N + col]</code> they also read 32 contiguous bytes. The memory system can serve each group of eight lanes with one wide transaction instead of eight separate ones; NVIDIA hardware, for instance, moves device memory in 32-byte sectors. If the shader mapped x to the row instead, each of those loads would stride by K or N floats and touch a different sector.</p><h3>Bank conflicts</h3><p>Workgroup memory is usually split into 32 banks, each 4 bytes wide, and each bank serves one address per cycle. Lanes reading different addresses in the same bank are serialised; lanes reading the same address get a broadcast. In the inner loop, <code>tileA[lRow][k]</code> is the same address for all eight lanes in a row, so it broadcasts. <code>tileB[k][lCol]</code> is eight consecutive floats in eight different banks. Neither read conflicts.</p><h3>Ragged edges</h3><p>When M, K or N is not a multiple of 8, the last workgroups overhang the matrix. Lines 33–43 store 0.0 into tile slots that fall outside A or B, so the inner loop on line 47 can always run exactly 8 iterations. A padded column of A (aCol ≥ K) always meets a padded row of B (bRow ≥ K) at the same k, so the extra products are 0 × 0 and leave <code>acc</code> unchanged. The 2 × 2 demo above is the extreme case: ceil(2/8) = 1 workgroup of 64 invocations, of which 4 compute a real output and 60 multiply zeros and then skip the store on line 54.</p></section>
+
+      <section class="prose"><h2>Barriers: execution order and memory visibility</h2><p><code>workgroupBarrier()</code> provides two guarantees. For execution, no invocation in the workgroup passes the barrier until every invocation in the workgroup has reached it. For memory, every write to <code>var&lt;workgroup&gt;</code> memory made before the barrier is visible to every read after it. The execution guarantee alone would not be enough, because a write can sit in a store buffer or a non-coherent cache after its instruction has retired; the memory half is what makes another invocation’s value readable. The barrier covers only the workgroup address space. <code>storageBarrier()</code> gives the same ordering for storage buffers, and only within one workgroup. Nothing in WGSL makes one workgroup wait for another inside a dispatch. To consume results from other workgroups, end the dispatch and start another; WebGPU orders the two dispatches’ storage accesses for you.</p><p>The loop needs two barriers per step, for two different hazards:</p>
+<pre class="diagram" role="img" aria-label="Timeline of one tile step showing the read-after-write hazard closed by the first barrier and the write-after-read hazard closed by the second.">step t:  store tileA/tileB  (each lane writes 1 slot of each)
+         ─── barrier #1 (line 45) ── read-after-write ───
+         8 × acc += tileA[ly][k] * tileB[k][lx]
+         ─── barrier #2 (line 51) ── write-after-read ───
+step t+1: store tileA/tileB (overwrites the same 128 slots)</pre>
+<p>Barrier #1 closes a read-after-write hazard. Each invocation’s inner loop reads 16 tile slots, and 15 of them hold values written by other invocations: 7 others in its row of <code>tileA</code> and 8 others in its column of <code>tileB</code>. Without the barrier, a lane could read a slot before its owner has written it and accumulate a stale value or zero.</p><p>Barrier #2 closes a write-after-read hazard. Without it, a subgroup that finishes its 8 multiply-adds first would loop back to line 33 and overwrite <code>tileA</code> and <code>tileB</code> with step t+1 data while a slower subgroup is still reading step t. On a 64-wide AMD wavefront the whole 8 × 8 workgroup is one subgroup, so this race may never show up in testing. On 32-wide hardware the workgroup is two subgroups and the race is real. Since NVIDIA Volta, even lanes within one warp are not guaranteed to stay in lockstep. The barrier makes the shader correct on all of them.</p><h3>Why out-of-range invocations must not return early</h3><p>The obvious way to handle the overhang is to stop invocations that have no output cell. It is wrong:</p>
+<pre class="listing-bad"><code>// WRONG: do not write this.
+if (row &gt;= dims.M || col &gt;= dims.N) { return; }
+for (var t = 0u; t &lt; numTiles; t++) {
+  …
+  workgroupBarrier();   // waits for 64 invocations; some have left
+}</code></pre>
+<p>The invocations that returned never reach the barrier. On hardware that counts arrivals, the rest of the workgroup can wait forever; and the returned invocations never load their share of the tiles, so even if the GPU did not hang, the surviving invocations would read garbage. CUDA makes <code>__syncthreads()</code> in divergent code undefined behaviour and leaves you to find the hang. WGSL rejects it at compile time instead. Its uniformity analysis requires every <code>workgroupBarrier()</code> to be reached in <em>uniform control flow</em>, meaning all invocations of the workgroup must take the same path to it. <code>row</code> comes from <code>global_invocation_id</code>, so it is non-uniform, and a <code>return</code> that depends on it makes everything after it non-uniform. <code>createShaderModule</code> does not throw for this; the error appears in <code>getCompilationInfo()</code> and as a validation error on the device.</p><p>The real shader keeps all 64 invocations in the loop and moves the bounds test to two places where it is legal. Lines 33–43 turn out-of-range loads into zero stores, and line 54 guards the final store, which comes after the last barrier. The loop itself is legal because its trip count, <code>numTiles</code>, depends only on <code>dims.K</code> from a uniform buffer, which is the same value for every invocation. Change the loop bound to anything derived from <code>row</code> or <code>col</code> and the shader stops compiling.</p></section>
+
+      <section class="prose"><h2>The shader, line by line</h2><p>This is <code>WGSL_GEMM_SHADER</code> from <code>engine.js</code>, split into eight consecutive listings with nothing omitted. Line numbers count from the first line of the shader string. A test in <code>tests/nn-chapters-links.test.js</code> fails if these listings ever stop matching the source.</p>
+<figure class="listing"><figcaption>WGSL_GEMM_SHADER, lines 1–6</figcaption><pre data-listing="wgsl"><code>struct Dimensions {
+  M : u32,
+  K : u32,
+  N : u32,
+  _pad : u32,
+};</code></pre></figure>
+<p>The host passes the three matrix sizes as data instead of compiling them into the shader, so one pipeline serves every shape. <code>u32</code> is a 32-bit unsigned integer. <code>_pad</code> makes the struct 16 bytes, exactly the <code>Uint32Array([M, K, N, 0])</code> that the host writes into the uniform buffer. The shader never reads it.</p>
+<figure class="listing"><figcaption>WGSL_GEMM_SHADER, lines 7–11</figcaption><pre data-listing="wgsl"><code>
+@group(0) @binding(0) var&lt;uniform&gt; dims : Dimensions;
+@group(0) @binding(1) var&lt;storage, read&gt; A : array&lt;f32&gt;;
+@group(0) @binding(2) var&lt;storage, read&gt; B : array&lt;f32&gt;;
+@group(0) @binding(3) var&lt;storage, read_write&gt; C : array&lt;f32&gt;;</code></pre></figure>
+<p><code>@group(0)</code> is the index passed to <code>setBindGroup(0, …)</code> on the host. <code>@binding(n)</code> matches <code>{ binding: n }</code> in <code>createBindGroup</code>. <code>var&lt;uniform&gt;</code> is a small read-only buffer, the same value for every invocation; that sameness is what makes <code>dims.K</code> uniform for the barrier rule above. <code>var&lt;storage, read&gt;</code> and <code>var&lt;storage, read_write&gt;</code> are device-memory buffers. C needs <code>read_write</code> because the shader stores into it. <code>array&lt;f32&gt;</code> without a length is a runtime-sized array whose length comes from the bound buffer’s size. An out-of-bounds index cannot corrupt other memory: WGSL defines such an access to stay inside the binding (implementations clamp the index or discard the access), which is part of why WebGPU can run untrusted shaders. All three matrices are row-major, so A[i,k] lives at index i·K + k.</p>
+<figure class="listing"><figcaption>WGSL_GEMM_SHADER, lines 12–14</figcaption><pre data-listing="wgsl"><code>
+var&lt;workgroup&gt; tileA : array&lt;array&lt;f32, 8&gt;, 8&gt;;
+var&lt;workgroup&gt; tileB : array&lt;array&lt;f32, 8&gt;, 8&gt;;</code></pre></figure>
+<p><code>var&lt;workgroup&gt;</code> declares one copy per workgroup, shared by its 64 invocations and placed in on-chip memory. <code>array&lt;array&lt;f32, 8&gt;, 8&gt;</code> is an 8 × 8 array in row-major order: <code>tileA[r][c]</code> is float number 8r + c. Two tiles × 64 floats × 4 bytes = 512 bytes. WGSL zero-initialises workgroup memory when the workgroup starts, but this shader writes every slot before reading it.</p>
+<figure class="listing"><figcaption>WGSL_GEMM_SHADER, lines 15–20</figcaption><pre data-listing="wgsl"><code>
+@compute @workgroup_size(8, 8, 1)
+fn main(
+  @builtin(global_invocation_id) global_id : vec3&lt;u32&gt;,
+  @builtin(local_invocation_id) local_id : vec3&lt;u32&gt;
+) {</code></pre></figure>
+<p><code>@compute</code> marks <code>main</code> as a compute entry point; its name must equal <code>entryPoint: "main"</code> in <code>createComputePipeline</code>. <code>@workgroup_size(8, 8, 1)</code> fixes 64 invocations per workgroup at compile time, under the default limit of 256 total and 256 in x and y. <code>@builtin(local_invocation_id)</code> is the invocation’s coordinate inside its workgroup, each component in [0, 8) here. <code>@builtin(global_invocation_id)</code> is <code>workgroup_id * workgroup_size + local_invocation_id</code>, computed per component: its coordinate across the whole dispatch.</p>
+<figure class="listing"><figcaption>WGSL_GEMM_SHADER, lines 21–28</figcaption><pre data-listing="wgsl"><code>  let row = global_id.y;
+  let col = global_id.x;
+  let lRow = local_id.y;
+  let lCol = local_id.x;
+
+  var acc : f32 = 0.0;
+  let numTiles = (dims.K + 7u) / 8u;</code></pre></figure>
+<p>x is the column and y the row; that choice is what makes the loads coalesce. <code>acc</code> is a function-scope variable, so it lives in a register, private to the invocation. <code>(dims.K + 7u) / 8u</code> is ceiling division in integers: K = 2 gives 1 tile, K = 8 gives 1, K = 9 gives 2.</p>
+<figure class="listing"><figcaption>WGSL_GEMM_SHADER, lines 29–44</figcaption><pre data-listing="wgsl"><code>  for (var t : u32 = 0u; t &lt; numTiles; t = t + 1u) {
+    let aCol = t * 8u + lCol;
+    let bRow = t * 8u + lRow;
+
+    if (row &lt; dims.M &amp;&amp; aCol &lt; dims.K) {
+      tileA[lRow][lCol] = A[row * dims.K + aCol];
+    } else {
+      tileA[lRow][lCol] = 0.0;
+    }
+
+    if (bRow &lt; dims.K &amp;&amp; col &lt; dims.N) {
+      tileB[lRow][lCol] = B[bRow * dims.N + col];
+    } else {
+      tileB[lRow][lCol] = 0.0;
+    }</code></pre></figure>
+<p>Line 29 walks along K one tile at a time. Lines 30–31: this invocation fetches column t·8 + lCol of row <code>row</code> in A, and row t·8 + lRow of column <code>col</code> in B. Lines 33–43 are the cooperative load: each of the 64 invocations performs one global load per tile, or one zero store if its element lies outside the matrix. These are the only device-memory reads in the shader.</p>
+<figure class="listing"><figcaption>WGSL_GEMM_SHADER, lines 45–52</figcaption><pre data-listing="wgsl"><code>    workgroupBarrier();
+
+    for (var k : u32 = 0u; k &lt; 8u; k = k + 1u) {
+      acc = acc + tileA[lRow][k] * tileB[k][lCol];
+    }
+
+    workgroupBarrier();
+  }</code></pre></figure>
+<p>Line 45 is barrier #1 (read-after-write). Lines 47–49 are the arithmetic: 8 multiply-adds, reading 8 floats from <code>tileA</code> and 8 from <code>tileB</code>, two on-chip loads per multiply-add. That ratio is the next bottleneck once device memory is solved; register tiling cuts it. Line 51 is barrier #2 (write-after-read). Both barriers sit inside a loop whose trip count is uniform.</p>
+<figure class="listing"><figcaption>WGSL_GEMM_SHADER, lines 53–57</figcaption><pre data-listing="wgsl"><code>
+  if (row &lt; dims.M &amp;&amp; col &lt; dims.N) {
+    C[row * dims.N + col] = acc;
+  }
+}</code></pre></figure>
+<p>The bounds test on line 54 is legal here because no barrier follows it. Invocations outside C skip the store; the rest write their accumulated dot product to device memory. This is the shader’s only device-memory write, one per output cell.</p></section>
+
+      <section class="prose"><h2>The host: from adapter to pipeline</h2><p>The shader does nothing until JavaScript compiles it and hands it to a queue. <code>initWebGPUBackend()</code> does the one-time work; it is printed here in full in six listings.</p>
+<figure class="listing"><figcaption>initWebGPUBackend, lines 1–4</figcaption><pre data-listing="init"><code>async function initWebGPUBackend() {
+  if (webgpuState.checked &amp;&amp; webgpuState.available) return webgpuState;
+  webgpuState.checked = true;
+  try {</code></pre></figure>
+<p>The result is cached only on success. A failed probe sets <code>checked</code> but leaves <code>available</code> false, so the next call probes again instead of remembering the failure for ever.</p>
+<figure class="listing"><figcaption>initWebGPUBackend, lines 5–10</figcaption><pre data-listing="init"><code>    const nav = /** @type {any} */ (typeof navigator !== "undefined" ? navigator : null);
+    if (!nav || !nav.gpu) {
+      webgpuState.available = false;
+      webgpuState.adapterInfo = "navigator.gpu unavailable in this browser/runtime (falling back to WASM GEMM)";
+      return webgpuState;
+    }</code></pre></figure>
+<p><code>navigator.gpu</code> exists only in a secure context (HTTPS or localhost) in a browser with WebGPU enabled. Node has a <code>navigator</code> global but no <code>gpu</code> property, so under <code>npm test</code> this branch is taken every time.</p>
+<figure class="listing"><figcaption>initWebGPUBackend, lines 11–16</figcaption><pre data-listing="init"><code>    const adapter = await nav.gpu.requestAdapter();
+    if (!adapter) {
+      webgpuState.available = false;
+      webgpuState.adapterInfo = "No WebGPU adapter available (headless/disabled GPU — falling back to WASM GEMM)";
+      return webgpuState;
+    }</code></pre></figure>
+<p><code>requestAdapter()</code> chooses a physical GPU and driver. It resolves to <code>null</code> instead of rejecting when none is suitable, so the code tests the result. This call passes no <code>powerPreference</code>, so the browser picks.</p>
+<figure class="listing"><figcaption>initWebGPUBackend, line 17</figcaption><pre data-listing="init"><code>    const device = await adapter.requestDevice();</code></pre></figure>
+<p><code>requestDevice()</code> with no descriptor gives a logical device with no optional features and the <em>default</em> limits, not the adapter’s maximums. A shader that needed more than 16 384 bytes of workgroup memory would have to request a higher <code>maxComputeWorkgroupStorageSize</code> here. A device can also be lost later, through a driver reset or a GPU process crash; <code>device.lost</code> is a promise that resolves when that happens. This engine does not listen to it, so after a loss <code>webgpuState</code> keeps a dead device.</p>
+<figure class="listing"><figcaption>initWebGPUBackend, lines 18–22</figcaption><pre data-listing="init"><code>    const shaderModule = device.createShaderModule({ code: WGSL_GEMM_SHADER });
+    const pipeline = device.createComputePipeline({
+      layout: "auto",
+      compute: { module: shaderModule, entryPoint: "main" }
+    });</code></pre></figure>
+<p><code>createShaderModule</code> parses and validates WGSL, and it does not throw on a WGSL error. Errors come back through <code>shaderModule.getCompilationInfo()</code> and as a validation error on the device. <code>layout: "auto"</code> derives the bind group layout from the shader’s <code>@group</code>/<code>@binding</code> declarations. <code>createComputePipeline</code> also returns synchronously; given an invalid module it returns an invalid pipeline and reports the error asynchronously. The <code>try</code>/<code>catch</code> around this code therefore catches a rejected <code>requestDevice()</code>, but not a shader that failed to compile. <code>createComputePipelineAsync()</code> would reject with a <code>GPUPipelineError</code> in that case. This is the step where the browser translates WGSL into the platform’s shading language (HLSL for D3D12, MSL for Metal, SPIR-V for Vulkan) and the driver compiles that to machine code, which is why it is done once and cached.</p>
+<figure class="listing"><figcaption>initWebGPUBackend, lines 23–32</figcaption><pre data-listing="init"><code>    webgpuState.available = true;
+    webgpuState.device = device;
+    webgpuState.pipeline = pipeline;
+    webgpuState.adapterInfo = "WebGPU WGSL @workgroup_size(8,8) Tiled GEMM Ready";
+  } catch (err) {
+    webgpuState.available = false;
+    webgpuState.adapterInfo = `WebGPU unavailable (${err?.message || "fallback to WASM"})`;
+  }
+  return webgpuState;
+}</code></pre></figure>
+<p>The device and pipeline are kept for every later multiply.</p></section>
+
+      <section class="prose"><h2>The host: one dispatch, start to finish</h2><p><code>webgpuMatmulAsync(A, B, M, K, N)</code> runs once per multiply. Nine listings, nothing omitted.</p>
+<figure class="listing"><figcaption>webgpuMatmulAsync, lines 1–6</figcaption><pre data-listing="dispatch"><code>async function webgpuMatmulAsync(A, B, M, K, N) {
+  const st = await initWebGPUBackend();
+  if (!st.available || !st.device || !st.pipeline) {
+    return getWasmBackend().matmul(A, B, M, K, N);
+  }
+  const device = st.device;</code></pre></figure>
+<p>If WebGPU is unavailable this function silently returns the WebAssembly result. That is convenient for a library and misleading in a lesson, so the widget above calls <code>initWebGPUBackend()</code> first and refuses to run when <code>available</code> is false.</p>
+<figure class="listing"><figcaption>webgpuMatmulAsync, lines 7–10</figcaption><pre data-listing="dispatch"><code>  // GPUBufferUsage flags: MAP_READ=1, COPY_SRC=4, COPY_DST=8, UNIFORM=64, STORAGE=128
+  const dimsData = new Uint32Array([M, K, N, 0]);
+  const uBuf = device.createBuffer({ size: 16, usage: 64 | 8 });
+  device.queue.writeBuffer(uBuf, 0, dimsData);</code></pre></figure>
+<p><code>GPUBufferUsage</code> is a bit mask, and the numbers on line 7 are its values. The uniform buffer is <code>UNIFORM | COPY_DST</code>: it is bound as a uniform and is the destination of <code>writeBuffer</code>. <code>queue.writeBuffer</code> copies the bytes out of <code>dimsData</code> when it is called, so the array could be reused at once, and the GPU is guaranteed to see the data before any work submitted later on the same queue.</p>
+<figure class="listing"><figcaption>webgpuMatmulAsync, lines 11–19</figcaption><pre data-listing="dispatch"><code>
+  const aBytes = Math.max(16, A.byteLength);
+  const bBytes = Math.max(16, B.byteLength);
+  const cBytes = Math.max(16, M * N * 4);
+
+  const aBuf = device.createBuffer({ size: aBytes, usage: 128 | 8 });
+  const bBuf = device.createBuffer({ size: bBytes, usage: 128 | 8 });
+  const cBuf = device.createBuffer({ size: cBytes, usage: 128 | 4 });
+  const readBuf = device.createBuffer({ size: cBytes, usage: 1 | 8 });</code></pre></figure>
+<p><code>Math.max(16, …)</code> keeps every buffer non-empty so the bindings are valid even when a dimension is zero. A and B are <code>STORAGE | COPY_DST</code>: bound as storage and filled by <code>writeBuffer</code>. C is <code>STORAGE | COPY_SRC</code>: the shader writes it and a copy reads it. The read-back buffer is <code>MAP_READ | COPY_DST</code>. WebGPU allows <code>MAP_READ</code> only together with <code>COPY_DST</code>, so the shader cannot write a mappable buffer directly. The design reflects the hardware: on a discrete card, C lives in VRAM, and the mappable buffer lives in memory the CPU can reach across PCIe. The explicit copy is the transfer.</p>
+<figure class="listing"><figcaption>webgpuMatmulAsync, lines 20–23</figcaption><pre data-listing="dispatch"><code>
+  device.queue.writeBuffer(aBuf, 0, A);
+  device.queue.writeBuffer(bBuf, 0, B);</code></pre></figure>
+<p>The input matrices go up the same way as the dimensions. Like every <code>writeBuffer</code>, these are ordered before the <code>submit</code> on line 41.</p>
+<figure class="listing"><figcaption>webgpuMatmulAsync, lines 24–33</figcaption><pre data-listing="dispatch"><code>  const bindGroup = device.createBindGroup({
+    layout: st.pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: uBuf } },
+      { binding: 1, resource: { buffer: aBuf } },
+      { binding: 2, resource: { buffer: bBuf } },
+      { binding: 3, resource: { buffer: cBuf } }
+    ]
+  });</code></pre></figure>
+<p>A bind group fills the slots the shader declared. <code>getBindGroupLayout(0)</code> fetches the layout that <code>"auto"</code> derived for <code>@group(0)</code>; each <code>binding</code> number matches the <code>@binding</code> on lines 8–11 of the shader. Buffer types must match too: binding a <code>MAP_READ</code> buffer at binding 3 would be a validation error.</p>
+<figure class="listing"><figcaption>webgpuMatmulAsync, lines 34–39</figcaption><pre data-listing="dispatch"><code>  const encoder = device.createCommandEncoder();
+  const pass = encoder.beginComputePass();
+  pass.setPipeline(st.pipeline);
+  pass.setBindGroup(0, bindGroup);
+  pass.dispatchWorkgroups(Math.ceil(N / 8), Math.ceil(M / 8), 1);
+  pass.end();</code></pre></figure>
+<p>A command encoder records commands; nothing executes yet. <code>dispatchWorkgroups(x, y, 1)</code> launches x × y workgroups of 64 invocations each. x = ceil(N/8) covers the columns and y = ceil(M/8) the rows, matching the x-is-column mapping in the shader. Each dimension is limited to 65 535 workgroups by default. For the 2 × 2 demo this is one workgroup.</p>
+<figure class="listing"><figcaption>webgpuMatmulAsync, lines 40–42</figcaption><pre data-listing="dispatch"><code>  encoder.copyBufferToBuffer(cBuf, 0, readBuf, 0, M * N * 4);
+  device.queue.submit([encoder.finish()]);</code></pre></figure>
+<p><code>copyBufferToBuffer</code> is recorded outside the compute pass because copies are not allowed inside one. Its size, M·N·4 bytes, must be a multiple of 4. <code>encoder.finish()</code> seals a command buffer and <code>queue.submit</code> hands it to the GPU. <code>submit</code> returns immediately; the GPU has not necessarily started.</p>
+<figure class="listing"><figcaption>webgpuMatmulAsync, lines 43–45</figcaption><pre data-listing="dispatch"><code>  await readBuf.mapAsync(1);
+  const out = new Float32Array(readBuf.getMappedRange(0, M * N * 4)).slice();
+  readBuf.unmap();</code></pre></figure>
+<p><code>mapAsync(1)</code> is <code>GPUMapMode.READ</code>. The promise resolves only after all submitted work that uses <code>readBuf</code> has finished, so this <code>await</code> is the only point where JavaScript waits for the GPU. <code>getMappedRange</code> returns an <code>ArrayBuffer</code> that views the mapped memory. <code>unmap()</code> detaches that <code>ArrayBuffer</code> and sets its length to zero, which is why line 44 copies the data out with <code>.slice()</code> before line 45 runs.</p>
+<figure class="listing"><figcaption>webgpuMatmulAsync, lines 46–52</figcaption><pre data-listing="dispatch"><code>  uBuf.destroy();
+  aBuf.destroy();
+  bBuf.destroy();
+  cBuf.destroy();
+  readBuf.destroy();
+  return out;
+}</code></pre></figure>
+<p><code>destroy()</code> releases GPU memory now instead of whenever the garbage collector finds the JavaScript wrapper. The function allocates five buffers and a bind group on every call. That is fine for a demonstration and wasteful in a training loop, where the buffers would be created once and reused.</p>
+<p>The two sides run on separate timelines:</p>
+<pre class="diagram" role="img" aria-label="Timeline: JavaScript records and submits commands without blocking; the GPU executes the dispatch and copy; mapAsync resolves after the copy finishes.">JavaScript (content timeline)      GPU (queue timeline)
+─────────────────────────────      ───────────────────────────
+writeBuffer(u, A, B)  ──────────▶  staged uploads
+createBindGroup, encode
+queue.submit([cmd])   ──────────▶  upload u, A, B
+await mapAsync(READ)                dispatch 1×1 workgroups
+   (event loop keeps running)       copy C → readBuf
+                       ◀──────────  work done; map completes
+getMappedRange().slice()
+unmap(); destroy()</pre>
+<p>For the 2 × 2 demo the GPU performs 8 multiply-adds. Against that, the host creates five buffers and a bind group, makes three uploads, one submission and one map round trip. The demo checks correctness; it says nothing about speed. A GPU starts to win once the matrices are large enough that 2MNK FLOPs dwarf the fixed cost of a submit and a readback, and the readback disappears entirely when the next operation consumes C on the GPU, as successive layers of a network do.</p></section>
+
+      <section class="prose"><h2>What this kernel leaves on the table</h2><p>The shader is correct and readable, and it is far from fast. The changes a production kernel makes, in roughly the order they pay off:</p><ul><li>Register tiling. Give each invocation a T × T block of outputs. Per step along k it loads T values of A and T of B from workgroup memory and performs T² multiply-adds, so on-chip loads per multiply-add fall from 2 to 2/T. Combined with larger workgroup tiles this raises device-memory intensity as computed above, from 2 FLOP/byte to tens.</li><li>Wider loads. Reading <code>vec4&lt;f32&gt;</code> moves 16 bytes per instruction instead of 4, cutting load instruction count by four.</li><li>Lower precision. The optional <code>shader-f16</code> feature halves bytes per element, which doubles arithmetic intensity on its own.</li><li>Subgroup operations. The optional <code>subgroups</code> feature lets lanes exchange registers directly, skipping a round trip through workgroup memory.</li><li>Host reuse. Allocate buffers and bind groups once, keep intermediate results on the GPU between layers, and read back only what JavaScript needs.</li><li>Error handling. Listen to <code>device.lost</code>, check <code>getCompilationInfo()</code>, and prefer <code>createComputePipelineAsync()</code> so a failed compile becomes a rejected promise.</li></ul><p>For the same multiply on the CPU, compare the <a href="./javascript.html">JavaScript loop-order chapter</a> and the <a href="./webassembly.html">WebAssembly kernel</a>. The <a href="../lab.html#backend-comparison">workbench backend comparison</a> runs larger repeatable shapes.</p></section>
+
+      <section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://www.w3.org/TR/webgpu/">WebGPU specification</a> (buffer usages and mapping, limits, timelines, error reporting)</li><li><a href="https://www.w3.org/TR/WGSL/">WebGPU Shading Language specification</a> (address spaces, built-in values, <code>workgroupBarrier</code>, uniformity analysis)</li><li><a href="https://doi.org/10.1145/1498765.1498785">Williams, Waterman &amp; Patterson (2009), Roofline: an insightful visual performance model for multicore architectures</a></li><li><a href="https://docs.nvidia.com/cuda/cuda-c-programming-guide/">NVIDIA CUDA C++ Programming Guide</a> (warps, shared memory banks, independent thread scheduling)</li></ul></section>
       <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
     </article></div>
   </main>
