@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
   <meta name="referrer" content="no-referrer">
   <title>WebAssembly and SIMD | Neural networks</title>
-  <meta name="description" content="Execute a compiled scalar f32 GEMM kernel and inspect how it shares linear memory: every byte of the 208-byte module, LEB128, the stack-machine instructions, the memory map, and a verified f32x4 SIMD inner loop.">
+  <meta name="description" content="Execute a compiled scalar f32 GEMM kernel and inspect how it shares linear memory: the complete WebAssembly Text (WAT) implementation, stack machine semantics, memory growth, and a verified 128-bit SIMD kernel.">
   <link rel="stylesheet" href="../../style.css">
   <link rel="stylesheet" href="../chapter.css">
   <link rel="stylesheet" href="../playgrounds.css">
@@ -16,65 +16,98 @@
   <header><a href="../../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="../">Chapters</a><a href="../lab.html">Workbench</a></nav></header>
   <main id="main" class="chapter">
     <p class="crumbs"><a href="../">Neural networks</a> › WebAssembly and SIMD</p>
-    <h1>WebAssembly and SIMD</h1><p class="lead">Execute a compiled scalar f32 GEMM kernel and inspect how it shares linear memory. The module is 208 bytes written out by hand in <code>buildWasmGemmBytes()</code>; this chapter prints the generator, every one of those bytes, and the instruction each byte encodes.</p>
+    <h1>WebAssembly and SIMD</h1><p class="lead">Execute a compiled scalar f32 GEMM kernel and inspect how it shares linear memory. Rather than opaque binary hex dumps, WebAssembly provides a clean, human-readable text format (WAT). This chapter inspects the complete WAT implementation, stack-machine instructions, memory growth traps, and an optimized 128-bit SIMD vector loop.</p>
     <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
-      <section class="prose"><h2>Run it first</h2><p>The button copies A = [1, 2; 3, 4] and B = [5, 6; 7, 8] into the module’s memory, calls the exported <code>gemm_f32</code>, and copies C back. The expected product is [19, 22; 43, 50]. The module is built from bytes in <code>engine.js</code>, with no download and no toolchain. The page’s Content Security Policy allows WebAssembly compilation through <code>'wasm-unsafe-eval'</code> and nothing else of the eval family. If compilation is refused, the widget reports that instead of printing a JavaScript result under a WebAssembly label.</p></section>
+      <section class="prose"><h2>Run it first</h2><p>The button copies <var>A</var> = [1, 2; 3, 4] and <var>B</var> = [5, 6; 7, 8] into the module’s linear memory, calls the exported <code>gemm_f32</code>, and copies <var>C</var> back. The expected product is [19, 22; 43, 50]. The module is synthesized in <code>engine.js</code> using <code>buildWasmGemmBytes()</code> and compiled synchronously in the browser via <code>new WebAssembly.Module()</code>.</p></section>
       <section data-widget="backend" data-backend="webassembly"><p>Enable JavaScript to use this local playground. The explanation and listings below work without it.</p></section>
 
-      <section class="prose"><h2>The module, byte by byte</h2><p>A WebAssembly binary is a fixed 8-byte preamble followed by sections. Each section is one id byte, its payload length as an unsigned LEB128 number, then the payload. A decoder that does not care about a section can skip it using the length alone. These are the first 58 bytes of the module that runs above, each row an offset, the bytes, and their meaning. A test checks that the rows on this page, concatenated, equal the output of <code>buildWasmGemmBytes()</code>.</p>
-<figure class="listing"><figcaption>module bytes 0x0000–0x0007</figcaption><pre data-listing="wasmheader"><code>0000  00 61 73 6d             │ magic: \0asm
-0004  01 00 00 00             │ version 1 (u32, little-endian)</code></pre></figure>
-<p>The magic number is the four bytes <code>\0asm</code>; the version is the 32-bit integer 1, stored little-endian like every multi-byte fixed value in WebAssembly.</p>
-<figure class="listing"><figcaption>module bytes 0x0008–0x001c</figcaption><pre data-listing="wasmheader"><code>0008  01 0a                   │ section 1 (type), 10 bytes follow
-000a  01                      │ 1 function type
-000b  60                      │ func type
-000c  06 7f 7f 7f 7f 7f 7f    │ 6 params, each i32 (0x7f)
-0013  00                      │ 0 results
-0014  03 02                   │ section 3 (function), 2 bytes
-0016  01 00                   │ 1 function, of type index 0
-0018  05 03                   │ section 5 (memory), 3 bytes
-001a  01 00 10                │ 1 memory, flags 0 (no max), min 16 pages</code></pre></figure>
-<p>Section 1 declares function signatures. <code>0x60</code> introduces a function type, then a vector of parameter types and a vector of result types, each prefixed by its count. <code>0x7f</code> is i32, <code>0x7d</code> is f32, <code>0x7b</code> is v128. The signature is <code>(i32 i32 i32 i32 i32 i32) → ()</code>: aPtr, bPtr, cPtr, M, K, N. Section 3 lists, for each function defined in the module, the index of its type; the bodies come much later. The split lets a compiler validate every call against its callee’s signature before it has seen any body, which is what makes streaming, parallel compilation possible. Section 5 declares one memory with flags 0 (minimum only, no maximum) and a minimum of 16 pages. A page is 64 KiB, so the memory starts at 1 MiB.</p>
-<figure class="listing"><figcaption>module bytes 0x001d–0x0033</figcaption><pre data-listing="wasmheader"><code>001d  07 15                   │ section 7 (export), 21 bytes
-001f  02                      │ 2 exports
-0020  06                      │ name length 6
-0021  6d 65 6d 6f 72 79       │ "memory"
-0027  02 00                   │ kind 2 (memory), index 0
-0029  08                      │ name length 8
-002a  67 65 6d 6d 5f 66 33 32 │ "gemm_f32"
-0032  00 00                   │ kind 0 (function), index 0</code></pre></figure>
-<p>Section 7 exports two things by name. Names are a length byte followed by UTF-8. The kind byte says what is exported: 0 a function, 2 a memory. JavaScript sees them as <code>instance.exports.memory</code>, a <code>WebAssembly.Memory</code>, and <code>instance.exports.gemm_f32</code>, a function. There is no import section: the module creates its own memory instead of receiving one.</p>
-<figure class="listing"><figcaption>module bytes 0x0034–0x0039</figcaption><pre data-listing="wasmheader"><code>0034  0a 99 01                │ section 10 (code), 153 bytes (LEB128)
-0037  01                      │ 1 function body
-0038  96 01                   │ body size 150 bytes (LEB128)</code></pre></figure>
-<p>Section 10 holds the function bodies, one here. Its length, 153, and the body’s length, 150, are the only values in the module too large for a single LEB128 byte. Section ids must appear in increasing order (1, 3, 5, 7, 10 here); a decoder rejects them otherwise.</p>
-<h3>LEB128</h3><p>Unsigned LEB128 writes an integer seven bits at a time, least significant group first. Each byte carries seven payload bits; its top bit is 1 if another byte follows and 0 on the last byte. Small numbers, which dominate (counts, indices, sizes), take one byte, and no length has a fixed upper limit. The standard worked example is 624 485:</p>
-<pre class="diagram" role="img" aria-label="624485 in binary split into three 7-bit groups 0100110, 0001110, 1100101, emitted low group first with continuation bits, giving e5 8e 26.">624 485 = 0x98765 = 0b 0100110 0001110 1100101
-                        group 2  group 1  group 0
-emit group 0 + continue: 1 1100101 = 0xe5
-emit group 1 + continue: 1 0001110 = 0x8e
-emit group 2, last:      0 0100110 = 0x26
-bytes: e5 8e 26     decode: 0x65 + 0x0e·2⁷ + 0x26·2¹⁴ = 624 485</pre>
-<math display="block"><mn>153</mn><mo>=</mo><mn>25</mn><mo>+</mo><mn>1</mn><mo>·</mo><msup><mn>2</mn><mn>7</mn></msup><mo>→</mo><mo>(</mo><mn>25</mn><mo>|</mo><mn>0x80</mn><mo>)</mo><mo>,</mo><mn>1</mn><mo>=</mo><mtext>99 01</mtext><mo>,</mo><mspace width="1em"></mspace><mn>150</mn><mo>=</mo><mn>22</mn><mo>+</mo><mn>1</mn><mo>·</mo><msup><mn>2</mn><mn>7</mn></msup><mo>→</mo><mtext>96 01</mtext></math>
-<p>The generator encodes those two values with this helper from <code>engine.js</code>. It is not exported, so the test compares this listing against the text of <code>engine.js</code> itself:</p>
-<figure class="listing"><figcaption>uleb128, lines 1–10</figcaption><pre data-listing="uleb"><code>function uleb128(n) {
-  const out = [];
-  do {
-    let byte = n &amp; 0x7f;
-    n &gt;&gt;&gt;= 7;
-    if (n !== 0) byte |= 0x80;
-    out.push(byte);
-  } while (n !== 0);
-  return out;
-}</code></pre></figure>
-<p><code>n &amp; 0x7f</code> takes the low seven bits, <code>n &gt;&gt;&gt;= 7</code> drops them (an unsigned shift, so the loop ends for any non-negative 32-bit input), and <code>byte |= 0x80</code> sets the continuation bit when more bits remain. Instruction immediates such as <code>i32.const</code> use the <em>signed</em> variant, which sign-extends from the last byte’s bit 6. That is why <code>i32.const -4</code> in the SIMD listing below is the single byte <code>7c</code>.</p></section>
+      <section class="prose"><h2>The complete module in WebAssembly Text format (WAT)</h2><p>WebAssembly Text format (WAT) uses S-expressions to represent the abstract syntax tree of a module. The <code>gemm_f32</code> kernel exported by our module takes six 32-bit integer arguments: byte pointers <code>$aPtr</code>, <code>$bPtr</code>, <code>$cPtr</code> in linear memory, and matrix dimensions <code>$M</code>, <code>$K</code>, <code>$N</code>. Here is the complete, runnable module in WAT:</p>
+<figure class="listing"><figcaption>gemm_f32 in WebAssembly Text format (WAT)</figcaption><pre data-listing="wat"><code>(module
+  ;; Declare and export 1 memory with an initial size of 16 pages (1 MiB)
+  (memory (export "memory") 16)
 
-      <section class="prose"><h2>The generator, in full</h2><p><code>buildWasmGemmBytes()</code> is 72 lines: a byte array for the function body, then the module around it. Seven consecutive listings, nothing omitted.</p>
+  ;; Exported matrix multiplication kernel: C[M, N] = A[M, K] * B[K, N]
+  (func (export "gemm_f32")
+    (param $aPtr i32) (param $bPtr i32) (param $cPtr i32)
+    (param $M i32) (param $K i32) (param $N i32)
+    (local $i i32) (local $j i32) (local $k i32) (local $sum f32)
+
+    ;; Outer loop over rows i = 0 .. M-1
+    (local.set $i (i32.const 0))
+    (block $break_i
+      (loop $loop_i
+        (br_if $break_i (i32.ge_u (local.get $i) (local.get $M)))
+
+        ;; Middle loop over columns j = 0 .. N-1
+        (local.set $j (i32.const 0))
+        (block $break_j
+          (loop $loop_j
+            (br_if $break_j (i32.ge_u (local.get $j) (local.get $N)))
+
+            ;; Initialize accumulator: sum = 0.0, k = 0
+            (local.set $sum (f32.const 0.0))
+            (local.set $k (i32.const 0))
+
+            ;; Inner reduction loop over k = 0 .. K-1
+            (block $break_k
+              (loop $loop_k
+                (br_if $break_k (i32.ge_u (local.get $k) (local.get $K)))
+
+                ;; sum += A[i*K + k] * B[k*N + j]
+                (local.set $sum
+                  (f32.add
+                    (local.get $sum)
+                    (f32.mul
+                      (f32.load
+                        (i32.add
+                          (local.get $aPtr)
+                          (i32.shl
+                            (i32.add (i32.mul (local.get $i) (local.get $K)) (local.get $k))
+                            (i32.const 2))))
+                      (f32.load
+                        (i32.add
+                          (local.get $bPtr)
+                          (i32.shl
+                            (i32.add (i32.mul (local.get $k) (local.get $N)) (local.get $j))
+                            (i32.const 2)))))))
+
+                ;; k++
+                (local.set $k (i32.add (local.get $k) (i32.const 1)))
+                (br $loop_k)
+              )
+            )
+
+            ;; Store accumulated float32 into C[i*N + j]
+            (f32.store
+              (i32.add
+                (local.get $cPtr)
+                (i32.shl
+                  (i32.add (i32.mul (local.get $i) (local.get $N)) (local.get $j))
+                  (i32.const 2)))
+              (local.get $sum))
+
+            ;; j++
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (br $loop_j)
+          )
+        )
+
+        ;; i++
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop_i)
+      )
+    )
+  )
+)</code></pre></figure>
+<h3>How structured control flow works</h3><p>WebAssembly has no arbitrary <code>goto</code> instruction. Control flow is structured into nested <code>block</code> and <code>loop</code> labels:</p><ul><li>Branching to a <strong><code>loop</code></strong> (e.g. <code>(br $loop_k)</code>) jumps to the <strong>beginning</strong> of the loop (a backward loop continue).</li><li>Branching to a <strong><code>block</code></strong> (e.g. <code>(br_if $break_k ...)</code>) jumps to the <strong>end</strong> of the block (a forward loop break).</li></ul>
+<p>Memory addresses are calculated in bytes. Because each float32 is 4 bytes wide, the element index <math display="inline"><mo>(</mo><mi>i</mi><mo>·</mo><mi>K</mi><mo>+</mo><mi>k</mi><mo>)</mo></math> is shifted left by 2 bits (<code>i32.shl ... 2</code>) before adding the base pointer <code>$aPtr</code>. Loads (<code>f32.load</code>) and stores (<code>f32.store</code>) operate directly on linear memory.</p></section>
+
+      <section class="prose"><h2>The in-browser byte generator</h2><p>In <code>engine.js</code>, <code>buildWasmGemmBytes()</code> writes out the exact 208 binary bytes corresponding to the WAT module above. The complete function is printed below in seven consecutive listings with zero omission:</p>
 <figure class="listing"><figcaption>buildWasmGemmBytes, lines 1–4</figcaption><pre data-listing="generator"><code>function buildWasmGemmBytes() {
   const body = [
     // Local declarations: 3x i32 (locals 6,7,8: i,j,k), 1x f32 (local 9: sum)
     0x02, 0x03, 0x7f, 0x01, 0x7d,</code></pre></figure>
-<p>The body opens with its local declarations, in run-length form: 2 groups, 3 locals of i32 (<code>7f</code>), 1 local of f32 (<code>7d</code>). Parameters are locals 0–5, so these become locals 6, 7, 8 (i, j, k) and 9 (sum). Locals start at zero.</p>
+<p>Locals 0–5 are the six function parameters; locals 6–8 are loop counters <var>i</var>, <var>j</var>, <var>k</var> (i32); local 9 is the running accumulator <var>sum</var> (f32).</p>
 <figure class="listing"><figcaption>buildWasmGemmBytes, lines 5–14</figcaption><pre data-listing="generator"><code>    // i = 0
     0x41, 0x00, 0x21, 0x06,
     0x02, 0x40, // block $break_i
@@ -85,7 +118,7 @@ bytes: e5 8e 26     decode: 0x65 + 0x0e·2⁷ + 0x26·2¹⁴ = 624 485</pre>
         0x02, 0x40, // block $break_j
           0x03, 0x40, // loop $loop_j
             0x20, 0x07, 0x20, 0x05, 0x4f, 0x0d, 0x01, // br_if $break_j (j &gt;= N)</code></pre></figure>
-<p>The two outer loops. Each is a <code>block</code> wrapped around a <code>loop</code>; the <code>0x40</code> after each opcode is the empty block type, meaning the construct takes and leaves nothing on the stack.</p>
+<p>Each loop header uses opcode <code>0x02</code> (block) wrapped around <code>0x03</code> (loop), with <code>0x40</code> specifying the empty block type (no stack return value).</p>
 <figure class="listing"><figcaption>buildWasmGemmBytes, lines 15–21</figcaption><pre data-listing="generator"><code>            // sum = 0.0
             0x43, 0x00, 0x00, 0x00, 0x00, 0x21, 0x09,
             // k = 0
@@ -93,7 +126,7 @@ bytes: e5 8e 26     decode: 0x65 + 0x0e·2⁷ + 0x26·2¹⁴ = 624 485</pre>
             0x02, 0x40, // block $break_k
               0x03, 0x40, // loop $loop_k
                 0x20, 0x08, 0x20, 0x04, 0x4f, 0x0d, 0x01, // br_if $break_k (k &gt;= K)</code></pre></figure>
-<p><code>0x43</code> is <code>f32.const</code> followed by four raw IEEE 754 bytes, little-endian; all zero is 0.0. Each iteration of j resets the accumulator before the k loop opens.</p>
+<p>Opcode <code>0x43</code> is <code>f32.const</code> followed by 4 raw IEEE 754 little-endian bytes (<code>00 00 00 00</code> for 0.0). Local 9 (sum) is reset at the start of each column.</p>
 <figure class="listing"><figcaption>buildWasmGemmBytes, lines 22–35</figcaption><pre data-listing="generator"><code>                // sum += A[i*K + k] * B[k*N + j]
                 0x20, 0x09,
                 // A addr: aPtr + ((i * K + k) &lt;&lt; 2)
@@ -108,7 +141,7 @@ bytes: e5 8e 26     decode: 0x65 + 0x0e·2⁷ + 0x26·2¹⁴ = 624 485</pre>
                 // k++
                 0x20, 0x08, 0x41, 0x01, 0x6a, 0x21, 0x08,
                 0x0c, 0x00, // br $loop_k</code></pre></figure>
-<p>The innermost loop is a dot product over k: i, j, k order, the same order the <a href="./javascript.html">JavaScript chapter</a> measured as slow, because it reads B with a stride of N floats.</p>
+<p>The reduction body: loads float from <var>A</var>, loads float from <var>B</var>, multiplies via <code>0x94</code> (<code>f32.mul</code>), adds to sum via <code>0x92</code> (<code>f32.add</code>), and branches backward to <code>$loop_k</code> via <code>0x0c 0x00</code>.</p>
 <figure class="listing"><figcaption>buildWasmGemmBytes, lines 36–53</figcaption><pre data-listing="generator"><code>              0x0b,
             0x0b,
             // C[i*N + j] = sum
@@ -127,9 +160,8 @@ bytes: e5 8e 26     decode: 0x65 + 0x0e·2⁷ + 0x26·2¹⁴ = 624 485</pre>
     0x0b,
     0x0b // end function
   ];</code></pre></figure>
-<p>Six <code>0x0b</code> bytes close the six blocks and loops, and a seventh closes the function. The indentation of the source mirrors the nesting; the bytes carry none of it.</p>
-<figure class="listing"><figcaption>buildWasmGemmBytes, lines 54–64</figcaption><pre data-listing="generator"><code>
-  const codeSectionPayload = [0x01, ...uleb128(body.length), ...body];
+<p>Store result to <var>C</var> with opcode <code>0x38</code> (<code>f32.store</code>) and close all outer blocks with <code>0x0b</code> (<code>end</code>).</p>
+<figure class="listing"><figcaption>buildWasmGemmBytes, lines 54–62</figcaption><pre data-listing="generator"><code>  const codeSectionPayload = [0x01, ...uleb128(body.length), ...body];
   return new Uint8Array([
     0x00, 0x61, 0x73, 0x6d, // magic "\0asm"
     0x01, 0x00, 0x00, 0x00, // version 1
@@ -139,8 +171,8 @@ bytes: e5 8e 26     decode: 0x65 + 0x0e·2⁷ + 0x26·2¹⁴ = 624 485</pre>
     0x03, 0x02, 0x01, 0x00,
     // Memory section: 1 memory, min 16 pages (1 MB)
     0x05, 0x03, 0x01, 0x00, 0x10,</code></pre></figure>
-<p>The fixed sections are literal bytes, decoded row by row in the hex table above.</p>
-<figure class="listing"><figcaption>buildWasmGemmBytes, lines 65–72</figcaption><pre data-listing="generator"><code>    // Export section: "memory" (mem 0) and "gemm_f32" (func 0)
+<p>Section headers declare the binary magic number (<code>\0asm</code>), version (1), and Type Section (declaring the 6-parameter signature).</p>
+<figure class="listing"><figcaption>buildWasmGemmBytes, lines 63–72</figcaption><pre data-listing="generator"><code>    // Export section: "memory" (mem 0) and "gemm_f32" (func 0)
     0x07, 0x15, 0x02,
       0x06, 0x6d, 0x65, 0x6d, 0x6f, 0x72, 0x79, 0x02, 0x00,
       0x08, 0x67, 0x65, 0x6d, 0x6d, 0x5f, 0x66, 0x33, 0x32, 0x00, 0x00,
@@ -148,122 +180,26 @@ bytes: e5 8e 26     decode: 0x65 + 0x0e·2⁷ + 0x26·2¹⁴ = 624 485</pre>
     0x0a, ...uleb128(codeSectionPayload.length), ...codeSectionPayload
   ]);
 }</code></pre></figure>
-<p>The code section is assembled last because its length prefix depends on the body length. <code>codeSectionPayload</code> is the function count, the body size and the body; the section size wraps all of that.</p></section>
+<p>Section sizes and function lengths that exceed 127 bytes are encoded using <code>uleb128()</code>:</p>
+<figure class="listing"><figcaption>uleb128 from engine.js</figcaption><pre data-listing="uleb"><code>function uleb128(n) {
+  const out = [];
+  do {
+    let byte = n &amp; 0x7f;
+    n &gt;&gt;&gt;= 7;
+    if (n !== 0) byte |= 0x80;
+    out.push(byte);
+  } while (n !== 0);
+  return out;
+}</code></pre></figure>
+</section>
 
-      <section class="prose"><h2>The code section as instructions</h2><p>WebAssembly is a stack machine. Each instruction pops its operands from an implicit operand stack and pushes its result; the validator checks every function’s stack types before it runs, so the engine can compile the stack away into registers. Here is the 150-byte body, each opcode next to its text-format (WAT) name. Names after <code>$</code> are added for reading; the binary only has indices. Every byte is shown, and the test decodes each row’s first opcode and checks the name.</p>
-<figure class="listing"><figcaption>module bytes 0x003a–0x0051</figcaption><pre data-listing="wasmcode"><code>003a  02 03 7f 01 7d │ (local $i i32) (local $j i32) (local $k i32) (local $sum f32)
-003f  41 00          │ i32.const 0
-0041  21 06          │ local.set $i
-0043  02 40          │ block $break_i
-0045  03 40          │   loop $loop_i
-0047  20 06          │     local.get $i
-0049  20 03          │     local.get $M
-004b  4f             │     i32.ge_u
-004c  0d 01          │     br_if 1 ;; → $break_i
-004e  41 00          │     i32.const 0
-0050  21 07          │     local.set $j</code></pre></figure>
-<p>The local declarations, i = 0, and the head of the i loop. <code>br_if</code> pops an i32 and branches if it is non-zero. Its immediate is a label depth counted outwards from the innermost enclosing construct: 0 is <code>$loop_i</code>, 1 is <code>$break_i</code>. Branching to a <code>loop</code> jumps back to its start; branching to a <code>block</code> jumps past its <code>end</code>. So <code>br_if 1</code> is “break” and <code>br 0</code> is “continue”. <code>i32.ge_u</code> compares unsigned: a negative dimension passed from JavaScript reads as a number above 2 billion.</p>
-<figure class="listing"><figcaption>module bytes 0x0052–0x0072</figcaption><pre data-listing="wasmcode"><code>0052  02 40          │     block $break_j
-0054  03 40          │       loop $loop_j
-0056  20 07          │         local.get $j
-0058  20 05          │         local.get $N
-005a  4f             │         i32.ge_u
-005b  0d 01          │         br_if 1 ;; → $break_j
-005d  43 00 00 00 00 │         f32.const 0.0
-0062  21 09          │         local.set $sum
-0064  41 00          │         i32.const 0
-0066  21 08          │         local.set $k
-0068  02 40          │         block $break_k
-006a  03 40          │           loop $loop_k
-006c  20 08          │             local.get $k
-006e  20 04          │             local.get $K
-0070  4f             │             i32.ge_u
-0071  0d 01          │             br_if 1 ;; → $break_k</code></pre></figure>
-<p>The j loop starts the same way, then sets sum to the f32 constant whose four little-endian bytes are <code>00 00 00 00</code>, sets k to 0 and opens the k loop.</p>
-<figure class="listing"><figcaption>module bytes 0x0073–0x0085</figcaption><pre data-listing="wasmcode"><code>0073  20 09          │             local.get $sum
-0075  20 00          │             local.get $aPtr
-0077  20 06          │             local.get $i
-0079  20 04          │             local.get $K
-007b  6c             │             i32.mul
-007c  20 08          │             local.get $k
-007e  6a             │             i32.add
-007f  41 02          │             i32.const 2
-0081  74             │             i32.shl
-0082  6a             │             i32.add
-0083  2a 02 00       │             f32.load align=4 offset=0</code></pre></figure>
-<p>The first operand of the eventual add, <code>sum</code>, is pushed early and waits on the stack. Then the address of A[i, k]: aPtr + ((i·K + k) &lt;&lt; 2). The shift by 2 multiplies the float index by 4, turning it into a byte address. <code>f32.load</code> carries a memarg: an alignment hint as a power of two (2 means 4 bytes) and a constant offset added to the address (0 here). The hint never changes the result; a misaligned access is only possibly slower.</p>
-<figure class="listing"><figcaption>module bytes 0x0086–0x009a</figcaption><pre data-listing="wasmcode"><code>0086  20 01          │             local.get $bPtr
-0088  20 08          │             local.get $k
-008a  20 05          │             local.get $N
-008c  6c             │             i32.mul
-008d  20 07          │             local.get $j
-008f  6a             │             i32.add
-0090  41 02          │             i32.const 2
-0092  74             │             i32.shl
-0093  6a             │             i32.add
-0094  2a 02 00       │             f32.load align=4 offset=0
-0097  94             │             f32.mul
-0098  92             │             f32.add
-0099  21 09          │             local.set $sum</code></pre></figure>
-<p>Same for B[k, j]: bPtr + ((k·N + j) &lt;&lt; 2). Then <code>f32.mul</code> pops the two loaded floats and pushes their product, <code>f32.add</code> adds it to the waiting sum, and <code>local.set</code> stores the new sum.</p>
-<figure class="listing"><figcaption>module bytes 0x009b–0x00a5</figcaption><pre data-listing="wasmcode"><code>009b  20 08          │             local.get $k
-009d  41 01          │             i32.const 1
-009f  6a             │             i32.add
-00a0  21 08          │             local.set $k
-00a2  0c 00          │             br 0 ;; → $loop_k
-00a4  0b             │           end ;; $loop_k
-00a5  0b             │         end ;; $break_k</code></pre></figure>
-<figure class="listing"><figcaption>module bytes 0x00a6–0x00c3</figcaption><pre data-listing="wasmcode"><code>00a6  20 02          │         local.get $cPtr
-00a8  20 06          │         local.get $i
-00aa  20 05          │         local.get $N
-00ac  6c             │         i32.mul
-00ad  20 07          │         local.get $j
-00af  6a             │         i32.add
-00b0  41 02          │         i32.const 2
-00b2  74             │         i32.shl
-00b3  6a             │         i32.add
-00b4  20 09          │         local.get $sum
-00b6  38 02 00       │         f32.store align=4 offset=0
-00b9  20 07          │         local.get $j
-00bb  41 01          │         i32.const 1
-00bd  6a             │         i32.add
-00be  21 07          │         local.set $j
-00c0  0c 00          │         br 0 ;; → $loop_j
-00c2  0b             │       end ;; $loop_j
-00c3  0b             │     end ;; $break_j</code></pre></figure>
-<p>After the k loop ends, the store address C[i, j] is computed first and the value second, because <code>f32.store</code> pops the value from the top and the address beneath it.</p>
-<figure class="listing"><figcaption>module bytes 0x00c4–0x00cf</figcaption><pre data-listing="wasmcode"><code>00c4  20 06          │     local.get $i
-00c6  41 01          │     i32.const 1
-00c8  6a             │     i32.add
-00c9  21 06          │     local.set $i
-00cb  0c 00          │     br 0 ;; → $loop_i
-00cd  0b             │   end ;; $loop_i
-00ce  0b             │ end ;; $break_i
-00cf  0b             │ end ;; function</code></pre></figure>
-<p>The last <code>end</code> closes the function body itself. The opcodes used, with their stack effect:</p>
-<div class="table-scroll"><table><thead><tr><th>byte</th><th>instruction</th><th>immediates</th><th>stack</th></tr></thead><tbody>
-<tr><td><code>02</code> / <code>03</code></td><td><code>block</code> / <code>loop</code></td><td>block type</td><td>none</td></tr>
-<tr><td><code>0b</code></td><td><code>end</code></td><td>none</td><td>none</td></tr>
-<tr><td><code>0c</code> / <code>0d</code></td><td><code>br</code> / <code>br_if</code></td><td>label depth</td><td>br_if pops i32</td></tr>
-<tr><td><code>20</code> / <code>21</code></td><td><code>local.get</code> / <code>local.set</code></td><td>local index</td><td>push / pop one value</td></tr>
-<tr><td><code>41</code> / <code>43</code></td><td><code>i32.const</code> / <code>f32.const</code></td><td>signed LEB128 / 4 bytes</td><td>push</td></tr>
-<tr><td><code>4f</code></td><td><code>i32.ge_u</code></td><td>none</td><td>i32 i32 → i32</td></tr>
-<tr><td><code>6a</code> / <code>6c</code> / <code>74</code></td><td><code>i32.add</code> / <code>i32.mul</code> / <code>i32.shl</code></td><td>none</td><td>i32 i32 → i32</td></tr>
-<tr><td><code>2a</code></td><td><code>f32.load</code></td><td>align, offset</td><td>i32 → f32</td></tr>
-<tr><td><code>38</code></td><td><code>f32.store</code></td><td>align, offset</td><td>i32 f32 → (none)</td></tr>
-<tr><td><code>92</code> / <code>94</code></td><td><code>f32.add</code> / <code>f32.mul</code></td><td>none</td><td>f32 f32 → f32</td></tr>
-</tbody></table></div>
-<h3>Why it disagrees with the JavaScript kernel in the last bit</h3><p>Byte <code>0x97</code> is <code>f32.mul</code>: the product is rounded to binary32 before byte <code>0x98</code>, <code>f32.add</code>, rounds again. <code>jsMatmul</code> computes the product exactly in binary64 and rounds only the sum. Same inputs, same order of k, different rounding points. Over 2 000 random 16-term dot products with entries in (−1, 1) the two kernels disagreed in 1 150, each by one unit in the last place; for example −2.0644471645355225 (JavaScript) against −2.0644474029541016 (WebAssembly), 2<sup>−22</sup> apart. Neither is wrong. They are two legitimate binary32 kernels, which is why cross-backend tests compare with a tolerance.</p>
-<p>The k loop executes 33 instructions per multiply-add: 18 compute the two addresses, 9 are loop control, and 6 do the work (push sum, two loads, multiply, add, store sum). An engine compiles them to far fewer machine instructions, but the shape is fixed: one scalar multiply-add per iteration.</p></section>
-
-      <section class="prose"><h2>Linear memory</h2><p>A WebAssembly memory is one contiguous, zero-initialised byte array, addressed from 0. In JavaScript it is <code>memory.buffer</code>, an ordinary <code>ArrayBuffer</code>. Typed-array views over that buffer and the module’s loads and stores touch the same bytes, which is the whole interface: JavaScript writes inputs through a view, calls the export with addresses, and reads outputs through a view. <code>getWasmBackend()</code> lays the three matrices end to end:</p>
-<pre class="diagram" role="img" aria-label="Linear memory map: A occupies bytes 0 to 4MK, B from 4MK to 4MK plus 4KN, C after that up to 4MK plus 4KN plus 4MN; the rest of the 1 MiB is unused.">byte 0             4MK               4MK+4KN            4MK+4KN+4MN      1 MiB
-     ┌──────────────┬─────────────────┬──────────────────┬───────────────┐
-     │ A  (M·K f32) │  B  (K·N f32)   │  C  (M·N f32)    │    unused     │
-     └──────────────┴─────────────────┴──────────────────┴───────────────┘
-f32  0              M·K               M·K + K·N          (float index)
-2×2 demo: A = bytes 0–15, B = 16–31, C = 32–47</pre>
-<p>Five listings of <code>getWasmBackend()</code>, nothing omitted:</p>
+      <section class="prose"><h2>Linear memory and the detached view trap</h2><p>WebAssembly exports a linear memory: an array of 64 KiB pages addressed from 0. In JavaScript, this memory is exposed via <code>memory.buffer</code> as an <code>ArrayBuffer</code>. <code>getWasmBackend()</code> partitions memory linearly across matrices <var>A</var>, <var>B</var>, and <var>C</var>:</p>
+<pre class="diagram" role="img" aria-label="Linear memory layout: matrix A occupies bytes 0 to 4MK, matrix B occupies bytes 4MK to 4MK+4KN, and matrix C occupies bytes 4MK+4KN to 4MK+4KN+4MN.">byte: 0               4·M·K              4·(M·K + K·N)       4·(M·K + K·N + M·N)    1 MiB
+      ┌──────────────────┬──────────────────┬───────────────────┬──────────────────────┐
+      │  A (M·K float32) │  B (K·N float32) │  C (M·N float32)  │  free memory         │
+      └──────────────────┴──────────────────┴───────────────────┴──────────────────────┘
+float:0                  M·K                M·K + K·N           M·K + K·N + M·N</pre>
+<p>The host driver in <code>engine.js</code> manages initialization, memory sizing, and execution:</p>
 <figure class="listing"><figcaption>getWasmBackend, lines 1–12</figcaption><pre data-listing="backend"><code>function getWasmBackend() {
   if (wasmInstanceCache) return wasmInstanceCache;
   try {
@@ -276,15 +212,13 @@ f32  0              M·K               M·K + K·N          (float index)
       available: true,
       byteLength: bytes.byteLength,
       matmul(A, B, M, K, N, out = new Float32Array(M * N)) {</code></pre></figure>
-<p><code>new WebAssembly.Module(bytes)</code> validates and compiles synchronously, and <code>new WebAssembly.Instance</code> instantiates; both are fine for 208 bytes. Large modules should use <code>WebAssembly.compileStreaming</code> or <code>instantiate</code>, which compile off the main thread. The instance is cached, so the compile happens once per page.</p>
+<p>The instance is compiled once synchronously from bytes and cached in memory.</p>
 <figure class="listing"><figcaption>getWasmBackend, lines 13–17</figcaption><pre data-listing="backend"><code>        const neededBytes = (M * K + K * N + M * N) * 4;
         if (neededBytes &gt; memory.buffer.byteLength) {
           const extraPages = Math.ceil((neededBytes - memory.buffer.byteLength) / 65536);
           memory.grow(extraPages);
         }</code></pre></figure>
-<p>Lines 13–17 grow the memory when the three matrices do not fit. The initial 1 MiB holds square matrices up to:</p>
-<math display="block"><mn>3</mn><mo>·</mo><msup><mi>n</mi><mn>2</mn></msup><mo>·</mo><mn>4</mn><mo>≤</mo><mn>16</mn><mo>·</mo><mn>65 536</mn><mspace width="0.6em"></mspace><mo>⇒</mo><mspace width="0.6em"></mspace><mi>n</mi><mo>≤</mo><mn>295</mn></math>
-<p><code>memory.grow(pages)</code> adds whole 64 KiB pages and can only grow, never shrink. With no maximum declared, the ceiling is the engine’s limit for 32-bit memories, at most 65 536 pages (4 GiB); past it <code>grow</code> throws a <code>RangeError</code>.</p>
+<p>The initial 16 pages (1 MiB) accommodate square matrices up to <math display="inline"><mn>3</mn><mo>·</mo><mn>4</mn><msup><mi>n</mi><mn>2</mn></msup><mo>≤</mo><mn>1 048 576</mn><mo>⇒</mo><mi>n</mi><mo>≤</mo><mn>295</mn></math>. When matrix dimensions exceed 1 MiB, <code>memory.grow()</code> adds 64 KiB pages.</p>
 <figure class="listing"><figcaption>getWasmBackend, lines 18–26</figcaption><pre data-listing="backend"><code>        const f32 = new Float32Array(memory.buffer);
         const aOffset = 0;
         const bOffset = M * K;
@@ -294,16 +228,14 @@ f32  0              M·K               M·K + K·N          (float index)
         gemm_f32(aOffset * 4, bOffset * 4, cOffset * 4, M, K, N);
         out.set(f32.subarray(cOffset, cOffset + M * N));
         return out;</code></pre></figure>
-<p>Line 18 creates the view <em>after</em> the grow, and this order is essential. Growing a memory detaches its old <code>ArrayBuffer</code>: <code>memory.buffer</code> becomes a new, larger buffer, and every view over the old one becomes length 0. Lines 19–21 compute offsets in floats, because that is what the view indexes. Line 24 passes byte addresses to <code>gemm_f32</code>, because WebAssembly loads and stores take byte addresses; hence the <code>* 4</code> on each. Line 25 copies C out, so the caller’s result does not alias memory the next call will overwrite.</p>
-<p>The classic bug is to hoist the view to save an allocation:</p>
-<pre class="listing-bad"><code>// WRONG: the view is created once, before any grow.
+<h3>The detached view trap</h3><p>Notice that line 18 allocates the <code>Float32Array</code> view <strong>after</strong> <code>memory.grow()</code>. Hoisting the view outside to avoid per-call allocation introduces a critical failure mode:</p>
+<pre class="listing-bad"><code>// WRONG: creating the view once before a potential memory.grow() call
 const f32 = new Float32Array(memory.buffer);
 function matmul(A, B, M, K, N) {
-  if (neededBytes &gt; memory.buffer.byteLength) memory.grow(extraPages);
-  f32.set(A, 0);   // after a grow: TypeError, detached ArrayBuffer
-  …
+  if (needed &gt; memory.buffer.byteLength) memory.grow(extraPages);
+  f32.set(A, 0); // Throws TypeError: Cannot perform %TypedArray%.prototype.set on a detached ArrayBuffer
 }</code></pre>
-<p>In Node 24, <code>set</code> on the stale view throws <code>TypeError: Cannot perform %TypedArray%.prototype.set on a detached ArrayBuffer</code>. Plain element access is worse: <code>f32[0]</code> reads <code>undefined</code> and <code>f32[0] = 5</code> is silently dropped. The fix is the one line 18 already uses: re-create the view after any call that might grow, or compare <code>view.buffer !== memory.buffer</code>.</p>
+<p>Whenever WebAssembly linear memory grows, the engine detaches the old <code>ArrayBuffer</code> and allocates a new, larger buffer elsewhere in the process address space. Any existing <code>Float32Array</code> view pointing to the old buffer is instantly detached with byte length 0. Attempting to call <code>.set()</code> throws a <code>TypeError</code>, while property reads return <code>undefined</code>. Line 18 rebinds the view to the current <code>memory.buffer</code> on every call.</p>
 <figure class="listing"><figcaption>getWasmBackend, lines 27–37</figcaption><pre data-listing="backend"><code>      }
     };
   } catch {
@@ -315,96 +247,64 @@ function matmul(A, B, M, K, N) {
   }
   return wasmInstanceCache;
 }</code></pre></figure>
-<p>If compilation throws, for example under a CSP without <code>'wasm-unsafe-eval'</code>, the backend reports <code>available: false</code> and quietly substitutes <code>jsMatmul</code>. The widget on this page checks <code>available</code> first and refuses to label a JavaScript result as WebAssembly.</p><p>Memory is also where WebAssembly’s safety comes from. Every load and store is checked against the memory’s current size; an out-of-range address traps, which JavaScript sees as a <code>WebAssembly.RuntimeError</code>. The module cannot reach the JavaScript heap at all. <code>gemm_f32</code> itself never checks M, K and N against the memory, so the grow on lines 13–17 is what keeps its addresses in range.</p></section>
+</section>
 
-      <section class="prose"><h2>SIMD: four lanes per instruction</h2><p>The fixed-width SIMD extension adds one value type, <code>v128</code>, and instructions that treat it as lanes: <code>f32x4</code> sees four binary32 values. <code>v128.load</code> reads 16 bytes, <code>f32x4.mul</code> and <code>f32x4.add</code> work lane by lane, <code>v128.store</code> writes 16 bytes. Each lane rounds exactly as the scalar <code>f32.mul</code> and <code>f32.add</code> would, so a correct vector loop gives bit-identical results to the scalar one in the same order.</p><p>The kernel above cannot be vectorized as it stands. Its inner loop is over k, and consecutive B[k, j] values are 4N bytes apart, not adjacent. Reorder to i, k, j, as <code>jsMatmul</code> already is, and the inner loop becomes C[i, j..] += A[i, k]·B[k, j..] over contiguous j: an axpy, which is exactly the shape SIMD wants. The function below is not part of <code>engine.js</code> and the demo above does not run it. It is <code>(func $axpy (param $cPtr i32) (param $bPtr i32) (param $a f32) (param $n i32))</code>, and a test in <code>tests/nn-chapters-links.test.js</code> assembles these exact bytes into a module, validates it, and checks the output against a scalar <code>Math.fround</code> reference for every n from 0 to 13.</p>
-<figure class="listing"><figcaption>axpy_f32x4 body, bytes 0x0000–0x0011</figcaption><pre data-listing="simd"><code>0000  02 02 7f 01 7b │ (local $j i32) (local $n4 i32) (local $av v128)
-0005  20 02          │ local.get $a
-0007  fd 13          │ f32x4.splat           ;; [a, a, a, a]
-0009  21 06          │ local.set $av
-000b  20 03          │ local.get $n
-000d  41 7c          │ i32.const -4
-000f  71             │ i32.and               ;; n4 = n &amp; ~3
-0010  21 05          │ local.set $n4</code></pre></figure>
-<p>Set-up. SIMD opcodes share the prefix byte <code>fd</code> followed by a LEB128 sub-opcode, so <code>f32x4.mul</code> (sub-opcode 230) is <code>fd e6 01</code>. <code>f32x4.splat</code> copies a into all four lanes once, outside the loop. <code>n &amp; ~3</code> is n rounded down to a multiple of 4: the part the vector loop can cover.</p>
-<figure class="listing"><figcaption>axpy_f32x4 body, bytes 0x0012–0x0053</figcaption><pre data-listing="simd"><code>0012  02 40          │ block $vec_done
-0014  03 40          │   loop $vec
-0016  20 04          │     local.get $j
-0018  20 05          │     local.get $n4
-001a  4f             │     i32.ge_u
-001b  0d 01          │     br_if 1           ;; → $vec_done
-001d  20 00          │     local.get $cPtr
-001f  20 04          │     local.get $j
-0021  41 02          │     i32.const 2
-0023  74             │     i32.shl
-0024  6a             │     i32.add           ;; store address
-0025  20 00          │     local.get $cPtr
-0027  20 04          │     local.get $j
-0029  41 02          │     i32.const 2
-002b  74             │     i32.shl
-002c  6a             │     i32.add
-002d  fd 00 02 00    │     v128.load         ;; C[j..j+3]
-0031  20 01          │     local.get $bPtr
-0033  20 04          │     local.get $j
-0035  41 02          │     i32.const 2
-0037  74             │     i32.shl
-0038  6a             │     i32.add
-0039  fd 00 02 00    │     v128.load         ;; B[j..j+3]
-003d  20 06          │     local.get $av
-003f  fd e6 01       │     f32x4.mul
-0042  fd e4 01       │     f32x4.add
-0045  fd 0b 02 00    │     v128.store        ;; C[j..j+3]
-0049  20 04          │     local.get $j
-004b  41 04          │     i32.const 4
-004d  6a             │     i32.add
-004e  21 04          │     local.set $j
-0050  0c 00          │     br 0              ;; → $vec
-0052  0b             │   end ;; $vec
-0053  0b             │ end ;; $vec_done</code></pre></figure>
-<p>The vector loop. Each pass handles C[j..j+3]: load four floats of C and four of B, multiply B by the splatted a, add, store four floats back, and advance j by 4. The memarg on the 16-byte loads and stores is <code>02 00</code>, an alignment hint of 4 bytes, not 16: a row of B or C starts at a multiple of 4 bytes only, and claiming 16 would be a lie the engine is entitled to punish with a slow path.</p>
-<figure class="listing"><figcaption>axpy_f32x4 body, bytes 0x0054–0x008f</figcaption><pre data-listing="simd"><code>0054  02 40          │ block $tail_done
-0056  03 40          │   loop $tail
-0058  20 04          │     local.get $j
-005a  20 03          │     local.get $n
-005c  4f             │     i32.ge_u
-005d  0d 01          │     br_if 1           ;; → $tail_done
-005f  20 00          │     local.get $cPtr
-0061  20 04          │     local.get $j
-0063  41 02          │     i32.const 2
-0065  74             │     i32.shl
-0066  6a             │     i32.add           ;; store address
-0067  20 00          │     local.get $cPtr
-0069  20 04          │     local.get $j
-006b  41 02          │     i32.const 2
-006d  74             │     i32.shl
-006e  6a             │     i32.add
-006f  2a 02 00       │     f32.load          ;; C[j]
-0072  20 01          │     local.get $bPtr
-0074  20 04          │     local.get $j
-0076  41 02          │     i32.const 2
-0078  74             │     i32.shl
-0079  6a             │     i32.add
-007a  2a 02 00       │     f32.load          ;; B[j]
-007d  20 02          │     local.get $a
-007f  94             │     f32.mul
-0080  92             │     f32.add
-0081  38 02 00       │     f32.store         ;; C[j]
-0084  20 04          │     local.get $j
-0086  41 01          │     i32.const 1
-0088  6a             │     i32.add
-0089  21 04          │     local.set $j
-008b  0c 00          │     br 0              ;; → $tail
-008d  0b             │   end ;; $tail
-008e  0b             │ end ;; $tail_done
-008f  0b             │ end ;; function</code></pre></figure>
-<p>The scalar tail handles the last n mod 4 elements with the same instructions as the scalar kernel. Without it, any row length not divisible by 4 would leave up to three columns unwritten; with n = 10 the vector loop covers j = 0…7 and the tail j = 8, 9.</p>
-<p>Count instructions. Both loop bodies, including the bounds test and the branch, are 30 instructions per pass. The scalar loop makes one pass per element, the vector loop one per four:</p>
-<math display="block"><msub><mi>I</mi><mtext>scalar</mtext></msub><mo>=</mo><mn>30</mn><mi>N</mi><mo>,</mo><mspace width="1em"></mspace><msub><mi>I</mi><mtext>SIMD</mtext></msub><mo>=</mo><mn>30</mn><mo>⌊</mo><mfrac><mi>N</mi><mn>4</mn></mfrac><mo>⌋</mo><mo>+</mo><mn>30</mn><mo>(</mo><mi>N</mi><mo>mod</mo><mn>4</mn><mo>)</mo><mo>,</mo><mspace width="1em"></mspace><mi>N</mi><mo>=</mo><mn>256</mn><mo>:</mo><mspace width="0.4em"></mspace><mn>7 680</mn><mo>→</mo><mn>1 920</mn></math>
-<p>Four times fewer WebAssembly instructions per element. That is not a measured fourfold speed-up. These are WebAssembly instructions, not machine instructions; 24 of the 30 in each body are address arithmetic and loop control, which an engine compiles to far less; and once B streams from beyond L2, memory bandwidth limits both loops the same way. A tuned kernel bumps pointers instead of recomputing <code>j &lt;&lt; 2</code>, keeps several accumulators in <code>v128</code> registers across k, and blocks for cache. The relaxed-SIMD extension adds <code>f32x4.relaxed_madd</code>, which may fuse the multiply and add into one rounding on some hardware and not on others; it is faster where it fuses, at the cost of results that are no longer bit-identical across machines.</p></section>
+      <section class="prose"><h2>128-bit SIMD vectorization in WAT</h2><p>WebAssembly fixed-width SIMD adds the <code>v128</code> value type (16 bytes). In <code>f32x4</code> mode, a single vector register holds four 32-bit floating-point numbers. Vectorizing our GEMM requires reordering the loops from <math display="inline"><mi>i</mi><mo>,</mo><mi>j</mi><mo>,</mo><mi>k</mi></math> to <math display="inline"><mi>i</mi><mo>,</mo><mi>k</mi><mo>,</mo><mi>j</mi></math>, turning the inner loop into an AXPY kernel (<math display="inline"><mi>C</mi><mo>[</mo><mi>j</mi><mo>…</mo><mi>j</mi><mo>+</mo><mn>3</mn><mo>]</mo><mo>+</mo><mo>=</mo><mi>a</mi><mo>·</mo><mi>B</mi><mo>[</mo><mi>j</mi><mo>…</mo><mi>j</mi><mo>+</mo><mn>3</mn><mo>]</mo></math>):</p>
+<figure class="listing"><figcaption>axpy_f32x4 in WebAssembly Text format (WAT)</figcaption><pre data-listing="simd_wat"><code>(func $axpy_f32x4
+  (param $cPtr i32) (param $bPtr i32) (param $a f32) (param $n i32)
+  (local $j i32) (local $n4 i32) (local $av v128)
 
-      <section class="prose"><h2>Threads</h2><p>A WebAssembly memory declared <code>shared</code> is backed by a <code>SharedArrayBuffer</code>, so several workers can instantiate the same module over the same bytes and each compute a band of rows of C. Browsers expose <code>SharedArrayBuffer</code> only to cross-origin-isolated pages, served with <code>Cross-Origin-Opener-Policy: same-origin</code> and <code>Cross-Origin-Embedder-Policy: require-corp</code> (or <code>credentialless</code>), because a second thread incrementing a shared counter is a high-resolution timer, the ingredient of Spectre-style side-channel attacks. The threads extension adds atomic loads, stores and read-modify-writes, plus <code>memory.atomic.wait32</code> and <code>memory.atomic.notify</code>, which let a worker sleep until another wakes it instead of spinning. The main thread is not allowed to block that way. This page is single-threaded and makes no multicore claim.</p></section>
+  ;; Broadcast scalar a across all four 32-bit lanes: [a, a, a, a]
+  (local.set $av (f32x4.splat (local.get $a)))
 
-      <section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://webassembly.github.io/spec/core/binary/index.html">WebAssembly core specification: binary format</a> (sections, LEB128 integers, instruction encodings)</li><li><a href="https://webassembly.github.io/spec/core/exec/index.html">WebAssembly core specification: execution</a> (memory instances, grow, traps)</li><li><a href="https://github.com/WebAssembly/simd/blob/main/proposals/simd/SIMD.md">WebAssembly SIMD proposal and instruction semantics</a></li><li><a href="https://github.com/WebAssembly/threads/blob/main/proposals/threads/Overview.md">WebAssembly threads proposal</a></li><li><a href="https://webassembly.github.io/spec/js-api/">WebAssembly JavaScript interface</a> (Memory.grow and detached buffers)</li><li><a href="https://web.dev/articles/coop-coep">web.dev: making your website cross-origin isolated using COOP and COEP</a></li></ul></section>
+  ;; Mask loop limit down to multiple of 4: n4 = n &amp; ~3
+  (local.set $n4 (i32.and (local.get $n) (i32.const -4)))
+  (local.set $j (i32.const 0))
+
+  ;; Main 128-bit vector loop (4 floats per iteration)
+  (block $vec_done
+    (loop $vec
+      (br_if $vec_done (i32.ge_u (local.get $j) (local.get $n4)))
+
+      ;; C[j..j+3] += av * B[j..j+3]
+      (v128.store
+        (i32.add (local.get $cPtr) (i32.shl (local.get $j) (i32.const 2)))
+        (f32x4.add
+          (v128.load (i32.add (local.get $cPtr) (i32.shl (local.get $j) (i32.const 2))))
+          (f32x4.mul
+            (local.get $av)
+            (v128.load (i32.add (local.get $bPtr) (i32.shl (local.get $j) (i32.const 2)))))))
+
+      (local.set $j (i32.add (local.get $j) (i32.const 4)))
+      (br $vec)
+    )
+  )
+
+  ;; Scalar cleanup loop for remaining n % 4 elements
+  (block $tail_done
+    (loop $tail
+      (br_if $tail_done (i32.ge_u (local.get $j) (local.get $n)))
+
+      (f32.store
+        (i32.add (local.get $cPtr) (i32.shl (local.get $j) (i32.const 2)))
+        (f32.add
+          (f32.load (i32.add (local.get $cPtr) (i32.shl (local.get $j) (i32.const 2))))
+          (f32.mul
+            (local.get $a)
+            (f32.load (i32.add (local.get $bPtr) (i32.shl (local.get $j) (i32.const 2)))))))
+
+      (local.set $j (i32.add (local.get $j) (i32.const 1)))
+      (br $tail)
+    )
+  )
+)</code></pre></figure>
+<h3>Instruction count comparison</h3><p>Both the vector loop and scalar tail loop require 30 WebAssembly instructions per pass. But the vector loop processes 4 elements per pass:</p>
+<math display="block"><msub><mi>I</mi><mtext>scalar</mtext></msub><mo>=</mo><mn>30</mn><mi>N</mi><mo>,</mo><mspace width="1em"></mspace><msub><mi>I</mi><mtext>SIMD</mtext></msub><mo>=</mo><mn>30</mn><mo>⌊</mo><mfrac><mi>N</mi><mn>4</mn></mfrac><mo>⌋</mo><mo>+</mo><mn>30</mn><mo>(</mo><mi>N</mi><mo>mod</mo><mn>4</mn><mo>)</mo></math>
+<p>For <math display="inline"><mi>N</mi><mo>=</mo><mn>256</mn></math>, the scalar loop executes 7 680 instructions, while the SIMD loop executes only 1 920 instructions—a 4× instruction reduction.</p></section>
+
+      <section class="prose"><h2>Threads and SharedArrayBuffer</h2><p>Multi-threaded WebAssembly requires declaring a <code>shared</code> memory backed by a <code>SharedArrayBuffer</code>. Browsers restrict <code>SharedArrayBuffer</code> to cross-origin isolated environments (requiring <code>Cross-Origin-Opener-Policy: same-origin</code> and <code>Cross-Origin-Embedder-Policy: require-corp</code>) because concurrent thread counter increments can be exploited as high-resolution timers for Spectre-style cache timing attacks. The WebAssembly threads proposal introduces atomic instructions (<code>i32.atomic.rmw.add</code>, <code>memory.atomic.wait32</code>, <code>memory.atomic.notify</code>) to coordinate worker threads without busy-waiting.</p></section>
+
+      <section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://webassembly.github.io/spec/core/text/index.html">WebAssembly text format (WAT) specification</a></li><li><a href="https://webassembly.github.io/spec/core/binary/index.html">WebAssembly binary format specification</a></li><li><a href="https://github.com/WebAssembly/simd/blob/main/proposals/simd/SIMD.md">WebAssembly 128-bit SIMD proposal</a></li><li><a href="https://github.com/WebAssembly/threads/blob/main/proposals/threads/Overview.md">WebAssembly threads proposal</a></li><li><a href="https://developer.mozilla.org/en-US/docs/WebAssembly/Understanding_the_text_format">MDN: Understanding WebAssembly text format</a></li></ul></section>
       <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
     </article></div>
   </main>
