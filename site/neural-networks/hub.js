@@ -28,6 +28,11 @@ function render() {
       a.href = `./${c.slug}`;
       a.textContent = c.title;
       h.append(a);
+
+      li.addEventListener("click", (e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+        window.location.href = `./${c.slug}`;
+      });
     }
     if (c.years) {
       const y = document.createElement("span");
@@ -49,6 +54,8 @@ function render() {
   list.replaceChildren(...items);
 
   // Hovering or focusing a chapter highlights everything it builds on, all the way down.
+  // Guarded to hover-capable devices to avoid intercepting touch taps on mobile.
+  const hasHover = window.matchMedia && window.matchMedia("(hover: hover)").matches;
   const bySlug = new Map(CHAPTERS.map((c) => [c.slug, c]));
   const prerequisites = (slug, acc = new Set()) => {
     for (const dep of bySlug.get(slug)?.buildsOn ?? []) {
@@ -72,11 +79,13 @@ function render() {
         : "";
     }
   };
-  for (const li of list.children) {
-    li.addEventListener("pointerenter", () => highlight(li.dataset.slug));
-    li.addEventListener("focusin", () => highlight(li.dataset.slug));
+  if (hasHover) {
+    for (const li of list.children) {
+      li.addEventListener("pointerenter", () => highlight(li.dataset.slug));
+      li.addEventListener("focusin", () => highlight(li.dataset.slug));
+    }
+    list.addEventListener("pointerleave", () => highlight(null));
   }
-  list.addEventListener("pointerleave", () => highlight(null));
 }
 
 render();

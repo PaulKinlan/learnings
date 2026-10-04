@@ -235,37 +235,66 @@ math[display="block"] {
 }
 
 .nn-stack li {
+  position: relative;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 0.75rem 1rem;
-  background: #fff;
+  padding: 0.9rem 1.15rem;
+  background: var(--card, #151d2f);
+  color: var(--ink, #f8fafc);
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+
+.nn-stack li:hover,
+.nn-stack li:active {
+  border-color: #38bdf8;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.nn-stack li h3 {
+  margin: 0.35rem 0 0.5rem;
+}
+
+.nn-stack li h3 a {
+  color: #38bdf8;
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+}
+
+.nn-stack li h3 a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
 }
 
 .nn-stack .part-label {
   font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--muted);
+  color: var(--muted, #94a3b8);
 }
 
 .nn-stack .years {
-  color: var(--muted);
+  color: var(--muted, #94a3b8);
   font-size: 0.9rem;
   margin-inline-start: 0.4rem;
 }
 
 .nn-stack li.is-active {
-  border-color: var(--accent);
-  box-shadow: inset 4px 0 0 var(--accent);
+  border-color: #38bdf8;
+  box-shadow: inset 4px 0 0 #38bdf8, 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
 .nn-stack li.is-prereq {
-  background: var(--wash);
+  background: #1e293b;
+  border-color: #475569;
 }
 
 .nn-stack .builds-on {
   font-size: 0.85rem;
-  color: var(--muted);
+  color: var(--muted, #94a3b8);
 }
 
 .prev-next {

@@ -125,6 +125,11 @@ try{
   await p.emulateViewport({width:390,height:844,mobile:true,scale:1});
  }
  check('all sixteen chapter cards are active links',await p.evaluate(()=>document.querySelectorAll('#nn-stack h3 a').length===16&&!document.querySelector('#nn-stack').textContent.includes('planned')));
+ await p.click('#nn-stack li[data-slug="neuron-and-perceptron.html"] p');
+ await p.waitFor(()=>location.pathname.endsWith('neuron-and-perceptron.html')&&document.title.includes('The neuron and the perceptron'));
+ check('chapter card body click navigates to chapter page', await p.evaluate(()=>location.pathname.endsWith('neuron-and-perceptron.html')));
+ await p.goto(base+'neural-networks/');
+ await p.waitFor(()=>document.querySelectorAll('#nn-stack > li[data-slug]').length>0);
  await p.evaluate(()=>{const c=document.querySelector('[data-widget="perceptron"] canvas'),ctx=c.getContext('2d'),original=ctx.lineTo;ctx.lineTo=function(x,y){c.__boundary=[x,y];return original.call(this,x,y);};});
  await rangeKey('perceptron','w1','Home');
  const boundaryBefore=await p.evaluate(()=>document.querySelector('[data-widget="perceptron"] canvas').__boundary);
