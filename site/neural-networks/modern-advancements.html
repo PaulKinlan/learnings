@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
   <meta name="referrer" content="no-referrer">
   <title>The modern stack | Neural networks</title>
-  <meta name="description" content="Separate mathematical changes from memory-system improvements in current sequence models.">
+  <meta name="description" content="Mathematical reformulations and IO memory optimizations in modern architectures: RMSNorm, RoPE relative phase proof, FlashAttention online softmax, MoE load balancing, Mamba selective SSMs, and KV cache GQA scaling.">
   <link rel="stylesheet" href="../style.css">
   <link rel="stylesheet" href="./chapter.css">
   <link rel="stylesheet" href="./nn.css">
@@ -17,62 +17,117 @@
   <header><a href="../index.html">Paul’s learnings</a><nav aria-label="Main"><a href="./">Chapters</a><a href="./lab.html">Workbench</a></nav></header>
   <main id="main" class="chapter">
     <p class="crumbs"><a href="./">Neural networks</a> › The modern stack</p>
-    <h1>The modern stack</h1><p class="lead">Separate mathematical changes from memory-system improvements in current sequence models.</p>
+    <h1>The modern stack</h1><p class="lead">From the 2017 Transformer to modern foundation models, architectural evolution has proceeded along two distinct axes: mathematical reformulations that stabilize gradients and relative geometry (RMSNorm, RoPE, selective SSMs), and hardware-aware memory designs that eliminate IO bottlenecks (FlashAttention, Grouped-Query Attention, and KV caching).</p>
     <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
-      <section class="prose"><h2>RMSNorm and rotary position embeddings</h2><p>RMSNorm divides a vector by √(mean(x²) + ε), then applies learned gains. Unlike LayerNorm it does not subtract the mean. Scale the vector below: normalized components stay nearly fixed, with a small ε effect.</p><p>RoPE rotates pairs of Q and K components by position-dependent angles. Relative positions affect their dot product. Rotating preserves each pair’s norm; it does not add a position embedding to V. Change position below to inspect the rotated vector.</p></section><section data-widget="modern"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>FlashAttention: same attention, different IO</h2><p>Naive attention materialises an N × N score/probability matrix in high-bandwidth memory (HBM). FlashAttention processes Q/K/V tiles in fast on-chip SRAM and maintains running softmax maxima, denominators and weighted-value accumulators. It avoids writing the full attention matrix to HBM; it does not replace exact softmax with a sparse approximation.</p><p>The calculator uses asymptotic element-traffic expressions with omitted constants. SRAM capacity controls how much can be tiled, but hardware, occupancy, precision and kernel implementation determine actual speed. These numbers are not a benchmark, and increasing tile size indefinitely is not a free optimization.</p></section><section class="prose"><h2>MoE: sparse parameter activation</h2><p>A mixture-of-experts router scores candidate feed-forward experts per token and selects a small subset. Our top-2 example normalises only the selected scores. Active parameters can be far fewer than total parameters, but routing, load balancing and device-to-device communication introduce costs. Attention layers and shared components are still used for every token.</p></section><section class="prose"><h2>Mamba: a different sequence operator</h2><p>Mamba (2023) uses selective state-space updates instead of an all-pairs attention matrix. A simplified recurrence is hₜ = Aₜhₜ₋₁ + Bₜxₜ, yₜ = Cₜhₜ. Input-dependent selection governs what information is retained. The real architecture includes learned projections, discretisation and a hardware-aware scan; a fixed scalar recurrence would not reproduce it.</p><p>State-space decoding keeps a recurrent state rather than a growing attention KV-cache. This changes memory scaling but does not imply identical retrieval capabilities or universally better performance. Hybrid models may combine attention and state-space layers.</p></section><section class="prose"><h2>KV-cache: avoid recomputing the past</h2><p>Autoregressive decoding stores earlier keys and values for each attention layer. The cache grows linearly with tokens and K/V heads. GQA, quantisation, eviction policies and paged allocation target different costs: fewer entries, fewer bytes per entry, bounded history or less fragmentation. A cache is not a model’s long-term memory; it belongs to an inference context.</p></section>
+      <section class="prose"><h2>Run it first</h2><p>The interactive playground below demonstrates the modern sequence stack. Test how RMSNorm scales vector activations, adjust the token position to observe RoPE rotating 2D coordinate pairs, and use the FlashAttention calculator to evaluate on-chip SRAM IO savings.</p></section>
+      <section data-widget="modern"><p>Enable JavaScript to use this local playground. The explanation and derivations below work without it.</p></section>
 
-    <!-- =====================================================================
-         INTEGRATED FULL TRAINERS & LIVE BENCHMARK DEMOS
-         ===================================================================== -->
+      <section class="prose"><h2>RMSNorm: eliminating mean subtraction</h2><p>In standard LayerNorm, an activation vector <var>x</var> ∈ ℝᵈ is centered by subtracting its mean <var>μ</var> before dividing by its standard deviation. Zhang &amp; Sennrich (2019) demonstrated that the variance-scaling property accounts for the entire training stabilization benefit, while mean centering imposes unnecessary memory passes. <strong>RMSNorm</strong> scales directly by the root-mean-square:</p>
+<math display="block"><mtext>RMS</mtext><mo>(</mo><mi>x</mi><mo>)</mo><mo>=</mo><msqrt><mfrac><mn>1</mn><mi>d</mi></mfrac><munderover><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn></mrow><mi>d</mi></munderover><msubsup><mi>x</mi><mi>i</mi><mn>2</mn></msubsup><mo>+</mo><mi>ϵ</mi></msqrt><mo>,</mo><mspace width="1em"></mspace><mi>y</mi><mo>=</mo><mfrac><mi>x</mi><mrow><mtext>RMS</mtext><mo>(</mo><mi>x</mi><mo>)</mo></mrow></mfrac><mo>⊙</mo><mi>γ</mi></math>
+<p>Because RMSNorm does not compute <math display="inline"><mi>μ</mi><mo>=</mo><mfrac><mn>1</mn><mi>d</mi></mfrac><mo>∑</mo><msub><mi>x</mi><mi>i</mi></msub></math>, a fused GPU kernel requires only a single reduction pass over memory instead of two, reducing normalization kernel execution latency by up to 50%.</p></section>
 
-<section id="block-builder" class="nn-section">
-      <h2>8. Extensible Plug-and-Play Neural Architecture Workbench</h2>
-      <p>
-        Modern foundation models are modular compositions of reusable primitives. Click any block below to append it to your live neural pipeline, inspect how tensor shapes, parameter counts, FLOPs, and forward/backward norms evolve across layers, or dynamically register a brand-new architecture block (such as <strong>Selective State-Space / Mamba SSM</strong> or <strong>Sparse Mixture-of-Experts Router</strong>) via <code>registerBlockType()</code>.
-      </p>
+      <section class="prose"><h2>Rotary Position Embedding (RoPE)</h2><p>Traditional Transformers add an absolute position embedding to input token representations: <math display="inline"><msub><mi>x</mi><mi>m</mi></msub><mo>+</mo><msub><mi>p</mi><mi>m</mi></msub></math>. This alters activation norms and leaks position information into value vectors <var>V</var>. <strong>RoPE (Su et al., 2021)</strong> encodes position by rotating pairs of query and key coordinates in the complex plane.</p><p>For a <var>d</var>-dimensional embedding vector, RoPE groups elements into <math display="inline"><mi>d</mi><mo>/</mo><mn>2</mn></math> two-dimensional coordinate pairs <math display="inline"><mo>(</mo><msub><mi>x</mi><mrow><mn>2</mn><mi>i</mi></mrow></msub><mo>,</mo><mspace width="0.4em"></mspace><msub><mi>x</mi><mrow><mn>2</mn><mi>i</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>)</mo></math>. At sequence position <var>m</var>, pair <var>i</var> is multiplied by a 2D rotation matrix:</p>
+<math display="block"><msubsup><mi>R</mi><mrow><mi>Θ</mi><mo>,</mo><mi>m</mi></mrow><mrow><mo>(</mo><mi>i</mi><mo>)</mo></mrow></msubsup><mo>=</mo><mo>[</mo><mtable><mtr><mtd><mi>cos</mi><mo>(</mo><mi>m</mi><msub><mi>θ</mi><mi>i</mi></msub><mo>)</mo></mtd><mtd><mo>−</mo><mi>sin</mi><mo>(</mo><mi>m</mi><msub><mi>θ</mi><mi>i</mi></msub><mo>)</mo></mtd></mtr><mtr><mtd><mi>sin</mi><mo>(</mo><mi>m</mi><msub><mi>θ</mi><mi>i</mi></msub><mo>)</mo></mtd><mtd><mi>cos</mi><mo>(</mo><mi>m</mi><msub><mi>θ</mi><mi>i</mi></msub><mo>)</mo></mtd></mtr></mtable><mo>]</mo><mo>,</mo><mspace width="1em"></mspace><msub><mi>θ</mi><mi>i</mi></msub><mo>=</mo><msup><mtext>base</mtext><mrow><mo>−</mo><mn>2</mn><mi>i</mi><mo>/</mo><mi>d</mi></mrow></msup></math>
+<h3>Proof: dot products depend only on relative distance</h3><p>Consider query <var>q</var> at position <var>m</var> and key <var>k</var> at position <var>n</var>. Their inner product under RoPE is:</p>
+<math display="block"><mo>⟨</mo><msub><mi>R</mi><mi>m</mi></msub><mi>q</mi><mo>,</mo><mspace width="0.4em"></mspace><msub><mi>R</mi><mi>n</mi></msub><mi>k</mi><mo>⟩</mo><mo>=</mo><msup><mrow><mo>(</mo><msub><mi>R</mi><mi>m</mi></msub><mi>q</mi><mo>)</mo></mrow><mi>T</mi></msup><mo>(</mo><msub><mi>R</mi><mi>n</mi></msub><mi>k</mi><mo>)</mo><mo>=</mo><msup><mi>q</mi><mi>T</mi></msup><msubsup><mi>R</mi><mi>m</mi><mi>T</mi></msubsup><msub><mi>R</mi><mi>n</mi></msub><mi>k</mi></math>
+<p>Because rotation matrices form the orthogonal group <math display="inline"><mtext>SO</mtext><mo>(</mo><mn>2</mn><mo>)</mo></math>, the transpose equals the inverse rotation: <math display="inline"><msubsup><mi>R</mi><mi>m</mi><mi>T</mi></msubsup><mo>=</mo><msub><mi>R</mi><mrow><mo>−</mo><mi>m</mi></mrow></msub></math>. Because 2D rotations commute:</p>
+<math display="block"><msubsup><mi>R</mi><mi>m</mi><mi>T</mi></msubsup><msub><mi>R</mi><mi>n</mi></msub><mo>=</mo><msub><mi>R</mi><mrow><mo>−</mo><mi>m</mi></mrow></msub><msub><mi>R</mi><mi>n</mi></msub><mo>=</mo><msub><mi>R</mi><mrow><mi>n</mi><mo>−</mo><mi>m</mi></mrow></msub></math>
+<math display="block"><mo>⟨</mo><msub><mi>R</mi><mi>m</mi></msub><mi>q</mi><mo>,</mo><mspace width="0.4em"></mspace><msub><mi>R</mi><mi>n</mi></msub><mi>k</mi><mo>⟩</mo><mo>=</mo><msup><mi>q</mi><mi>T</mi></msup><msub><mi>R</mi><mrow><mi>n</mi><mo>−</mo><mi>m</mi></mrow></msub><mi>k</mi><mo>=</mo><mo>⟨</mo><mi>q</mi><mo>,</mo><mspace width="0.4em"></mspace><msub><mi>R</mi><mrow><mi>n</mi><mo>−</mo><mi>m</mi></mrow></msub><mi>k</mi><mo>⟩</mo></math>
+<p>The attention score depends strictly on the relative displacement <math display="inline"><mi>n</mi><mo>−</mo><mi>m</mi></math>. Furthermore, because orthogonal transformations preserve vector norms (<math display="inline"><mo>‖</mo><msub><mi>R</mi><mi>m</mi></msub><mi>q</mi><mo>‖</mo><mo>=</mo><mo>‖</mo><mi>q</mi><mo>‖</mo></math>), RoPE preserves embedding magnitude and leaves value vectors <var>V</var> untouched.</p>
+<figure class="listing"><figcaption>rope from math.js</figcaption><pre><code>function rope(vec, pos, base = 10000) {
+  const d = vec.length;
+  if (d % 2 !== 0) throw new Error("RoPE needs an even dimension");
+  const out = new Array(d);
+  for (let i = 0; i &lt; d / 2; i++) {
+    const theta = pos * base ** ((-2 * i) / d);
+    const c = Math.cos(theta);
+    const s = Math.sin(theta);
+    const a = vec[2 * i];
+    const b = vec[2 * i + 1];
+    out[2 * i] = a * c - b * s;
+    out[2 * i + 1] = a * s + b * c;
+  }
+  return out;
+}</code></pre></figure>
+</section>
 
-      <div class="nn-panel">
-        <h3>Add Building Block to Pipeline</h3>
-        <div id="builder-palette" class="builder-palette" role="group" aria-label="Available neural network building blocks"></div>
+      <section class="prose"><h2>FlashAttention: exact attention without materializing N × N matrices</h2><p>In standard attention, computing <math display="inline"><mi>S</mi><mo>=</mo><mi>Q</mi><msup><mi>K</mi><mi>T</mi></msup></math> and <math display="inline"><mi>P</mi><mo>=</mo><mtext>softmax</mtext><mo>(</mo><mi>S</mi><mo>/</mo><msqrt><msub><mi>d</mi><mi>k</mi></msub></msqrt><mo>)</mo></math> writes an <math display="inline"><mi>N</mi><mo>×</mo><mi>N</mi></math> matrix to High Bandwidth Memory (HBM). For sequence length <math display="inline"><mi>N</mi><mo>=</mo><mn>32 768</mn></math>, an <math display="inline"><mi>N</mi><mo>×</mo><mi>N</mi></math> FP16 matrix consumes <math display="inline"><msup><mn>32 768</mn><mn>2</mn></msup><mo>×</mo><mn>2</mn><mtext> B</mtext><mo>≈</mo><mn>2.14</mn><mtext> GB</mtext></math> per head, per layer. Writing and reading this matrix over the memory bus saturates bandwidth.</p><h3>The online softmax recurrence</h3><p>FlashAttention (Dao et al., 2022) tiles <var>Q</var>, <var>K</var>, and <var>V</var> into blocks that fit entirely within fast on-chip SRAM (~192 KiB per Streaming Multiprocessor on NVIDIA H100). It maintains running softmax statistics without materializing the full matrix. For query tile <math display="inline"><msub><mi>Q</mi><mi>i</mi></msub></math> and key/value tile <math display="inline"><mo>(</mo><msub><mi>K</mi><mi>j</mi></msub><mo>,</mo><msub><mi>V</mi><mi>j</mi></msub><mo>)</mo></math>:</p>
+<math display="block"><msub><mi>S</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo><mfrac><mrow><msub><mi>Q</mi><mi>i</mi></msub><msubsup><mi>K</mi><mi>j</mi><mi>T</mi></msubsup></mrow><msqrt><msub><mi>d</mi><mi>k</mi></msub></msqrt></mfrac><mo>,</mo><mspace width="1em"></mspace><msubsup><mi>m</mi><mi>i</mi><mtext>new</mtext></msubsup><mo>=</mo><mi>max</mi><mo>(</mo><msubsup><mi>m</mi><mi>i</mi><mtext>prev</mtext></msubsup><mo>,</mo><mspace width="0.4em"></mspace><mtext>rowmax</mtext><mo>(</mo><msub><mi>S</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>)</mo><mo>)</mo></math>
+<math display="block"><msubsup><mi>ℓ</mi><mi>i</mi><mtext>new</mtext></msubsup><mo>=</mo><msup><mi>e</mi><mrow><msubsup><mi>m</mi><mi>i</mi><mtext>prev</mtext></msubsup><mo>−</mo><msubsup><mi>m</mi><mi>i</mi><mtext>new</mtext></msubsup></mrow></msup><msubsup><mi>ℓ</mi><mi>i</mi><mtext>prev</mtext></msubsup><mo>+</mo><mtext>rowsum</mtext><mo>(</mo><msup><mi>e</mi><mrow><msub><mi>S</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>−</mo><msubsup><mi>m</mi><mi>i</mi><mtext>new</mtext></msubsup></mrow></msup><mo>)</mo></math>
+<math display="block"><msubsup><mi>O</mi><mi>i</mi><mtext>new</mtext></msubsup><mo>=</mo><msup><mi>e</mi><mrow><msubsup><mi>m</mi><mi>i</mi><mtext>prev</mtext></msubsup><mo>−</mo><msubsup><mi>m</mi><mi>i</mi><mtext>new</mtext></msubsup></mrow></msup><msubsup><mi>O</mi><mi>i</mi><mtext>prev</mtext></msubsup><mo>+</mo><msup><mi>e</mi><mrow><msub><mi>S</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>−</mo><msubsup><mi>m</mi><mi>i</mi><mtext>new</mtext></msubsup></mrow></msup><msub><mi>V</mi><mi>j</mi></msub></math>
+<p>At the final block, the true normalized output is <math display="inline"><msub><mi>O</mi><mi>i</mi></msub><mo>=</mo><msubsup><mi>O</mi><mi>i</mi><mtext>final</mtext></msubsup><mo>/</mo><msubsup><mi>ℓ</mi><mi>i</mi><mtext>final</mtext></msubsup></math>. The output is mathematically identical to standard attention to floating-point rounding precision.</p>
+<h3>IO complexity</h3><p>Dao et al. proved that standard attention transfers <math display="inline"><mi>Θ</mi><mo>(</mo><mi>N</mi><mi>d</mi><mo>+</mo><msup><mi>N</mi><mn>2</mn></msup><mo>)</mo></math> elements between HBM and registers, while FlashAttention transfers:</p>
+<math display="block"><msub><mtext>HBM Traffic</mtext><mtext>Flash</mtext></msub><mo>=</mo><mi>Θ</mi><mo>(</mo><mfrac><mrow><msup><mi>N</mi><mn>2</mn></msup><msup><mi>d</mi><mn>2</mn></msup></mrow><mi>M</mi></mfrac><mo>)</mo></math>
+<p>where <var>M</var> is on-chip SRAM capacity. For typical SRAM sizes (<math display="inline"><mi>M</mi><mo>≫</mo><msup><mi>d</mi><mn>2</mn></msup></math>), FlashAttention reduces HBM traffic by a factor of 4 to 8, achieving a 2–4× wall-clock speedup purely through memory hierarchy optimization.</p></section>
 
-        <div class="actions">
-          <button type="button" id="btn-register-ssm" class="secondary">+ Register Custom Block: Mamba Selective SSM</button>
-          <button type="button" id="btn-register-moe" class="secondary">+ Register Custom Block: Sparse MoE Top-2 Router</button>
-          <button type="button" id="btn-reset-pipeline" class="secondary">Reset to Default Transformer-Decision Stack</button>
+      <section class="prose"><h2>Mixture of Experts (MoE) and load balancing</h2><p>In standard feedforward layers, every parameter evaluates every token. <strong>Mixture of Experts (MoE)</strong> replaces the single FFN with <var>E</var> independent expert networks, dynamically routing each token to a sparse subset of <var>k</var> experts (commonly <var>k</var> = 2):</p>
+<math display="block"><mi>H</mi><mo>(</mo><mi>x</mi><mo>)</mo><mo>=</mo><mi>x</mi><mo>·</mo><msub><mi>W</mi><mi>g</mi></msub><mo>,</mo><mspace width="1em"></mspace><mi>G</mi><mo>(</mo><mi>x</mi><mo>)</mo><mo>=</mo><mtext>Softmax</mtext><mo>(</mo><mtext>TopK</mtext><mo>(</mo><mi>H</mi><mo>(</mo><mi>x</mi><mo>)</mo><mo>,</mo><mi>k</mi><mo>)</mo><mo>)</mo><mo>,</mo><mspace width="1em"></mspace><mi>y</mi><mo>=</mo><munder><mo>∑</mo><mrow><mi>i</mi><mo>∈</mo><mtext>TopK</mtext></mrow></munder><mi>G</mi><msub><mrow><mo>(</mo><mi>x</mi><mo>)</mo></mrow><mi>i</mi></msub><msub><mi>E</mi><mi>i</mi></msub><mo>(</mo><mi>x</mi><mo>)</mo></math>
+<p>Mixtral 8x7B has 8 experts of 7B parameters each (~47B total parameters), but routes each token to only 2 experts, executing only ~13B active parameters per forward pass.</p><h3>Auxiliary load balancing loss</h3><p>Without regularisation, routers suffer from representation collapse: one or two experts receive all tokens, while the remaining experts receive zero gradient and die. Shazeer et al. introduce an auxiliary load-balancing loss:</p>
+<math display="block"><msub><mi mathvariant="script">L</mi><mtext>aux</mtext></msub><mo>=</mo><mi>α</mi><mo>·</mo><mi>E</mi><munderover><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn></mrow><mi>E</mi></munderover><msub><mi>f</mi><mi>i</mi></msub><msub><mi>P</mi><mi>i</mi></msub></math>
+<p>where <math display="inline"><msub><mi>f</mi><mi>i</mi></msub><mo>=</mo><mfrac><mn>1</mn><mi>T</mi></mfrac><msubsup><mo>∑</mo><mrow><mi>t</mi><mo>=</mo><mn>1</mn></mrow><mi>T</mi></msubsup><mn mathvariant="bold">1</mn><mo>{</mo><mtext>expert </mtext><mi>i</mi><mo>∈</mo><mtext>TopK</mtext><mo>}</mo></math> is the fraction of tokens routed to expert <var>i</var>, and <math display="inline"><msub><mi>P</mi><mi>i</mi></msub><mo>=</mo><mfrac><mn>1</mn><mi>T</mi></mfrac><msubsup><mo>∑</mo><mrow><mi>t</mi><mo>=</mo><mn>1</mn></mrow><mi>T</mi></msubsup><mi>Softmax</mi><msub><mrow><mo>(</mo><mi>H</mi><mo>(</mo><msub><mi>x</mi><mi>t</mi></msub><mo>)</mo><mo>)</mo></mrow><mi>i</mi></msub></math> is the average routing probability. Minimizing <math display="inline"><msub><mi mathvariant="script">L</mi><mtext>aux</mtext></msub></math> encourages uniform expert utilization across the batch.</p></section>
+
+      <section class="prose"><h2>Mamba: selective state-space models</h2><p>Mamba (Gu &amp; Dao, 2023) replaces attention with a selective continuous-time state space model (SSM):</p>
+<math display="block"><msup><mi>h</mi><mo>′</mo></msup><mo>(</mo><mi>t</mi><mo>)</mo><mo>=</mo><mi>A</mi><mi>h</mi><mo>(</mo><mi>t</mi><mo>)</mo><mo>+</mo><mi>B</mi><mi>x</mi><mo>(</mo><mi>t</mi><mo>)</mo><mo>,</mo><mspace width="1em"></mspace><mi>y</mi><mo>(</mo><mi>t</mi><mo>)</mo><mo>=</mo><mi>C</mi><mi>h</mi><mo>(</mo><mi>t</mi><mo>)</mo></math>
+<p>Discretized with step size <var>Δ</var> via Zero-Order Hold (ZOH):</p>
+<math display="block"><mover><mi>A</mi><mo>¯</mo></mover><mo>=</mo><mi>exp</mi><mo>(</mo><mi>Δ</mi><mi>A</mi><mo>)</mo><mo>,</mo><mspace width="1em"></mspace><mover><mi>B</mi><mo>¯</mo></mover><mo>=</mo><msup><mrow><mo>(</mo><mi>Δ</mi><mi>A</mi><mo>)</mo></mrow><mrow><mo>−</mo><mn>1</mn></mrow></msup><mo>(</mo><mi>exp</mi><mo>(</mo><mi>Δ</mi><mi>A</mi><mo>)</mo><mo>−</mo><mi>I</mi><mo>)</mo><mo>·</mo><mi>Δ</mi><mi>B</mi><mo>≈</mo><mi>Δ</mi><mi>B</mi></math>
+<math display="block"><msub><mi>h</mi><mi>t</mi></msub><mo>=</mo><mover><mi>A</mi><mo>¯</mo></mover><msub><mi>h</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><mo>+</mo><mover><mi>B</mi><mo>¯</mo></mover><msub><mi>x</mi><mi>t</mi></msub><mo>,</mo><mspace width="1em"></mspace><msub><mi>y</mi><mi>t</mi></msub><mo>=</mo><mi>C</mi><msub><mi>h</mi><mi>t</mi></msub></math>
+<p>In linear time-invariant SSMs (such as S4), <var>A</var>, <var>B</var>, <var>C</var>, and <var>Δ</var> are constant across time, allowing the recurrence to be evaluated globally as an FFT convolution: <math display="inline"><mi>y</mi><mo>=</mo><mi>x</mi><mo>*</mo><mi>K</mi></math>. <strong>Mamba makes <var>B</var>(<var>x</var>), <var>C</var>(<var>x</var>), and <var>Δ</var>(<var>x</var>) input-dependent functions of token <var>x</var>ₜ</strong>. This enables selective remembering and forgetting (filtering irrelevant tokens), but breaks the convolution theorem, requiring hardware-aware parallel associative scans. Inference executes in <math display="inline"><mi>O</mi><mo>(</mo><mn>1</mn><mo>)</mo></math> constant time per token with a fixed-size recurrent state <math display="inline"><mi>h</mi><mo>∈</mo><msup><mi>ℝ</mi><mrow><mi>d</mi><mo>×</mo><mi>N</mi></mrow></msup></math>, eliminating the growing KV cache entirely.</p></section>
+
+      <section class="prose"><h2>KV-cache scaling: Multi-Head vs Grouped-Query Attention</h2><p>During autoregressive generation, keys and values from earlier tokens are cached in VRAM to prevent quadratic recomputation. The total bytes stored by a KV cache are:</p>
+<math display="block"><mtext>Bytes</mtext><mo>=</mo><mn>2</mn><mo>·</mo><mtext>layers</mtext><mo>·</mo><msub><mi>n</mi><mtext>kv</mtext></msub><mo>·</mo><msub><mi>d</mi><mtext>head</mtext></msub><mo>·</mo><mi>T</mi><mo>·</mo><mtext>batch</mtext><mo>·</mo><msub><mtext>bytes</mtext><mtext>elem</mtext></msub></math>
+<p>Consider <strong>LLaMA-3 8B</strong>: 32 layers, hidden dimension <var>d</var> = 4096, head dimension <math display="inline"><msub><mi>d</mi><mtext>head</mtext></msub><mo>=</mo><mn>128</mn></math>, query heads <math display="inline"><msub><mi>n</mi><mi>q</mi></msub><mo>=</mo><mn>32</mn></math>, sequence length <math display="inline"><mi>T</mi><mo>=</mo><mn>8 192</mn></math>, batch = 1, FP16 (2 bytes/elem):</p><ul><li><strong>Multi-Head Attention (MHA, <math display="inline"><msub><mi>n</mi><mtext>kv</mtext></msub><mo>=</mo><mn>32</mn></math>)</strong>:
+<math display="block"><mn>2</mn><mo>·</mo><mn>32</mn><mo>·</mo><mn>32</mn><mo>·</mo><mn>128</mn><mo>·</mo><mn>8 192</mn><mo>·</mo><mn>1</mn><mo>·</mo><mn>2</mn><mo>=</mo><mn>4 294 967 296</mn><mtext> B</mtext><mo>=</mo><mn>4.0</mn><mtext> GB</mtext></math></li><li><strong>Grouped-Query Attention (GQA, <math display="inline"><msub><mi>n</mi><mtext>kv</mtext></msub><mo>=</mo><mn>8</mn></math>)</strong>: 4 query heads share 1 KV head (ratio 4:1):
+<math display="block"><mn>2</mn><mo>·</mo><mn>32</mn><mo>·</mo><mn>8</mn><mo>·</mo><mn>128</mn><mo>·</mo><mn>8 192</mn><mo>·</mo><mn>1</mn><mo>·</mo><mn>2</mn><mo>=</mo><mn>1 073 741 824</mn><mtext> B</mtext><mo>=</mo><mn>1.0</mn><mtext> GB</mtext></math></li><li><strong>Multi-Query Attention (MQA, <math display="inline"><msub><mi>n</mi><mtext>kv</mtext></msub><mo>=</mo><mn>1</mn></math>)</strong>: All 32 query heads share a single KV head:
+<math display="block"><mn>2</mn><mo>·</mo><mn>32</mn><mo>·</mo><mn>1</mn><mo>·</mo><mn>128</mn><mo>·</mo><mn>8 192</mn><mo>·</mo><mn>1</mn><mo>·</mo><mn>2</mn><mo>=</mo><mn>134 217 728</mn><mtext> B</mtext><mo>=</mo><mn>128</mn><mtext> MB</mtext></math></li></ul>
+<p>GQA achieves a 4× reduction in KV-cache memory consumption and memory bandwidth while matching MHA model quality across downstream benchmarks.</p></section>
+
+      <section id="block-builder" class="nn-section">
+        <h2>Interactive Architecture Pipeline Builder</h2>
+        <p>
+          Foundation models are modular compositions of reusable primitives. Click any block below to append it to your live neural pipeline, inspect tensor shapes, parameter counts, FLOPs, and gradient norms across layers, or dynamically register custom architectural blocks (such as <strong>Mamba Selective SSM</strong> or <strong>Sparse MoE Router</strong>) via <code>registerBlockType()</code>.
+        </p>
+
+        <div class="nn-panel">
+          <h3>Add Building Block to Pipeline</h3>
+          <div id="builder-palette" class="builder-palette" role="group" aria-label="Available neural network building blocks"></div>
+
+          <div class="actions">
+            <button type="button" id="btn-register-ssm" class="secondary">+ Register Custom Block: Mamba Selective SSM</button>
+            <button type="button" id="btn-register-moe" class="secondary">+ Register Custom Block: Sparse MoE Top-2 Router</button>
+            <button type="button" id="btn-reset-pipeline" class="secondary">Reset to Default Transformer-Decision Stack</button>
+          </div>
+
+          <div class="metrics-strip">
+            <div class="metric-box">
+              <div class="metric-label">Pipeline Depth</div>
+              <div id="builder-depth" class="metric-val">0 blocks</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Total Parameters</div>
+              <div id="builder-params" class="metric-val">0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">FLOPs / Sequence</div>
+              <div id="builder-flops" class="metric-val">0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Input Gradient Norm</div>
+              <div id="builder-grad" class="metric-val">—</div>
+            </div>
+          </div>
+
+          <div id="builder-stack" class="block-stack" aria-live="polite"></div>
         </div>
 
-        <div class="metrics-strip">
-          <div class="metric-box">
-            <div class="metric-label">Pipeline Depth</div>
-            <div id="builder-depth" class="metric-val">0 blocks</div>
-          </div>
-          <div class="metric-box">
-            <div class="metric-label">Total Parameters</div>
-            <div id="builder-params" class="metric-val">0</div>
-          </div>
-          <div class="metric-box">
-            <div class="metric-label">FLOPs / Sequence</div>
-            <div id="builder-flops" class="metric-val">0</div>
-          </div>
-          <div class="metric-box">
-            <div class="metric-label">Input Gradient Norm</div>
-            <div id="builder-grad" class="metric-val">—</div>
-          </div>
-        </div>
+        <div id="builder-stepper"></div>
+      </section>
 
-        <div id="builder-stack" class="block-stack" aria-live="polite"></div>
-      </div>
-
-      <div id="builder-stepper"></div>
-    </section>
-
-    <section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://arxiv.org/abs/1910.07467">Zhang & Sennrich (2019), RMSNorm</a></li><li><a href="https://arxiv.org/abs/2104.09864">Su et al. (2021), RoFormer / RoPE</a></li><li><a href="https://arxiv.org/abs/2205.14135">Dao et al. (2022), FlashAttention</a></li><li><a href="https://arxiv.org/abs/1701.06538">Shazeer et al. (2017), Sparsely-Gated Mixture-of-Experts</a></li><li><a href="https://arxiv.org/abs/2312.00752">Gu & Dao (2023), Mamba</a></li><li><a href="https://arxiv.org/abs/2309.06180">Kwon et al. (2023), PagedAttention</a></li></ul></section>
+      <section class="prose"><h2>Sources and further reading</h2><ul class="sources"><li><a href="https://arxiv.org/abs/1910.07467">Zhang &amp; Sennrich (2019), Root Mean Square Layer Normalization (RMSNorm)</a></li><li><a href="https://arxiv.org/abs/2104.09864">Su et al. (2021), RoFormer: Enhanced Transformer with Rotary Position Embedding</a></li><li><a href="https://arxiv.org/abs/2205.14135">Dao et al. (2022), FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</a></li><li><a href="https://arxiv.org/abs/1701.06538">Shazeer et al. (2017), Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer</a></li><li><a href="https://arxiv.org/abs/2312.00752">Gu &amp; Dao (2023), Mamba: Linear-Time Sequence Modeling with Selective State Spaces</a></li><li><a href="https://arxiv.org/abs/2305.13245">Ainslie et al. (2023), GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints</a></li><li><a href="https://arxiv.org/abs/2309.06180">Kwon et al. (2023), Efficient Memory Management for Large Language Model Serving with PagedAttention</a></li></ul></section>
       <nav class="prev-next" data-prev-next aria-label="Previous and next chapters"></nav>
     </article></div>
   </main>
   <footer>Small, inspectable numerical experiments. No accounts, model downloads or external inference calls.</footer>
   <script type="module" src="./chapters.js"></script>
   <script type="module" src="./widgets.js"></script>
-  <script type="module" src="./app.js"></script>
 </body>
 </html>
