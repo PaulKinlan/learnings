@@ -21,12 +21,8 @@
     <div class="chapter-grid"><nav class="chapter-toc" data-chapter-nav aria-label="All chapters"></nav><article>
       <section class="prose"><h2>Why share weights?</h2><p>A dense layer learns a different weight for every input-output connection. An image edge should be recognisable in many positions, so a convolutional layer reuses one small kernel over the spatial grid. Fukushima’s neocognitron (1980) combined local receptive fields and hierarchical feature extraction; LeCun and collaborators trained convolutional networks with backpropagation for handwritten ZIP codes in 1989.</p><p>A 3 × 3 kernel takes a weighted sum of nine pixels. CNN libraries usually call this convolution even though they do not flip the kernel; mathematically it is cross-correlation. Each filter makes one feature map. Multiple input channels contribute sums to that map, with a learned bias added once.</p></section><section class="prose"><h2>Stride, padding and shape</h2><math display="block"><msub><mi>W</mi><mtext>out</mtext></msub><mo>=</mo><mo>⌊</mo><mfrac><mrow><mi>W</mi><mo>−</mo><mi>K</mi><mo>+</mo><mn>2</mn><mi>P</mi></mrow><mi>S</mi></mfrac><mo>⌋</mo><mo>+</mo><mn>1</mn></math><p>With W = 8, K = 3, stride S = 1 and no padding, the output is 6 × 6. Padding P = 1 preserves 8 × 8. Stride 2 skips positions, reducing resolution. Outside-image entries are zero; they participate in the displayed products but do not correspond to editable pixels.</p></section><section data-widget="convolution"><p>Enable JavaScript to use this local playground. The explanation and sources below work without it.</p></section><section class="prose"><h2>Receptive fields and pooling</h2><p>Choose Sobel horizontal, then invert a pixel on a horizontal edge. The output responds to brightness changes from top to bottom; Sobel vertical responds to left-right changes. A blur averages nearby pixels, while sharpen amplifies their difference from the centre.</p><p>Stacking stride-1 3 × 3 convolutions increases the receptive field: two layers can see a 5 × 5 input patch. More generally, if a layer has receptive field r and jump j between centres, the next kernel grows r by (K − 1)j and multiplies j by its stride. Padding changes border behaviour, not the theoretical receptive-field size.</p><p>Max pooling selects the largest value in a window; it adds no learned weights. Open the pooling panel to inspect 2 × 2 windows of the complete output. Pooling discards location and sign information; a full CNN often applies ReLU before pooling, but this demonstration pools the raw signed convolution so the operations remain distinguishable.</p></section>
 
-    <!-- =====================================================================
-         INTEGRATED FULL TRAINERS & LIVE BENCHMARK DEMOS
-         ===================================================================== -->
-
 <section id="cnn-lab" class="nn-section">
-      <h2>2. Convolutional Neural Networks: Spatial Priors, Weight Sharing &amp; Pooling (1989–2012)</h2>
+      <h2>Convolutional Neural Networks: Spatial Priors, Weight Sharing &amp; Pooling</h2>
 
       <div class="study-prose">
         <p>
@@ -48,11 +44,8 @@
         </ul>
       </div>
 
-      <div class="equation-box">
-        Forward: Z<sup>(f)</sup><sub>r,c</sub> = b<sub>f</sub> + ∑<sub>u=0..2</sub> ∑<sub>v=0..2</sub> I<sub>r+u, c+v</sub> · K<sup>(f)</sup><sub>u,v</sub> &nbsp;|&nbsp;
-        Backward Filter Grad: ∂L/∂K<sup>(f)</sup><sub>u,v</sub> = ∑<sub>r,c</sub> I<sub>r+u, c+v</sub> · δ<sup>(f)</sup><sub>r,c</sub> &nbsp;|&nbsp;
-        Input Grad: ∂L/∂I = δ ∗ rot<sub>180°</sub>(K)
-      </div>
+<math display="block"><msubsup><mi>Z</mi><mrow><mi>r</mi><mo>,</mo><mi>c</mi></mrow><mrow><mo>(</mo><mi>f</mi><mo>)</mo></mrow></msubsup><mo>=</mo><msub><mi>b</mi><mi>f</mi></msub><mo>+</mo><munderover><mo>∑</mo><mrow><mi>u</mi><mo>=</mo><mn>0</mn></mrow><mn>2</mn></munderover><munderover><mo>∑</mo><mrow><mi>v</mi><mo>=</mo><mn>0</mn></mrow><mn>2</mn></munderover><msub><mi>I</mi><mrow><mi>r</mi><mo>+</mo><mi>u</mi><mo>,</mo><mi>c</mi><mo>+</mo><mi>v</mi></mrow></msub><mo>·</mo><msubsup><mi>K</mi><mrow><mi>u</mi><mo>,</mo><mi>v</mi></mrow><mrow><mo>(</mo><mi>f</mi><mo>)</mo></mrow></msubsup></math>
+<math display="block"><mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><msubsup><mi>K</mi><mrow><mi>u</mi><mo>,</mo><mi>v</mi></mrow><mrow><mo>(</mo><mi>f</mi><mo>)</mo></mrow></msubsup></mrow></mfrac><mo>=</mo><munder><mo>∑</mo><mrow><mi>r</mi><mo>,</mo><mi>c</mi></mrow></munder><msub><mi>I</mi><mrow><mi>r</mi><mo>+</mo><mi>u</mi><mo>,</mo><mi>c</mi><mo>+</mo><mi>v</mi></mrow></msub><mo>·</mo><msubsup><mi>δ</mi><mrow><mi>r</mi><mo>,</mo><mi>c</mi></mrow><mrow><mo>(</mo><mi>f</mi><mo>)</mo></mrow></msubsup><mo>,</mo><mspace width="1em"></mspace><mfrac><mrow><mo>∂</mo><mi>L</mi></mrow><mrow><mo>∂</mo><mi>I</mi></mrow></mfrac><mo>=</mo><msup><mi>δ</mi><mrow><mo>(</mo><mi>f</mi><mo>)</mo></mrow></msup><mo>*</mo><msub><mtext>rot</mtext><msup><mn>180</mn><mo>∘</mo></msup></msub><mo>(</mo><msup><mi>K</mi><mrow><mo>(</mo><mi>f</mi><mo>)</mo></mrow></msup><mo>)</mo></math>
 
       <div class="nn-grid">
         <div class="nn-panel">
