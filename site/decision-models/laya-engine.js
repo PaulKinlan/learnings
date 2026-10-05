@@ -15,10 +15,11 @@
 //   work is correct — the act head compiles, and laya-pack.js pins the gate-0 captures
 //   id-for-id — the memory ceiling is the runtime's, not the model's.
 //
-// The main graph's weights download once from huggingface.co (the ONLY network requests,
-// each verified byte-for-byte against the publisher's SHA256SUMS); the act head, the
-// contract texts and this module are served from this site. Packing and decoding live in
-// laya-pack.js, pinned id-for-id against the publisher's gate captures.
+// The main graph's weights download once from huggingface.co (the ONLY network requests, each
+// from an immutable commit revision and each verified byte-for-byte against the publisher's
+// SHA256SUMS — an integrity check and not a root of trust, see the note in loadLaya); the act
+// head, the contract texts and this module are served from this site. Packing and decoding live
+// in laya-pack.js, pinned id-for-id against the publisher's gate captures.
 
 import { loadLiteRt, loadAndCompile, Tensor } from "../vendor/litert/index.js";
 import { Tokenizer } from "../vendor/tokenizers.min.mjs";
@@ -31,6 +32,7 @@ import {
   decodeQuestion,
   softmax,
 } from "./laya-pack.js";
+import { LAYA_REVISION } from "./laya-manifest.js";
 
 export const MULTILINGUAL_SPECIAL_IDS = Object.freeze({ cls: 2, sep: 1, pad: 0, unk: 3, mask: 4 });
 export const MULTILINGUAL_MASK_STRING = "<mask>";
@@ -41,6 +43,7 @@ const EN_REPO = "litert-community/laya-LiteRT";
 const CHECKPOINTS = {
   multilingual: {
     repo: ML_REPO,
+    revision: LAYA_REVISION.multilingual,
     label: "multilingual (mmBERT-base, 100+ languages)",
     window: 512,
     headMaxLen: 256,
@@ -64,6 +67,7 @@ const CHECKPOINTS = {
   },
   english: {
     repo: EN_REPO,
+    revision: LAYA_REVISION.english,
     label: "english (ModernBERT-large) — disabled: fp32-weight graphs exceed the wasm32 heap",
     window: 512,
     headMaxLen: 192,
@@ -87,6 +91,17 @@ const CHECKPOINTS = {
 };
 
 const LAYA_DIR = new URL("./laya/", import.meta.url).href;
+
+/**
+ * The pinned hub URL for one artifact, by checkpoint name and its path inside that repo. The
+ * revision is a commit sha (laya-manifest.js), never a branch or a tag, so the bytes behind the
+ * URL cannot change after the fact — and neither can the SHA256SUMS fetched from the same place.
+ */
+export function layaArtifactUrl(checkpoint, file) {
+  const spec = CHECKPOINTS[checkpoint];
+  if (!spec) throw new Error(`unknown checkpoint '${checkpoint}' (known: ${Object.keys(CHECKPOINTS).join(", ")})`);
+  return `https://huggingface.co/${spec.repo}/resolve/${spec.revision}/${file}`;
+}
 
 let litertPromise = null;
 function litert() {
@@ -179,9 +194,27 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
   const localMap = spec.localFiles ?? {};
   const urlFor = (key, file) =>
     urls[file] ??
-    (localMap[key] ? new URL(localMap[key], LAYA_DIR).href : `https://huggingface.co/${spec.repo}/resolve/main/${file}`);
-  const sumsUrl = urls.SHA256SUMS ?? (localMap.SHA256SUMS ? new URL(localMap.SHA256SUMS, LAYA_DIR).href : `https://huggingface.co/${spec.repo}/raw/main/SHA256SUMS`);
-  const sums = parseSha256Sums(await fetch(sumsUrl).then((r) => r.text()));
+    (localMap[key] ? new URL(localMap[key], LAYA_DIR).href : layaArtifactUrl(checkpoint, file));
+  const sumsUrl = urls.SHA256SUMS ??
+    (localMap.SHA256SUMS ? new URL(localMap.SHA256SUMS, LAYA_DIR).href : layaArtifactUrl(checkpoint, "SHA256SUMS"));
+
+  // SHA256SUMS is an INTEGRITY check only. It is NOT a root of trust. It catches corruption in
+  // transit and an accidental mismatch against the digests recorded here, but the sums are the
+  // publisher's own — the copy vendored under laya/, or the same file at the pinned revision,
+  // both authored by whoever published the artifacts. A publisher who replaces a graph can
+  // replace its hash in the same push, and this check will pass. The revision pin in
+  // laya-manifest.js limits which published bytes and which published hashes are in play; it
+  // does not make them trustworthy. Reviewers must not read this as signature verification.
+  //
+  // A sums file that does not arrive is a hard failure, on purpose: an empty digest table would
+  // turn every check below into no check at all, which is the silent fallback this refuses.
+  const sumsResponse = await fetch(sumsUrl);
+  if (!sumsResponse.ok) {
+    throw new Error(
+      `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: HTTP ${sumsResponse.status} (${sumsUrl})`,
+    );
+  }
+  const sums = parseSha256Sums(await sumsResponse.text());
 
   onProgress?.("tokenizer", 0, 0);
   const tokenizer = new Tokenizer(
