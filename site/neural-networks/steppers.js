@@ -58,6 +58,18 @@ const SVG_NS = "http://www.w3.org/2000/svg";
  *   }
  * }} config
  */
+function el(tag, text, cls = "", attrs = {}, children = []) {
+  const n = document.createElement(tag);
+  if (text) n.textContent = text;
+  if (cls) n.className = cls;
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'id' && !v) continue; // skip empty ids
+    n.setAttribute(k, v);
+  }
+  if (children.length) n.append(...children);
+  return n;
+}
+
 export function mountSectionStepper(containerEl, config) {
   if (!containerEl) return { refresh() {} };
 
@@ -69,78 +81,87 @@ export function mountSectionStepper(containerEl, config) {
 
   // Build Workbench DOM
   containerEl.className = "nn-stepper-workbench";
-  containerEl.innerHTML = `
-    <div class="stepper-header">
-      <div>
-        <h3>${config.title}</h3>
-        <p class="small">${config.subtitle}</p>
-      </div>
-      <div class="stepper-size-control">
-        <label for="${pfx}-graph-size" class="small"><strong>Graph Canvas Scale</strong></label>
-        <select id="${pfx}-graph-size">
-          <option value="large" selected>Large Stage (520px Height)</option>
-          <option value="theatre">Extra-Large Theatre (680px Height)</option>
-          <option value="compact">Compact (380px Height)</option>
-        </select>
-      </div>
-    </div>
+  containerEl.innerHTML = "";
 
-    <div class="stepper-toolbar">
-      ${
-        config.probeOptions && config.probeOptions.length > 0
-          ? `<div class="fields stepper-fields">
-              <div>
-                <label for="${pfx}-probe-select">${config.probeLabel || "Inspection Target / Mode"}</label>
-                <select id="${pfx}-probe-select">
-                  ${config.probeOptions
-                    .map((o) => `<option value="${o.value}">${o.label}</option>`)
-                    .join("")}
-                </select>
-              </div>
-            </div>`
-          : ""
-      }
-      <div class="actions stepper-actions">
-        <button type="button" id="${pfx}-reset-btn" class="secondary">⏮ Start of Pass</button>
-        <button type="button" id="${pfx}-prev-btn" class="secondary">◀ Prev Step</button>
-        <button type="button" id="${pfx}-next-btn">Next Step ▶</button>
-        <button type="button" id="${pfx}-play-btn" class="secondary">⏯ Auto-Step</button>
-      </div>
-    </div>
+  const titleDiv = el('div', '', '', {}, [
+    el('h3', config.title),
+    el('p', config.subtitle, 'small')
+  ]);
 
-    <div id="${pfx}-tape" class="stepper-tape" role="tablist" aria-label="${config.title} micro-steps"></div>
+  const sizeSelect = el('select', '', '', { id: `${pfx}-graph-size` }, [
+    el('option', 'Large Stage (520px Height)', '', { value: 'large', selected: 'selected' }),
+    el('option', 'Extra-Large Theatre (680px Height)', '', { value: 'theatre' }),
+    el('option', 'Compact (380px Height)', '', { value: 'compact' })
+  ]);
+  const sizeDiv = el('div', '', 'stepper-size-control', {}, [
+    el('label', '', 'small', { for: `${pfx}-graph-size` }, [el('strong', 'Graph Canvas Scale')]),
+    sizeSelect
+  ]);
+  const headerDiv = el('div', '', 'stepper-header', {}, [titleDiv, sizeDiv]);
 
-    <div class="stepper-stage-banner">
-      <div class="stepper-stage-top">
-        <span id="${pfx}-phase-badge" class="stepper-phase-badge">INPUT</span>
-        <strong id="${pfx}-stage-title">Stage 1</strong>
-        <span id="${pfx}-pass-counter" class="stepper-pass-counter">Step 1</span>
-      </div>
-      <div id="${pfx}-stage-formula" class="stepper-stage-formula"></div>
-      <div id="${pfx}-stage-summary" class="stepper-stage-summary"></div>
-    </div>
+  const toolbarDiv = el('div', '', 'stepper-toolbar');
+  if (config.probeOptions && config.probeOptions.length > 0) {
+    const probeSelect = el('select', '', '', { id: `${pfx}-probe-select` }, 
+      config.probeOptions.map(o => el('option', o.label, '', { value: o.value }))
+    );
+    const probeLabel = el('label', config.probeLabel || "Inspection Target / Mode", '', { for: `${pfx}-probe-select` });
+    toolbarDiv.append(el('div', '', 'fields stepper-fields', {}, [
+      el('div', '', '', {}, [probeLabel, probeSelect])
+    ]));
+  }
+  const actionsDiv = el('div', '', 'actions stepper-actions', {}, [
+    el('button', '⏮ Start of Pass', 'secondary', { type: 'button', id: `${pfx}-reset-btn` }),
+    el('button', '◀ Prev Step', 'secondary', { type: 'button', id: `${pfx}-prev-btn` }),
+    el('button', 'Next Step ▶', '', { type: 'button', id: `${pfx}-next-btn` }),
+    el('button', '⏯ Auto-Step', 'secondary', { type: 'button', id: `${pfx}-play-btn` })
+  ]);
+  toolbarDiv.append(actionsDiv);
 
-    <div class="stepper-body-grid">
-      <div class="stepper-graph-card">
-        <div id="${pfx}-svg-wrap" class="stepper-svg-container scale-large">
-          <svg id="${pfx}-svg" viewBox="0 0 1120 560" role="img" aria-label="${config.title} node graph" class="nn-stepper-svg"></svg>
-        </div>
-        <div class="stepper-legend">
-          <span class="legend-item"><span class="legend-swatch swatch-pos"></span> Positive signal / weight (&gt; 0)</span>
-          <span class="legend-item"><span class="legend-swatch swatch-neg"></span> Negative / inhibitory (&lt; 0)</span>
-          <span class="legend-item"><span class="legend-swatch swatch-fwd"></span> Active Forward / Routing Wave</span>
-          <span class="legend-item"><span class="legend-swatch swatch-upd"></span> Highway / Gate / Attention Mix</span>
-          <span class="legend-item"><span class="legend-swatch swatch-bwd"></span> Backward Gradient Wave (∂L/∂h)</span>
-        </div>
-      </div>
+  const tapeDiv = el('div', '', 'stepper-tape', { id: `${pfx}-tape`, role: 'tablist', 'aria-label': `${config.title} micro-steps` });
 
-      <div class="stepper-inspector-card">
-        <h4>Neuron, Filter &amp; Routing Inspector (Click any node in graph above)</h4>
-        <div id="${pfx}-node-pills" class="stepper-node-pills" role="group" aria-label="Select node to inspect"></div>
-        <div id="${pfx}-node-detail" class="stepper-node-detail" aria-live="polite"></div>
-      </div>
-    </div>
-  `;
+  const stageBannerDiv = el('div', '', 'stepper-stage-banner', {}, [
+    el('div', '', 'stepper-stage-top', {}, [
+      el('span', 'INPUT', 'stepper-phase-badge', { id: `${pfx}-phase-badge` }),
+      el('strong', 'Stage 1', '', { id: `${pfx}-stage-title` }),
+      el('span', 'Step 1', 'stepper-pass-counter', { id: `${pfx}-pass-counter` })
+    ]),
+    el('div', '', 'stepper-stage-formula', { id: `${pfx}-stage-formula` }),
+    el('div', '', 'stepper-stage-summary', { id: `${pfx}-stage-summary` })
+  ]);
+
+  const svgNS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("id", `${pfx}-svg`);
+  svg.setAttribute("viewBox", "0 0 1120 560");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", `${config.title} node graph`);
+  svg.setAttribute("class", "nn-stepper-svg");
+
+  const svgWrapDiv = el('div', '', 'stepper-svg-container scale-large', { id: `${pfx}-svg-wrap` });
+  svgWrapDiv.append(svg);
+
+  const legendDiv = el('div', '', 'stepper-legend', {}, [
+    el('span', '', 'legend-item', {}, [el('span', '', 'legend-swatch swatch-pos'), ' Positive signal / weight (> 0)']),
+    el('span', '', 'legend-item', {}, [el('span', '', 'legend-swatch swatch-neg'), ' Negative / inhibitory (< 0)']),
+    el('span', '', 'legend-item', {}, [el('span', '', 'legend-swatch swatch-fwd'), ' Active Forward / Routing Wave']),
+    el('span', '', 'legend-item', {}, [el('span', '', 'legend-swatch swatch-upd'), ' Highway / Gate / Attention Mix']),
+    el('span', '', 'legend-item', {}, [el('span', '', 'legend-swatch swatch-bwd'), ' Backward Gradient Wave (∂L/∂h)'])
+  ]);
+
+  const graphCardDiv = el('div', '', 'stepper-graph-card', {}, [svgWrapDiv, legendDiv]);
+
+  const inspectorCardDiv = el('div', '', 'stepper-inspector-card', {}, [
+    el('h4', 'Neuron, Filter & Routing Inspector (Click any node in graph above)'),
+    el('div', '', 'stepper-node-pills', { id: `${pfx}-node-pills`, role: 'group', 'aria-label': 'Select node to inspect' }),
+    el('div', '', 'stepper-node-detail', { id: `${pfx}-node-detail`, 'aria-live': 'polite' })
+  ]);
+
+  const bodyGridDiv = el('div', '', 'stepper-body-grid', {}, [
+    graphCardDiv,
+    inspectorCardDiv
+  ]);
+
+  containerEl.append(headerDiv, toolbarDiv, tapeDiv, stageBannerDiv, bodyGridDiv);
 
   const byId = (id) => containerEl.querySelector(`#${id}`);
   const probeSelect = /** @type {HTMLSelectElement | null} */ (byId(`${pfx}-probe-select`));
