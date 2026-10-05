@@ -250,14 +250,20 @@ try{
  // finished yet" is normal and must pass; only an uncaught error is a crash. Listeners injected
  // into every new document (browser-level, so CSP does not apply to the injection) record uncaught
  // errors and rejections, which catches a module that throws while defining its global.
+ //
+ // UNCAUGHT ERRORS ARE ALWAYS FATAL. Unhandled rejections are only fatal when they fire before
+ // the harness has signalled (set its result global) — a module that rejects at top level and
+ // never signals is a crash. A rejection after the signal is a fire-and-forget side effect the
+ // harness never awaited, so it is recorded separately as a non-fatal note rather than failing the
+ // gate or silently disappearing.
  const harnesses={};
- await p.send('Page.addScriptToEvaluateOnNewDocument',{source:`window.__pageErrors=[];addEventListener('error',e=>window.__pageErrors.push(String((e&&e.message)||(e&&e.error)||e)));addEventListener('unhandledrejection',e=>window.__pageErrors.push('unhandled rejection: '+String(e&&e.reason)));`});
+ await p.send('Page.addScriptToEvaluateOnNewDocument',{source:`window.__pageErrors=[];window.__pageNotes=[];addEventListener('error',e=>window.__pageErrors.push(String((e&&e.message)||(e&&e.error)||e)));addEventListener('unhandledrejection',e=>{const text='unhandled rejection: '+String(e&&e.reason);(Boolean(window.__gate||window.__quant||window.__kev||window.__measure)?window.__pageNotes:window.__pageErrors).push(text);});`});
  for(const [page,resultGlobal] of [['gate-smoke.html','__gate'],['quant-smoke.html','__quant'],['kev-smoke.html','__kev'],['measure.html','__measure']]){
   await p.goto(base+'decision-models/'+page);
   try{await p.waitFor((name)=>Boolean(window[name]),{label:`${page} to set window.${resultGlobal}`,timeout:5000,args:[resultGlobal]});}catch{}
-  harnesses[page]=await p.evaluate((name)=>{const g=window[name];return g?{present:true,stage:g.stage??null,done:g.done??null,error:g.error?String(g.error).slice(0,200):null,pageErrors:(window.__pageErrors??[]).slice(0,5)}:{present:false,pageErrors:(window.__pageErrors??[]).slice(0,5)};},resultGlobal);
-  check(`${page} harness executes under CSP and sets window.${resultGlobal}`,harnesses[page].present);
+  harnesses[page]=await p.evaluate((name)=>{const g=window[name];const pageErrors=(window.__pageErrors??[]).slice(0,5),pageNotes=(window.__pageNotes??[]).slice(0,5);return g?{present:true,stage:g.stage??null,done:g.done??null,error:g.error?String(g.error).slice(0,200):null,pageErrors,pageNotes}:{present:false,pageErrors,pageNotes};},resultGlobal);
   check(`${page} harness raised no uncaught page error${harnesses[page].pageErrors.length?': '+harnesses[page].pageErrors.join(' | '):''}`,harnesses[page].pageErrors.length===0);
+  check(`${page} harness executes under CSP and sets window.${resultGlobal}${harnesses[page].pageErrors.length?` (page errors: ${harnesses[page].pageErrors.join(' | ')})`:''}`,harnesses[page].present);
  }
  await p.goto(base+'decision-models/');check('report explicit CORS and browser-inference limitations',await p.evaluate(()=>document.body.textContent.includes('HTTP 400')&&document.body.textContent.includes('Run it in this tab')));
  await p.emulateViewport({width:1440,height:1000,mobile:false,scale:1});await p.screenshot(out+'/desktop-report.png',{fullPage:true});
