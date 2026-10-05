@@ -10,23 +10,50 @@
 // centre, and `type()` inserts text the way a keyboard does. A test that sets `.value` from
 // script would pass through a page whose controls are not wired to anything at all.
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-const BROWSERS = [
-  process.env.VOICEBOX_CHROME,
-  "/usr/bin/chromium",
-  "/usr/bin/chromium-browser",
-  "/usr/bin/google-chrome-stable",
-  "/usr/bin/google-chrome",
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-].filter(Boolean);
+function findPuppeteerChrome(home) {
+  try {
+    const dir = path.join(home, ".cache", "puppeteer", "chrome");
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+      .map((entry) => entry.name)
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
+      .map((name) => path.join(dir, name, "chrome-linux64", "chrome"));
+  } catch {
+    return [];
+  }
+}
 
-export async function launch({ width = 1000, height = 800, profile = null, fakeMedia = false } = {}) {
-  const binary = BROWSERS.find((b) => existsSync(b));
-  if (!binary) throw new Error("no Chromium/Chrome binary found; set VOICEBOX_CHROME");
+export function getCandidateBrowsers() {
+  const home = process.env.HOME || os.homedir();
+  return [
+    process.env.FLEET_CHROME,
+    // VOICEBOX_CHROME is a documented legacy fallback (historical leftover from the voicebox project).
+    process.env.VOICEBOX_CHROME,
+    path.join(home, ".cache", "chrome-cft", "chrome-linux64", "chrome"),
+    ...findPuppeteerChrome(home),
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/google-chrome",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  ].filter(Boolean);
+}
+
+const BROWSERS = getCandidateBrowsers();
+
+export function resolveBinary(candidates = null) {
+  return (candidates ?? getCandidateBrowsers()).find((b) => existsSync(b)) ?? null;
+}
+
+export async function launch({ width = 1000, height = 800, profile = null, fakeMedia = false, candidates = null } = {}) {
+  const binary = resolveBinary(candidates);
+  if (!binary) throw new Error("no Chromium/Chrome binary found; set FLEET_CHROME (or VOICEBOX_CHROME)");
 
   // A caller may hand in a prepared profile — the only way to give the page a REAL platform
   // answer (a blocked permission) rather than a constructed one.
