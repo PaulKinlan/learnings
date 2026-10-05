@@ -12,8 +12,9 @@
 // GatherBlockQuantized(1)"). The jsep loader + the ort bundle's wrapper is the one working
 // CPU path for this model, so that is what this engine uses — no transformers.js involved.
 //
-// The tokenizer is @huggingface/tokenizers (pure JS, no ORT inside). The q4 weights
-// download once from huggingface.co — the only network request.
+// The tokenizer is @huggingface/tokenizers (pure JS, no ORT inside). The artifacts download
+// once from huggingface.co — the only network requests — each from an immutable revision and
+// each verified against the digests in kev-manifest.js before it is handed to ORT.
 
 import * as ort from "../vendor/ort.bundle.min.mjs";
 import { Tokenizer } from "../vendor/tokenizers.min.mjs";
@@ -23,8 +24,16 @@ import {
   packDecision,
   readAnswers,
 } from "./kev-pack.js";
+import { KEV_REVISION, KEV_SHA256 } from "./kev-manifest.js";
 
 const REPO = "onnx-community/kev-0.6b-ONNX";
+// The pin: a commit sha, not a branch, so the bytes behind every URL are immutable.
+const HUB_BASE = `https://huggingface.co/${REPO}/resolve/${KEV_REVISION}/`;
+
+/** The pinned URL for one artifact, by its path inside the repo. */
+export function kevArtifactUrl(file) {
+  return `${HUB_BASE}${file}`;
+}
 
 const VENDOR = new URL("../vendor/", import.meta.url).href;
 ort.env.wasm.wasmPaths = {
@@ -36,33 +45,78 @@ ort.env.logLevel = "warning";
 const SPECIAL_TOKEN_FILES = ["special_tokens_map.json", "added_tokens.json"];
 
 /**
+ * Fetch one artifact into bytes, reporting progress, and refuse bytes whose SHA-256 does not
+ * match the pinned digest. There is deliberately no path that skips the check: the trust
+ * decision never depends on the caller, so a substituted or corrupted artifact fails here
+ * rather than executing. The digest is required — an absent one throws instead of passing.
+ */
+export async function fetchVerified(url, { onProgress = null, sha256, label = url } = {}) {
+  if (!sha256) throw new Error(`no pinned sha256 for ${label}`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`download failed for ${label}: HTTP ${res.status}`);
+  const total = Number(res.headers.get("content-length")) || 0;
+  const reader = res.body.getReader();
+  const chunks = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    onProgress?.(received, total);
+  }
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  if (hex !== sha256.toLowerCase()) {
+    throw new Error(
+      `integrity check failed for ${label}: sha256 ${hex.slice(0, 16)}… does not match the pinned ${sha256.slice(0, 16)}…`,
+    );
+  }
+  return bytes;
+}
+
+/**
  * Load tokenizer and weights. Nothing downloads until this is called — never on page load.
  * `onProgress(stage, received, total)` reports the weight download. `urls` overrides asset
- * URLs (tests serve local copies instead of re-downloading).
+ * URLs (tests serve local copies instead of re-downloading); it does not change the check, so
+ * a local copy is still verified against the pinned digest of the artifact it stands in for.
  */
 export async function loadKev({ onProgress = null, urls = {} } = {}) {
-  const urlFor = (file) => urls[file] ?? `https://huggingface.co/${REPO}/resolve/main/${file}`;
+  const urlFor = (file) => urls[file] ?? kevArtifactUrl(file);
   const notify = (stage, loaded = 0, total = 0, file = stage) => {
     onProgress?.({ stage, file, loaded, total, received: loaded }, loaded, total, file);
   };
 
   notify("tokenizer", 0, 0, "tokenizer.json");
-  const [tokenizerJson, config] = await Promise.all([
-    fetch(urlFor("tokenizer.json")).then((r) => r.text()),
-    fetch(urlFor("config.json")).then((r) => r.json()),
+  const [tokenizerBytes, configBytes] = await Promise.all([
+    fetchVerified(urlFor("tokenizer.json"), { sha256: KEV_SHA256["tokenizer.json"], label: `${REPO}/tokenizer.json` }),
+    fetchVerified(urlFor("config.json"), { sha256: KEV_SHA256["config.json"], label: `${REPO}/config.json` }),
   ]);
-  const tokenizer = new Tokenizer(JSON.parse(tokenizerJson), {});
+  const tokenizer = new Tokenizer(JSON.parse(new TextDecoder().decode(tokenizerBytes)), {});
+  const config = JSON.parse(new TextDecoder().decode(configBytes));
   const ids = readDelimiterIds(config?.kev);
 
   notify("weights", 0, 0, "onnx/model_q4.onnx_data");
-  const onnxUrl = urls["onnx/model_q4.onnx"] ?? `https://huggingface.co/${REPO}/resolve/main/onnx/model_q4.onnx`;
-  const onnxDataUrl = urls["onnx/model_q4.onnx_data"] ?? `https://huggingface.co/${REPO}/resolve/main/onnx/model_q4.onnx_data`;
   const t0 = performance.now();
-  const session = await ort.InferenceSession.create(onnxUrl, {
+  const [onnxBytes, onnxDataBytes] = await Promise.all([
+    fetchVerified(urlFor("onnx/model_q4.onnx"), { sha256: KEV_SHA256["onnx/model_q4.onnx"], label: `${REPO}/onnx/model_q4.onnx` }),
+    fetchVerified(urlFor("onnx/model_q4.onnx_data"), {
+      sha256: KEV_SHA256["onnx/model_q4.onnx_data"],
+      label: `${REPO}/onnx/model_q4.onnx_data`,
+      onProgress: (received, total) => notify("weights", received, total, "onnx/model_q4.onnx_data"),
+    }),
+  ]);
+  const session = await ort.InferenceSession.create(onnxBytes, {
     executionProviders: ["wasm"],
     // The q4 weights live in an external-data file; mount it by the exact name the graph
     // references, or deserialization dies with "Module.MountedFiles is not available".
-    externalData: [{ path: "model_q4.onnx_data", data: onnxDataUrl }],
+    externalData: [{ path: "model_q4.onnx_data", data: onnxDataBytes }],
   }).catch((error) => {
     throw new Error(`the q4 weights did not create a session (${error.message})`);
   });
