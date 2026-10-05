@@ -587,3 +587,62 @@ test('Simulated demo mode: carries explicit simulation disclosure in metadata an
   assert.ok(badge.textContent.includes('Connect a local vision server'));
 });
 
+test('Local vision endpoint uses the core.js loopback contract (learnings-8u9)', async (t) => {
+  const dummyImage = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const spec = PRESETS.ui.spec;
+  const run = endpoint => decideImage({ spec, imagePayload: dummyImage, engine: 'local', endpoint, model: 'jpt-9b' });
+
+  const original = globalThis.fetch;
+  let calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return { ok: true, json: async () => ({ model: 'stub-vision-server', answers: {} }) };
+  };
+  t.after(() => { globalThis.fetch = original; });
+
+  // Refused, each naming the constraint that failed. Under the old check only u.hostname was tested,
+  // so every one of these was POSTed the base64 image and the questions.
+  const refused = [
+    ['http://127.0.0.1:8009/admin', /path must be exactly \/v1\/systemone, got \/admin/],
+    ['http://127.0.0.1:8009/v1/systemone/../admin', /path must be exactly \/v1\/systemone, got \/v1\/admin/],
+    ['http://127.0.0.1:8009/v1/systemone?to=https://evil.test', /must not carry a query string/],
+    ['http://127.0.0.1:8009/v1/systemone#frag', /must not carry a fragment/],
+    ['http://user:secret@127.0.0.1:8009/v1/systemone', /must not embed credentials/],
+    ['http://localhost.evil.test/v1/systemone', /host must be exactly localhost, 127\.0\.0\.1 or \[::1\], got localhost\.evil\.test/],
+    ['http://127.0.0.1.evil.test/v1/systemone', /host must be exactly localhost, 127\.0\.0\.1 or \[::1\], got 127\.0\.0\.1\.evil\.test/],
+    ['https://evil.test/v1/systemone', /host must be exactly localhost/],
+    ['javascript:alert(1)', /protocol must be http or https/],
+    ['not a url at all', /Enter a loopback URL/]
+  ];
+  for (const [endpoint, reason] of refused) {
+    await t.test(`refuses ${endpoint} and says which constraint failed`, async () => {
+      calls = [];
+      await assert.rejects(run(endpoint), reason);
+      assert.deepEqual(calls, [], 'a refused endpoint must not be sent the image');
+    });
+  }
+
+  // Accepted-set, pinned as a regression test instead of left implicit.
+  // Any loopback port is accepted deliberately: the endpoint is reader-supplied so a reader can point the page
+  // at their own local vision server (Ollama 11434, llama.cpp 8080, LM Studio 1234, vLLM 8000).
+  // https on loopback is accepted too - a hostile local TLS server fails on the certificate before any image is posted.
+  const accepted = [
+    ['http://127.0.0.1:8009/v1/systemone', 'http://127.0.0.1:8009/v1/systemone'],
+    ['http://localhost:11434/v1/systemone', 'http://localhost:11434/v1/systemone'],
+    ['http://127.0.0.1:8080/v1/systemone', 'http://127.0.0.1:8080/v1/systemone'],
+    ['http://[::1]:1234/v1/systemone', 'http://[::1]:1234/v1/systemone'],
+    ['https://127.0.0.1:8009/v1/systemone', 'https://127.0.0.1:8009/v1/systemone']
+  ];
+  for (const [endpoint, href] of accepted) {
+    await t.test(`accepts ${endpoint} and POSTs to ${href}`, async () => {
+      calls = [];
+      const res = await run(endpoint);
+      assert.equal(calls.length, 1, 'the documented endpoint shape must still reach the local server');
+      assert.equal(calls[0].url, href, 'must POST to the normalised href');
+      assert.equal(calls[0].options.method, 'POST');
+      assert.equal(JSON.parse(calls[0].options.body).image, dummyImage, 'the base64 image is the payload at risk');
+      assert.deepEqual(Object.keys(JSON.parse(calls[0].options.body).questions), Object.keys(spec.questions));
+      assert.equal(res.source, 'Local Vision Decision Server');
+    });
+  }
+});

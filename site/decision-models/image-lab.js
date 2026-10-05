@@ -5,7 +5,7 @@
  * and JevImageBench v0.1.5 explorer table.
  */
 
-import { gate } from './core.js';
+import { gate, loopbackEndpoint } from './core.js';
 import {
   BENCHMARK_META,
   JEV_IMAGE_BENCH_DATA,
@@ -757,15 +757,9 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
 
   // Engine 2: Local Vision Decision Server (loopback)
   if (engine === 'local') {
-    let u;
-    try {
-      u = new URL(endpoint);
-    } catch {
-      throw new Error('Enter a valid loopback URL, e.g. http://127.0.0.1:8009/v1/systemone');
-    }
-    if (!['localhost', '127.0.0.1', '[::1]'].includes(u.hostname)) {
-      throw new Error('Local server must connect to loopback (localhost or 127.0.0.1). Remote hosts rejected.');
-    }
+    // Same contract as the lab's Kev endpoint: loopback host, http or https, route pinned to
+    // /v1/systemone, no credentials, query or fragment. Throws naming the constraint that failed.
+    const url = loopbackEndpoint(endpoint);
 
     const payload = {
       image: imagePayload,
@@ -773,7 +767,7 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
       model: model || 'jpt-9b'
     };
 
-    const res = await fetch(u.href, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

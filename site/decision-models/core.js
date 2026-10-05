@@ -46,9 +46,17 @@ export function gate(answer, threshold) {
   if(!Number.isFinite(threshold)||threshold<0||threshold>1) fail('Threshold must be between zero and one.');
   return answer.type==='noul' ? (answer.noul>=threshold?'positive':answer.noul<=1-threshold?'negative':'review') : (answer.confidence>=threshold?'accept':'review');
 }
+// Shared loopback contract for reader-supplied local endpoints (Kev in the lab, the local vision server in the image lab).
+// One message per constraint, so a rejected endpoint names the rule it broke instead of failing silently.
+// Any loopback port is accepted deliberately: the field exists so a reader can point at their own local server.
 export function loopbackEndpoint(value) {
   let u; try { u=new URL(value); } catch { fail('Enter a loopback URL, for example http://127.0.0.1:8009/v1/systemone.'); }
-  if(!['http:','https:'].includes(u.protocol)||!['localhost','127.0.0.1','[::1]'].includes(u.hostname)||u.username||u.password||u.search||u.hash||u.pathname!=='/v1/systemone') fail('Kev endpoint must be loopback, with path /v1/systemone and no credentials or query.');
+  if(!['http:','https:'].includes(u.protocol)) fail(`Endpoint protocol must be http or https, got ${u.protocol}`);
+  if(!['localhost','127.0.0.1','[::1]'].includes(u.hostname)) fail(`Endpoint host must be exactly localhost, 127.0.0.1 or [::1], got ${u.hostname}. Any port on those hosts is allowed.`);
+  if(u.username||u.password) fail('Endpoint must not embed credentials.');
+  if(u.search) fail('Endpoint must not carry a query string.');
+  if(u.hash) fail('Endpoint must not carry a fragment.');
+  if(u.pathname!=='/v1/systemone') fail(`Endpoint path must be exactly /v1/systemone, got ${u.pathname}.`);
   return u.href;
 }
 async function post(url, headers, body, signal) {
