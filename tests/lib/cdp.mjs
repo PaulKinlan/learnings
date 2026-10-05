@@ -46,18 +46,24 @@ export function getCandidateBrowsers() {
 }
 
 // A browser gate on a shared VM must clean up: a leaked profile blocks the next lane.
-export function assertNoBrowserOrphans(profile) {
-  const processes = execFileSync("ps", ["-eo", "pid=,stat=,args="], { encoding: "utf8" });
-  const leftovers = processes.split("\n").filter((line) => {
-    const match = line.trim().match(/^(\d+)\s+(\S+)\s+(.*)$/);
-    if (!match || match[2].startsWith("Z")) return false;
-    const command = match[3];
-    return /(?:^|[\s/])(?:chrome|chromium|chrome_crashpad_handler)(?:\s|$)/.test(command) &&
-      command.split(profile).slice(1).some((rest) => rest === "" || /^[\s/'"]/.test(rest)) &&
-      !command.startsWith("ps ");
-  });
-  if (leftovers.length) {
-    throw new Error(`browser orphan for profile ${profile}:\n${leftovers.map((line) => `pid/command ${line.trim()}`).join("\n")}`);
+export async function assertNoBrowserOrphans(profile) {
+  const deadline = Date.now() + 500;
+  while (true) {
+    const processes = execFileSync("ps", ["-eo", "pid=,stat=,args="], { encoding: "utf8", timeout: 1500 });
+    const leftovers = processes.split("\n").filter((line) => {
+      const match = line.trim().match(/^(\d+)\s+(\S+)\s+(.*)$/);
+      if (!match || match[2].startsWith("Z")) return false;
+      const command = match[3];
+      return /(?:^|[\s/])(?:chrome|chromium|chrome_crashpad_handler)(?:\s|$)/.test(command) &&
+        command.split(profile).slice(1).some((rest) => rest === "" || /^[\s/'"]/.test(rest)) &&
+        !command.startsWith("ps ");
+    });
+    if (!leftovers.length) return;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new Error(`browser orphan for profile ${profile}:\n${leftovers.map((line) => `pid/command ${line.trim()}`).join("\n")}`);
+    }
+    await sleep(Math.min(50, remaining));
   }
 }
 
@@ -77,7 +83,7 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
   // mkdtemp creates a fresh directory atomically. A supplied prepared profile may already
   // exist, but must not be occupied by another browser: fail before Chrome can queue on it.
   if (profile) {
-    try { assertNoBrowserOrphans(profile); }
+    try { await assertNoBrowserOrphans(profile); }
     catch (error) { throw new Error(`cannot launch with occupied profile ${profile}: ${error.message}`); }
   }
   profile = profile ?? mkdtempSync(path.join(os.tmpdir(), "voicebox-cdp-"));
@@ -127,7 +133,7 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
     if (ownProfile) rmSync(profile, { recursive: true, force: true });
     process.removeListener("exit", onExit);
     for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) process.removeListener(signal, onSignal);
-    assertNoBrowserOrphans(profile);
+    await assertNoBrowserOrphans(profile);
   };
 
   try {

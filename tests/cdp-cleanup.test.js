@@ -36,7 +36,7 @@ test('cdp close removes its browser process group and temporary profile', {skip:
   } finally {
     await page.close();
   }
-  assertNoBrowserOrphans(profile);
+  await assertNoBrowserOrphans(profile);
   assert.equal(existsSync(profile), false);
   console.log(`PASS  normal close: no browser processes or profile ${profile}`);
 });
@@ -64,7 +64,7 @@ test('SIGTERM interrupts a runner and removes its browser and profile', {skip: !
     assert.ok(existsSync(profile));
     runner.kill('SIGTERM');
     await waitForExit(runner);
-    assertNoBrowserOrphans(profile);
+    await assertNoBrowserOrphans(profile);
     assert.equal(existsSync(profile), false);
     console.log(`PASS  SIGTERM: no browser processes or profile ${profile}`);
   } finally {
@@ -88,7 +88,7 @@ test('orphan assertion names a deliberately unclosed browser', {skip: !binary}, 
       browser.once('error', reject);
       browser.once('exit', (code) => { clearTimeout(timer); reject(new Error(`browser exited before assertion: ${code}`)); });
     });
-    assert.throws(() => assertNoBrowserOrphans(profile), (error) =>
+    await assert.rejects(assertNoBrowserOrphans(profile), (error) =>
       error.message.includes(`profile ${profile}`) && error.message.includes(String(browser.pid)) && error.message.includes(`--user-data-dir=${profile}`));
     console.log(`PASS  orphan assertion failed as intended: pid ${browser.pid}, profile ${profile}`);
     await assert.rejects(launch({profile}), (error) =>
@@ -100,6 +100,6 @@ test('orphan assertion names a deliberately unclosed browser', {skip: !binary}, 
     await waitForExit(browser);
     rmSync(profile, {recursive: true, force: true});
   }
-  assertNoBrowserOrphans(profile);
+  await assertNoBrowserOrphans(profile);
   assert.equal(existsSync(profile), false);
 });
