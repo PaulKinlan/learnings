@@ -24,7 +24,8 @@ const select = (key, label, options) => h('label', label + ' ', '', {}, [
 
 const slider = (key, label, min, max, value, step = 0.1) => h('label', label + ' ', '', {}, [
   h('output', String(value), '', {'data-value': key}),
-  h('input', '', '', {'data-control': key, type: 'range', min, max, value, step})
+  // Set step before value: range inputs sanitize fractional defaults against the current step.
+  h('input', '', '', {'data-control': key, type: 'range', min, max, step, value})
 ]);
 
 const button = (key, text) => h('button', text, '', {type: 'button', 'data-action': key});

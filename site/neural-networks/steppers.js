@@ -88,14 +88,14 @@ export function mountSectionStepper(containerEl, config) {
     el('p', config.subtitle, 'small')
   ]);
 
-  const sizeSelect = el('select', '', '', { id: `${pfx}-graph-size` }, [
+  const graphSizeSelect = el('select', '', '', { id: `${pfx}-graph-size` }, [
     el('option', 'Large Stage (520px Height)', '', { value: 'large', selected: 'selected' }),
     el('option', 'Extra-Large Theatre (680px Height)', '', { value: 'theatre' }),
     el('option', 'Compact (380px Height)', '', { value: 'compact' })
   ]);
   const sizeDiv = el('div', '', 'stepper-size-control', {}, [
     el('label', '', 'small', { for: `${pfx}-graph-size` }, [el('strong', 'Graph Canvas Scale')]),
-    sizeSelect
+    graphSizeSelect
   ]);
   const headerDiv = el('div', '', 'stepper-header', {}, [titleDiv, sizeDiv]);
 
