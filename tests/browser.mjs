@@ -233,11 +233,31 @@ try{
  // external same-origin module; when it was inline, the CSP refused it and every page failed
  // SILENTLY — no result global, no exception the suite would ever see. Load each page over http
  // and require its result global to exist as the observable proof that the harness actually ran.
+ //
+ // POLL, DO NOT SAMPLE: the result global is the module's first observable side effect, and each
+ // page goes on fetching real model assets long after it appears. Sampling once ~150ms after load
+ // only passed because all four modules happened to assign their global synchronously at top
+ // level; it read a module that assigned it after any await as a harness that never ran.
+ //
+ // INVARIANT (the bound this poll replaces): each decision-models smoke module must assign
+ // window.__<name> synchronously at top level, before any await, until that poll is in place.
+ // The synchronous assignment is what makes the global proof the harness STARTED under CSP rather
+ // than a timing race — a module that awaited first could not be told apart, at the old single
+ // sample, from one the CSP had refused.
+ //
+ // CRASH IS NOT SUCCESS: `present` alone cannot tell a page that wired itself up and then threw
+ // from one that is merely still loading. These harnesses fetch real model assets, so "not
+ // finished yet" is normal and must pass; only an uncaught error is a crash. Listeners injected
+ // into every new document (browser-level, so CSP does not apply to the injection) record uncaught
+ // errors and rejections, which catches a module that throws while defining its global.
  const harnesses={};
+ await p.send('Page.addScriptToEvaluateOnNewDocument',{source:`window.__pageErrors=[];addEventListener('error',e=>window.__pageErrors.push(String((e&&e.message)||(e&&e.error)||e)));addEventListener('unhandledrejection',e=>window.__pageErrors.push('unhandled rejection: '+String(e&&e.reason)));`});
  for(const [page,resultGlobal] of [['gate-smoke.html','__gate'],['quant-smoke.html','__quant'],['kev-smoke.html','__kev'],['measure.html','__measure']]){
   await p.goto(base+'decision-models/'+page);
-  harnesses[page]=await p.evaluate((name)=>{const g=window[name];return g?{present:true,stage:g.stage??null,done:g.done??null,error:g.error?String(g.error).slice(0,200):null}:{present:false};},resultGlobal);
+  try{await p.waitFor((name)=>Boolean(window[name]),{label:`${page} to set window.${resultGlobal}`,timeout:5000,args:[resultGlobal]});}catch{}
+  harnesses[page]=await p.evaluate((name)=>{const g=window[name];return g?{present:true,stage:g.stage??null,done:g.done??null,error:g.error?String(g.error).slice(0,200):null,pageErrors:(window.__pageErrors??[]).slice(0,5)}:{present:false,pageErrors:(window.__pageErrors??[]).slice(0,5)};},resultGlobal);
   check(`${page} harness executes under CSP and sets window.${resultGlobal}`,harnesses[page].present);
+  check(`${page} harness raised no uncaught page error${harnesses[page].pageErrors.length?': '+harnesses[page].pageErrors.join(' | '):''}`,harnesses[page].pageErrors.length===0);
  }
  await p.goto(base+'decision-models/');check('report explicit CORS and browser-inference limitations',await p.evaluate(()=>document.body.textContent.includes('HTTP 400')&&document.body.textContent.includes('Run it in this tab')));
  await p.emulateViewport({width:1440,height:1000,mobile:false,scale:1});await p.screenshot(out+'/desktop-report.png',{fullPage:true});
