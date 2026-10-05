@@ -228,7 +228,18 @@ try{
  await p.emulateViewport({width:1440,height:1000,mobile:false,scale:1});
  await p.goto(base+'opt-chronicles/');await p.waitFor(()=>document.querySelectorAll('.event-row').length>10);
  check('opt-chronicles timeline and simulator render under strict CSP',await p.evaluate(()=>document.querySelector('#res-days').textContent.includes('days')));
+ // These four harness pages bootstrap through a module script while carrying a strict CSP
+ // (`script-src 'self'`). 'self' does not authorise inline scripts, so the bootstrap must be an
+ // external same-origin module; when it was inline, the CSP refused it and every page failed
+ // SILENTLY — no result global, no exception the suite would ever see. Load each page over http
+ // and require its result global to exist as the observable proof that the harness actually ran.
+ const harnesses={};
+ for(const [page,resultGlobal] of [['gate-smoke.html','__gate'],['quant-smoke.html','__quant'],['kev-smoke.html','__kev'],['measure.html','__measure']]){
+  await p.goto(base+'decision-models/'+page);
+  harnesses[page]=await p.evaluate((name)=>{const g=window[name];return g?{present:true,stage:g.stage??null,done:g.done??null,error:g.error?String(g.error).slice(0,200):null}:{present:false};},resultGlobal);
+  check(`${page} harness executes under CSP and sets window.${resultGlobal}`,harnesses[page].present);
+ }
  await p.goto(base+'decision-models/');check('report explicit CORS and browser-inference limitations',await p.evaluate(()=>document.body.textContent.includes('HTTP 400')&&document.body.textContent.includes('Run it in this tab')));
  await p.emulateViewport({width:1440,height:1000,mobile:false,scale:1});await p.screenshot(out+'/desktop-report.png',{fullPage:true});
- const receipt={at:new Date().toISOString(),commit,base,checks,resources,qualification:'UI behavior and synthetic transport fixtures only. No paid model inference, local Kev weights, or training run.'};await writeFile(out+'/receipt.json',JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt,null,2));
+ const receipt={at:new Date().toISOString(),commit,base,checks,resources,harnesses,qualification:'UI behavior and synthetic transport fixtures only. No paid model inference, local Kev weights, or training run.'};await writeFile(out+'/receipt.json',JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt,null,2));
 }finally{await p.close();if(local)await new Promise(r=>local.server.close(r));}
