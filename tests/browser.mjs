@@ -1,3 +1,5 @@
+// A browser gate on a shared VM must clean up: an orphaned profile blocks the next lane.
+// The CDP launcher owns signal/exit cleanup as well as the normal finally below.
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {mkdir,writeFile} from 'node:fs/promises';
