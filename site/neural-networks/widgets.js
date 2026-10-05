@@ -8,24 +8,47 @@ import {
 } from './math.js';
 
 const fmt = n => Number.isFinite(n) ? (Math.abs(n) < 0.0001 && n !== 0 ? n.toExponential(3) : Number(n.toFixed(4)).toString()) : String(n);
-const select = (key, label, options) => `<label>${label}<select data-control="${key}">${options.map(([v, text]) => `<option value="${v}">${text}</option>`).join('')}</select></label>`;
-const slider = (key, label, min, max, value, step = 0.1) => `<label>${label} <output data-value="${key}">${value}</output><input data-control="${key}" type="range" min="${min}" max="${max}" value="${value}" step="${step}"></label>`;
-const button = (key, text) => `<button type="button" data-action="${key}">${text}</button>`;
-const canvas = label => `<canvas width="560" height="340" role="img" aria-label="${label}">${label}. Numerical results are below.</canvas>`;
-function setup(el, html) {
-  el.classList.add('widget', 'playground');
-  el.innerHTML = html;
-  const get = key => el.querySelector(`[data-control="${key}"]`);
+
+function h(tag, text, cls = "", attrs = {}, children = []) {
+  const n = document.createElement(tag);
+  if (text) n.textContent = text;
+  if (cls) n.className = cls;
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (children.length) n.append(...children);
+  return n;
+}
+
+const select = (key, label, options) => h('label', label + ' ', '', {}, [
+  h('select', '', '', {'data-control': key}, options.map(([v, text]) => h('option', text, '', {value: v})))
+]);
+
+const slider = (key, label, min, max, value, step = 0.1) => h('label', label + ' ', '', {}, [
+  h('output', String(value), '', {'data-value': key}),
+  // Set step before value: range inputs sanitize fractional defaults against the current step.
+  h('input', '', '', {'data-control': key, type: 'range', min, max, step, value})
+]);
+
+const button = (key, text) => h('button', text, '', {type: 'button', 'data-action': key});
+
+const canvas = label => h('canvas', label + '. Numerical results are below.', '', {width: 560, height: 340, role: 'img', 'aria-label': label});
+
+function setup(e, elements) {
+  e.classList.add('widget', 'playground');
+  e.innerHTML = "";
+  e.append(...elements);
+  const get = key => e.querySelector(`[data-control="${key}"]`);
   const val = key => Number(get(key).value);
-  const action = (key, fn) => el.querySelector(`[data-action="${key}"]`).addEventListener('click', fn);
-  const status = text => { el.querySelector('[data-status]').textContent = text; };
-  el.addEventListener('input', e => {
-    const out = el.querySelector(`[data-value="${e.target.dataset.control}"]`);
-    if (out) out.textContent = e.target.value;
+  const action = (key, fn) => e.querySelector(`[data-action="${key}"]`).addEventListener('click', fn);
+  const status = text => { e.querySelector('[data-status]').textContent = text; };
+  e.addEventListener('input', ev => {
+    const out = e.querySelector(`[data-value="${ev.target.dataset.control}"]`);
+    if (out) out.textContent = ev.target.value;
   });
   return { get, val, action, status };
 }
-const readout = '<p class="readout" data-status role="status"></p>';
+
+const readout = () => h('p', '', 'readout', {'data-status': '', role: 'status'});
+
 function plot(c, domain = [-2, 2, -2, 2]) {
   const ctx = c.getContext('2d');
   const [xmin, xmax, ymin, ymax] = domain;
@@ -45,7 +68,23 @@ function line(ctx, points, color) {
   points.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke();
 }
 function perceptron(el) {
-  const ui = setup(el, `<h3>Move a decision boundary</h3><p>Try AND, then XOR. Blue circles are class 1; red squares are class 0. White rings mark mistakes. The line is w₁x₁ + w₂x₂ + b = 0.</p><div class="controls">${select('preset', 'Logic task', Object.keys(PERCEPTRON_DATASETS).map(k => [k, k.toUpperCase()]))}${slider('w1', 'Weight w₁', -4, 4, 1)}${slider('w2', 'Weight w₂', -4, 4, 1)}${slider('b', 'Bias b', -4, 4, -1.5)}</div>${canvas('Perceptron plane: horizontal x₁, vertical x₂')}<div class="actions">${button('step', 'Train Step')}${button('reset', 'Reset weights')}</div>${readout}<p data-proof></p>`);
+  const ui = setup(el, [
+    h('h3', 'Move a decision boundary'),
+    h('p', 'Try AND, then XOR. Blue circles are class 1; red squares are class 0. White rings mark mistakes. The line is w₁x₁ + w₂x₂ + b = 0.'),
+    h('div', '', 'controls', {}, [
+      select('preset', 'Logic task', Object.keys(PERCEPTRON_DATASETS).map(k => [k, k.toUpperCase()])),
+      slider('w1', 'Weight w₁', -4, 4, 1),
+      slider('w2', 'Weight w₂', -4, 4, 1),
+      slider('b', 'Bias b', -4, 4, -1.5)
+    ]),
+    canvas('Perceptron plane: horizontal x₁, vertical x₂'),
+    h('div', '', 'actions', {}, [
+      button('step', 'Train Step'),
+      button('reset', 'Reset weights')
+    ]),
+    readout(),
+    h('p', '', '', {'data-proof': ''})
+  ]);
   let step = 0;
   function draw(message = '') {
     const data = PERCEPTRON_DATASETS[ui.get('preset').value];
@@ -83,7 +122,24 @@ function perceptron(el) {
   el.addEventListener('input', () => draw()); draw();
 }
 function landscape(el) {
-  const ui = setup(el, `<h3>Drop a ball on the loss</h3><p>Click the map or use the start sliders. Darker contours are lower. Run traces 160 updates; a large learning rate can diverge.</p><div class="controls">${select('surface', 'Landscape', [['bowl', 'Convex bowl'], ['doubleWell', 'Double well']])}${select('optimizer', 'Optimizer', [['sgd', 'SGD'], ['momentum', 'Momentum'], ['adam', 'Adam']])}${slider('lr', 'Learning rate η', 0.001, 0.5, 0.05, 0.001)}${slider('x', 'Start x', -2, 2, 1.8)}${slider('y', 'Start y', -2, 2, 1.5)}</div>${canvas('Loss contour map; start coordinates adjustable with sliders')}<div class="actions">${button('run', 'Run')}${button('stop', 'Stop')}${button('reset', 'Reset trajectory')}</div>${readout}`);
+  const ui = setup(el, [
+    h('h3', 'Drop a ball on the loss'),
+    h('p', 'Click the map or use the start sliders. Darker contours are lower. Run traces 160 updates; a large learning rate can diverge.'),
+    h('div', '', 'controls', {}, [
+      select('surface', 'Landscape', [['bowl', 'Convex bowl'], ['doubleWell', 'Double well']]),
+      select('optimizer', 'Optimizer', [['sgd', 'SGD'], ['momentum', 'Momentum'], ['adam', 'Adam']]),
+      slider('lr', 'Learning rate η', 0.001, 0.5, 0.05, 0.001),
+      slider('x', 'Start x', -2, 2, 1.8),
+      slider('y', 'Start y', -2, 2, 1.5)
+    ]),
+    canvas('Loss contour map; start coordinates adjustable with sliders'),
+    h('div', '', 'actions', {}, [
+      button('run', 'Run'),
+      button('stop', 'Stop'),
+      button('reset', 'Reset trajectory')
+    ]),
+    readout()
+  ]);
   const c = el.querySelector('canvas'); let frame = 0, path = [], shown = 0, diverged = false;
   // The contour pixels are constant while only the trajectory changes.
   const maps = new Map();
@@ -124,7 +180,26 @@ function landscape(el) {
   draw();
 }
 function backprop(el) {
-  const ui = setup(el, `<h3>Trace a 2 → 2 → 1 network</h3><p>Two tanh hidden neurons feed a sigmoid output; L = (ŷ − target)². Step Forward reveals one operation. After the full pass, Step Backward accumulates one node’s chain-rule contributions. Editing any input invalidates both passes.</p><div class="controls">${slider('x1', 'Input x₁', -3, 3, 1)}${slider('x2', 'Input x₂', -3, 3, -2)}${slider('target', 'Target', 0, 1, 1)}</div><details><summary>Edit the nine weights and biases</summary><div class="controls">${Object.entries(TINY_NET_DEFAULTS.params).map(([k, v]) => slider(k, k, -2, 2, v)).join('')}</div></details><div class="actions">${button('forward', 'Step Forward')}${button('backward', 'Step Backward')}${button('reset', 'Reset passes')}</div>${readout}<ol class="computation-graph" data-graph></ol>`);
+  const ui = setup(el, [
+    h('h3', 'Trace a 2 → 2 → 1 network'),
+    h('p', 'Two tanh hidden neurons feed a sigmoid output; L = (ŷ − target)². Step Forward reveals one operation. After the full pass, Step Backward accumulates one node’s chain-rule contributions. Editing any input invalidates both passes.'),
+    h('div', '', 'controls', {}, [
+      slider('x1', 'Input x₁', -3, 3, 1),
+      slider('x2', 'Input x₂', -3, 3, -2),
+      slider('target', 'Target', 0, 1, 1)
+    ]),
+    h('details', '', '', {}, [
+      h('summary', 'Edit the nine weights and biases'),
+      h('div', '', 'controls', {}, Object.entries(TINY_NET_DEFAULTS.params).map(([k, v]) => slider(k, k, -2, 2, v)))
+    ]),
+    h('div', '', 'actions', {}, [
+      button('forward', 'Step Forward'),
+      button('backward', 'Step Backward'),
+      button('reset', 'Reset passes')
+    ]),
+    readout(),
+    h('ol', '', 'computation-graph', {'data-graph': ''})
+  ]);
   let net, order, forward = 0, backward = 0;
   const graph = el.querySelector('[data-graph]');
   let messages = new Map();
@@ -160,7 +235,41 @@ function backprop(el) {
   ui.action('reset', reset); el.addEventListener('input', reset); reset();
 }
 function convolution(el) {
-  const ui = setup(el, `<h3>Slide a 3 × 3 kernel</h3><p>Toggle input pixels, choose a filter, then step across the padded image. Outlined cells are the receptive field. Blank output cells have not been visited. This is cross-correlation, as used by CNN libraries.</p><div class="controls">${select('kernel', 'Filter', Object.entries(KERNEL_PRESETS).map(([k, v]) => [k, v.name]))}${select('stride', 'Stride', [[1, '1'], [2, '2']])}${select('padding', 'Zero padding', [[0, '0'], [1, '1']])}</div><div class="kernel-layout"><div><h4>8 × 8 input (click to edit)</h4><div class="pixel-grid" data-image></div></div><div><h4>Kernel</h4><pre data-kernel></pre><h4>Output feature map</h4><div class="table-scroll" data-output></div></div></div><div class="actions">${button('step', 'Slide one step')}${button('run', 'Run convolution')}${button('reset', 'Reset scan')}</div>${readout}<details><summary>Max pooling: 2 × 2, stride 2</summary><p>Maximum of each non-overlapping output block, computed from the complete feature map (including unvisited cells).</p><div class="table-scroll" data-pool></div></details><h4>Runnable pure-JavaScript conv2d</h4><p>This is the actual implementation used above. Copy the three functions into a console, then run conv2d([[1,2,3],[4,5,6],[7,8,9]], [[0,0,0],[0,1,0],[0,0,0]]).output. Run convolution executes it on the edited image.</p><pre data-code></pre>`);
+  const ui = setup(el, [
+    h('h3', 'Slide a 3 × 3 kernel'),
+    h('p', 'Toggle input pixels, choose a filter, then step across the padded image. Outlined cells are the receptive field. Blank output cells have not been visited. This is cross-correlation, as used by CNN libraries.'),
+    h('div', '', 'controls', {}, [
+      select('kernel', 'Filter', Object.entries(KERNEL_PRESETS).map(([k, v]) => [k, v.name])),
+      select('stride', 'Stride', [[1, '1'], [2, '2']]),
+      select('padding', 'Zero padding', [[0, '0'], [1, '1']])
+    ]),
+    h('div', '', 'kernel-layout', {}, [
+      h('div', '', '', {}, [
+        h('h4', '8 × 8 input (click to edit)'),
+        h('div', '', 'pixel-grid', {'data-image': ''})
+      ]),
+      h('div', '', '', {}, [
+        h('h4', 'Kernel'),
+        h('pre', '', '', {'data-kernel': ''}),
+        h('h4', 'Output feature map'),
+        h('div', '', 'table-scroll', {'data-output': ''})
+      ])
+    ]),
+    h('div', '', 'actions', {}, [
+      button('step', 'Slide one step'),
+      button('run', 'Run convolution'),
+      button('reset', 'Reset scan')
+    ]),
+    readout(),
+    h('details', '', '', {}, [
+      h('summary', 'Max pooling: 2 × 2, stride 2'),
+      h('p', 'Maximum of each non-overlapping output block, computed from the complete feature map (including unvisited cells).'),
+      h('div', '', 'table-scroll', {'data-pool': ''})
+    ]),
+    h('h4', 'Runnable pure-JavaScript conv2d'),
+    h('p', 'This is the actual implementation used above. Copy the three functions into a console, then run conv2d([[1,2,3],[4,5,6],[7,8,9]], [[0,0,0],[0,1,0],[0,0,0]]).output. Run convolution executes it on the edited image.'),
+    h('pre', '', '', {'data-code': ''})
+  ]);
   let image = Array.from({ length: 8 }, (_, y) => Array.from({ length: 8 }, (_, x) => x > 3 || y === 2 ? 1 : 0));
   let result, cursor = -1, timer = 0;
   const grid = el.querySelector('[data-image]');
@@ -193,7 +302,17 @@ function convolution(el) {
   reset();
 }
 function probabilities(el) {
-  const ui = setup(el, `<h3>Logits → probabilities</h3><p>Lower temperature sharpens unequal logits; higher temperature flattens them. Tied largest logits stay tied, even as τ approaches zero.</p><div class="controls">${[2, 1, 0, -1].map((v, i) => slider(`z${i}`, `Class ${i + 1} logit`, -5, 5, v)).join('')}${slider('tau', 'Temperature τ', 0.1, 5, 1)}${select('target', 'True class', [0, 1, 2, 3].map(i => [i, `Class ${i + 1}`]))}</div><div data-bars></div>${readout}`);
+  const ui = setup(el, [
+    h('h3', 'Logits → probabilities'),
+    h('p', 'Lower temperature sharpens unequal logits; higher temperature flattens them. Tied largest logits stay tied, even as τ approaches zero.'),
+    h('div', '', 'controls', {}, [
+      ...[2, 1, 0, -1].map((v, i) => slider(`z${i}`, `Class ${i + 1} logit`, -5, 5, v)),
+      slider('tau', 'Temperature τ', 0.1, 5, 1),
+      select('target', 'True class', [0, 1, 2, 3].map(i => [i, `Class ${i + 1}`]))
+    ]),
+    h('div', '', '', {'data-bars': ''}),
+    readout()
+  ]);
   function draw() {
     const p = softmax([0, 1, 2, 3].map(i => ui.val(`z${i}`)), ui.val('tau'));
     el.querySelector('[data-bars]').replaceChildren(...p.map((v, i) => {
@@ -213,7 +332,19 @@ function attention(el) {
   const Q = [[1, 0], [1, 2], [-1, 1], [0, 2], [1, 0], [2, 1]];
   const K = [[1, 0], [2, 1], [-1, 1], [0, 1], [1, 0], [1, 2]];
   const V = [[0, 1], [2, 0], [-1, 0], [0, 2], [0, 1], [1, 3]];
-  const ui = setup(el, `<h3>Who attends to whom?</h3><p>Hand-authored 2D Q, K and V vectors, not a trained model. Each row sums to 1. Select a query token; hover, focus or click a cell for its exact dot product and probability. Column numbers distinguish “The” from “the”.</p><div class="controls">${select('token', 'Query token', tokens.map((t, i) => [i, `${i + 1}: ${t}`]))}${select('mask', 'Attention mask', [['full', 'Bidirectional'], ['causal', 'Causal (past and self only)']])}</div><pre data-vectors></pre><div class="table-scroll"><table class="attention-table" data-heatmap></table></div>${readout}`);
+  const ui = setup(el, [
+    h('h3', 'Who attends to whom?'),
+    h('p', 'Hand-authored 2D Q, K and V vectors, not a trained model. Each row sums to 1. Select a query token; hover, focus or click a cell for its exact dot product and probability. Column numbers distinguish “The” from “the”.'),
+    h('div', '', 'controls', {}, [
+      select('token', 'Query token', tokens.map((t, i) => [i, `${i + 1}: ${t}`])),
+      select('mask', 'Attention mask', [['full', 'Bidirectional'], ['causal', 'Causal (past and self only)']])
+    ]),
+    h('pre', '', '', {'data-vectors': ''}),
+    h('div', '', 'table-scroll', {}, [
+      h('table', '', 'attention-table', {'data-heatmap': ''})
+    ]),
+    readout()
+  ]);
   function draw() {
     const a = scaledDotProductAttention(Q, K, V, { causal: ui.get('mask').value === 'causal' });
     const selected = ui.val('token');
@@ -236,7 +367,30 @@ function attention(el) {
   el.addEventListener('change', draw); draw();
 }
 function activations(el) {
-  const ui = setup(el, `<h3>Functions, derivatives and ten layers</h3><p>Blue solid: f(x). Yellow dashed: f′(x). The step derivative is zero away from zero and undefined at zero; ReLU’s derivative at zero uses the implementation convention 0.</p><div class="controls">${select('activation', 'Activation', Object.entries(ACTIVATIONS).map(([k, a]) => [k, a.name]))}${slider('input', 'Input', -3, 3, 0.5)}${slider('weight', 'Weight in all 10 layers', -2, 2, 1)}</div>${canvas('Activation and derivative over x from −4 to 4')}<div class="table-scroll"><table><thead><tr><th>Layer</th><th>Preactivation z</th><th>Activation</th><th>Gradient reaching input</th></tr></thead><tbody data-depth></tbody></table></div>${readout}`);
+  const ui = setup(el, [
+    h('h3', 'Functions, derivatives and ten layers'),
+    h('p', 'Blue solid: f(x). Yellow dashed: f′(x). The step derivative is zero away from zero and undefined at zero; ReLU’s derivative at zero uses the implementation convention 0.'),
+    h('div', '', 'controls', {}, [
+      select('activation', 'Activation', Object.entries(ACTIVATIONS).map(([k, a]) => [k, a.name])),
+      slider('input', 'Input', -3, 3, 0.5),
+      slider('weight', 'Weight in all 10 layers', -2, 2, 1)
+    ]),
+    canvas('Activation and derivative over x from −4 to 4'),
+    h('div', '', 'table-scroll', {}, [
+      h('table', '', '', {}, [
+        h('thead', '', '', {}, [
+          h('tr', '', '', {}, [
+            h('th', 'Layer'),
+            h('th', 'Preactivation z'),
+            h('th', 'Activation'),
+            h('th', 'Gradient reaching input')
+          ])
+        ]),
+        h('tbody', '', '', {'data-depth': ''})
+      ])
+    ]),
+    readout()
+  ]);
   ui.get('activation').value = 'sigmoid';
   function draw() {
     const a = ACTIVATIONS[ui.get('activation').value], { ctx, X, Y } = plot(el.querySelector('canvas'), [-4, 4, -2, 4]);
@@ -251,7 +405,20 @@ function activations(el) {
   el.addEventListener('input', draw); el.addEventListener('change', draw); draw();
 }
 function modern(el) {
-  const ui = setup(el, `<h3>Inspect the modern stack</h3><p>Small numerical examples, not a model benchmark. Change a position, vector scale, expert score or context length.</p><div class="controls">${slider('scale', 'Vector scale', 0.1, 5, 1)}${slider('position', 'RoPE position', 0, 30, 0, 1)}${slider('expert', 'Expert 0 router logit', -4, 4, 1)}${slider('tokens', 'Cached tokens', 128, 8192, 1024, 128)}${select('heads', 'KV heads (8 query heads)', [[8, '8: MHA'], [2, '2: GQA'], [1, '1: MQA']])}${slider('sram', 'SRAM tile capacity (elements)', 4096, 65536, 16384, 4096)}</div><pre data-modern></pre>${readout}`);
+  const ui = setup(el, [
+    h('h3', 'Inspect the modern stack'),
+    h('p', 'Small numerical examples, not a model benchmark. Change a position, vector scale, expert score or context length.'),
+    h('div', '', 'controls', {}, [
+      slider('scale', 'Vector scale', 0.1, 5, 1),
+      slider('position', 'RoPE position', 0, 30, 0, 1),
+      slider('expert', 'Expert 0 router logit', -4, 4, 1),
+      slider('tokens', 'Cached tokens', 128, 8192, 1024, 128),
+      select('heads', 'KV heads (8 query heads)', [[8, '8: MHA'], [2, '2: GQA'], [1, '1: MQA']]),
+      slider('sram', 'SRAM tile capacity (elements)', 4096, 65536, 16384, 4096)
+    ]),
+    h('pre', '', '', {'data-modern': ''}),
+    readout()
+  ]);
   function draw() {
     const v = [1, 2, -1, 0.5].map(x => x * ui.val('scale'));
     const traffic = attentionHbmTraffic({ seqLen: ui.val('tokens'), headDim: 64, sramElements: ui.val('sram') });
@@ -261,7 +428,15 @@ function modern(el) {
   el.addEventListener('input', draw); el.addEventListener('change', draw); draw();
 }
 function quantization(el) {
-  const ui = setup(el, `<h3>Float → int8 → float</h3><p>A real affine int8 quantizer in JavaScript, not a LiteRT model invocation. The largest magnitude affects precision for every value in this tensor.</p><div class="controls">${slider('outlier', 'Largest value', 1, 100, 4, 1)}</div><pre data-quant></pre>${readout}`);
+  const ui = setup(el, [
+    h('h3', 'Float → int8 → float'),
+    h('p', 'A real affine int8 quantizer in JavaScript, not a LiteRT model invocation. The largest magnitude affects precision for every value in this tensor.'),
+    h('div', '', 'controls', {}, [
+      slider('outlier', 'Largest value', 1, 100, 4, 1)
+    ]),
+    h('pre', '', '', {'data-quant': ''}),
+    readout()
+  ]);
   function draw() {
     const values = [-1, -0.1, 0, 0.1, 1, ui.val('outlier')], q = quantizeAffineInt8(values);
     el.querySelector('[data-quant]').textContent = `Real:    ${values.map(fmt).join(', ')}\nInt8:    ${q.q.join(', ')}\nDecoded: ${q.dequant.map(fmt).join(', ')}`;
@@ -271,7 +446,20 @@ function quantization(el) {
 }
 function backend(el) {
   const kind = el.dataset.backend ?? 'javascript';
-  const ui = setup(el, `<h3>Run a real matrix multiply</h3><p>A = [1, 2; 3, 4], B = [5, 6; 7, 8]. Expected C = [19, 22; 43, 50]. This executes ${kind === 'webgpu' ? 'a WebGPU compute shader, if this browser supports it' : kind === 'webassembly' ? 'the existing scalar WebAssembly f32 kernel (not SIMD)' : 'JavaScript Float32Array loops'}; it does not load a trained model.</p><div class="controls">${slider('scale', 'Scale A', 0.5, 3, 1, 0.5)}</div><div class="actions">${button('run', 'Multiply matrices')}</div>${readout}<h4>Source code that runs when you press the button</h4><p>${kind === 'webgpu' ? 'WGSL_GEMM_SHADER from engine.js: the compute shader compiled by createShaderModule and dispatched by webgpuMatmulAsync.' : kind === 'webassembly' ? 'buildWasmGemmBytes from engine.js: it writes the module’s bytes one by one; getWasmBackend compiles them with new WebAssembly.Module and calls the exported gemm_f32.' : 'jsMatmul from engine.js, printed with Function.prototype.toString, so this is the code that runs.'}</p><pre data-source></pre>`);
+  const ui = setup(el, [
+    h('h3', 'Run a real matrix multiply'),
+    h('p', `A = [1, 2; 3, 4], B = [5, 6; 7, 8]. Expected C = [19, 22; 43, 50]. This executes ${kind === 'webgpu' ? 'a WebGPU compute shader, if this browser supports it' : kind === 'webassembly' ? 'the existing scalar WebAssembly f32 kernel (not SIMD)' : 'JavaScript Float32Array loops'}; it does not load a trained model.`),
+    h('div', '', 'controls', {}, [
+      slider('scale', 'Scale A', 0.5, 3, 1, 0.5)
+    ]),
+    h('div', '', 'actions', {}, [
+      button('run', 'Multiply matrices')
+    ]),
+    readout(),
+    h('h4', 'Source code that runs when you press the button'),
+    h('p', kind === 'webgpu' ? 'WGSL_GEMM_SHADER from engine.js: the compute shader compiled by createShaderModule and dispatched by webgpuMatmulAsync.' : kind === 'webassembly' ? 'buildWasmGemmBytes from engine.js: it writes the module’s bytes one by one; getWasmBackend compiles them with new WebAssembly.Module and calls the exported gemm_f32.' : 'jsMatmul from engine.js, printed with Function.prototype.toString, so this is the code that runs.'),
+    h('pre', '', '', {'data-source': ''})
+  ]);
   let engine;
   import('./engine.js').then(m => { engine = m; el.querySelector('[data-source]').textContent = (kind === 'webgpu' ? m.WGSL_GEMM_SHADER : kind === 'webassembly' ? m.buildWasmGemmBytes.toString() : m.jsMatmul.toString()); });
   ui.action('run', async () => {

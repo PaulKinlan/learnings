@@ -251,6 +251,35 @@ let activeCategoryFilter = "all";
 let activeSearchQuery = "";
 let selectedEventId = "e-omicron-cluster-deletion";
 
+export function el(tag, text, cls) {
+  if (typeof document === 'undefined') {
+    return {
+      tagName: tag.toUpperCase(),
+      textContent: text || '',
+      className: cls || '',
+      style: {},
+      children: [],
+      append(...items) {
+        for (const item of items) {
+          if (typeof item === 'string') {
+            this.textContent += item;
+          } else {
+            this.children.push(item);
+            if (item.textContent) {
+              this.textContent += item.textContent;
+            }
+          }
+        }
+      },
+      setAttribute(k, v) { this[k] = v; }
+    };
+  }
+  const n = document.createElement(tag);
+  if (text !== undefined) n.textContent = text;
+  if (cls) n.className = cls;
+  return n;
+}
+
 // Initialize App
 export function initChronicles() {
   renderTimelineSVG();
@@ -349,17 +378,29 @@ function renderSelectedEvent() {
     auto: "badge-auto"
   }[ev.category] || "badge-tune";
 
-  container.innerHTML = `
-    <div class="inspector-meta">
-      <span class="badge ${catBadgeClass}">${ev.category.toUpperCase()}</span>
-      <span class="inspector-date">${ev.date}</span>
-      <span class="inspector-tokens">Tokens: ${ev.tokens} (${ev.step} steps)</span>
-    </div>
-    <h3 class="inspector-title">${ev.title}</h3>
-    <p class="inspector-summary">${ev.summary}</p>
-    <div class="log-quote"><strong>Excerpt from Logbook:</strong>\n"${ev.quote}"</div>
-    <div class="inspector-impact"><strong class="inspector-impact-label">Key Impact:</strong> ${ev.impact}</div>
-  `;
+  container.innerHTML = "";
+  
+  const meta = el("div", undefined, "inspector-meta");
+  meta.append(
+    el("span", ev.category.toUpperCase(), `badge ${catBadgeClass}`),
+    " ",
+    el("span", ev.date, "inspector-date"),
+    " ",
+    el("span", `Tokens: ${ev.tokens} (${ev.step} steps)`, "inspector-tokens")
+  );
+
+  const title = el("h3", ev.title, "inspector-title");
+  const summary = el("p", ev.summary, "inspector-summary");
+  
+  const logQuote = el("div", undefined, "log-quote");
+  const strongQuote = el("strong", "Excerpt from Logbook:");
+  logQuote.append(strongQuote, `\n"${ev.quote}"`);
+
+  const impact = el("div", undefined, "inspector-impact");
+  const strongImpact = el("strong", "Key Impact:", "inspector-impact-label");
+  impact.append(strongImpact, ` ${ev.impact}`);
+
+  container.append(meta, title, summary, logQuote, impact);
 }
 
 function renderEventList() {
@@ -368,12 +409,14 @@ function renderEventList() {
 
   const filtered = getFilteredEvents();
   if (filtered.length === 0) {
-    listEl.innerHTML = `<div class="event-empty">No matching logbook entries found. Try clearing filters.</div>`;
+    listEl.innerHTML = "";
+    listEl.append(el("div", "No matching logbook entries found. Try clearing filters.", "event-empty"));
     return;
   }
 
-  listEl.innerHTML = filtered.map(ev => {
-    const isActive = ev.id === selectedEventId ? "active" : "";
+  listEl.innerHTML = "";
+  for (const ev of filtered) {
+    const isActive = ev.id === selectedEventId;
     const catBadgeClass = {
       sev: "badge-sev",
       hardware: "badge-hardware",
@@ -383,33 +426,39 @@ function renderEventList() {
       auto: "badge-auto"
     }[ev.category] || "badge-tune";
 
-    return `
-      <div class="event-row ${isActive}" role="button" tabindex="0" aria-pressed="${ev.id === selectedEventId}" data-id="${ev.id}">
-        <div class="event-row-date">${ev.date}</div>
-        <div class="event-category"><span class="badge ${catBadgeClass}">${ev.category}</span></div>
-        <div>
-          <strong class="event-row-title">${ev.title}</strong>
-          <div class="event-row-summary">${ev.summary}</div>
-        </div>
-        <div class="event-row-tokens">${ev.tokens}</div>
-      </div>
-    `;
-  }).join("");
+    const row = el("div", undefined, `event-row${isActive ? ' active' : ''}`);
+    row.setAttribute("role", "button");
+    row.setAttribute("tabindex", "0");
+    row.setAttribute("aria-pressed", String(isActive));
+    row.setAttribute("data-id", ev.id);
 
-  listEl.querySelectorAll(".event-row").forEach(row => {
+    const dateDiv = el("div", ev.date, "event-row-date");
+    
+    const catDiv = el("div", undefined, "event-category");
+    catDiv.append(el("span", ev.category, `badge ${catBadgeClass}`));
+    
+    const textDiv = el("div");
+    textDiv.append(
+      el("strong", ev.title, "event-row-title"),
+      el("div", ev.summary, "event-row-summary")
+    );
+    
+    const tokensDiv = el("div", ev.tokens, "event-row-tokens");
+
+    row.append(dateDiv, catDiv, textDiv, tokensDiv);
+
     row.addEventListener("click", () => {
-      // @ts-ignore
-      selectEvent(row.dataset.id);
+      selectEvent(ev.id);
     });
     row.addEventListener("keydown", (e) => {
-      // @ts-ignore
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        // @ts-ignore
-        selectEvent(row.dataset.id);
+        selectEvent(ev.id);
       }
     });
-  });
+
+    listEl.append(row);
+  }
 }
 
 function renderTimelineSVG() {

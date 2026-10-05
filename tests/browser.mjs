@@ -151,6 +151,7 @@ try{
  await widgetScreenshot('landscape');
  await chooseWidget('landscape','surface','doubleWell');
  check('landscape change clears a previous path and explains local minima',await p.evaluate(()=>document.querySelector('[data-widget="landscape"] [data-status]').textContent.includes('Step 0:')&&document.querySelector('[data-widget="landscape"] [data-status]').textContent.includes('shallow local')));
+ check('backprop range controls retain fractional parameter defaults',await p.evaluate(async()=>{const {TINY_NET_DEFAULTS}=await import('./math.js');return Object.entries(TINY_NET_DEFAULTS.params).every(([key,value])=>Number(document.querySelector(`[data-widget="backprop"] [data-control="${key}"]`).value)===value);}));
  await p.click(widgetAction('backprop','forward'));
  check('backprop forward click reveals a numerical node activation',await p.evaluate(()=>document.querySelector('[data-widget="backprop"] .active-node strong').textContent.match(/= -?\d/)!==null));
  await widgetScreenshot('backprop','backprop-forward');
