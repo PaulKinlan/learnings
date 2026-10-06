@@ -607,22 +607,8 @@ function renderLossChartSVG() {
   const toX = (step) => padL + (step / maxStep) * (width - padL - padR);
   const toY = (loss) => padB + (1 - (loss - minLoss) / (maxLoss - minLoss)) * (height - padT - padB);
 
-  // Grid lines
-  let gridLines = "";
-  for (let l = 3; l <= 11; l += 2) {
-    const y = toY(l);
-    gridLines += `
-      <line x1="${padL}" y1="${y}" x2="${width - padR}" y2="${y}" stroke="#e4e7eb" stroke-dasharray="3,3" />
-      <text x="${padL - 8}" y="${y + 4}" font-size="10" fill="#829ab1" text-anchor="end">${l}.0</text>
-    `;
-  }
-
   // X axis labels
   const stepLabels = [0, 20000, 40000, 60000, 75000];
-  let xLabels = stepLabels.map(s => {
-    const x = toX(s);
-    return `<text x="${x}" y="${height - 15}" font-size="10" fill="#829ab1" text-anchor="middle">${s > 0 ? (s/1000) + 'k' : '0'}</text>`;
-  }).join("");
 
   // Path 11.xx (Diverged)
   let d11 = "";
@@ -652,26 +638,60 @@ function renderLossChartSVG() {
   });
 
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.innerHTML = `
-    <!-- Grid -->
-    ${gridLines}
-    ${xLabels}
-    <text x="${width/2}" y="${height - 2}" font-size="10" fill="#627d98" text-anchor="middle">Training Steps (2M tokens/step)</text>
-    <text x="12" y="${height/2}" font-size="10" fill="#627d98" text-anchor="middle" transform="rotate(-90 12 ${height/2})">Validation Loss</text>
-    
-    <!-- Lines -->
-    <path d="${dGpt}" fill="none" stroke="#f59e0b" stroke-width="2" stroke-dasharray="4,4" />
-    <path d="${d11}" fill="none" stroke="#ef4444" stroke-width="2.5" />
-    <path d="${d12}" fill="none" stroke="#0284c7" stroke-width="2.8" />
+  svg.replaceChildren();
 
-    <!-- Exploded 11.xx point -->
-    <circle cx="${toX(6500)}" cy="${toY(5.4)}" r="5" fill="#ef4444" stroke="#fff" stroke-width="2" />
-    <text x="${toX(6500) + 8}" y="${toY(5.4) - 8}" font-size="10" font-weight="700" fill="#dc2626">11.xx Aborted (Stagnated/NaN)</text>
+  // Grid lines, each followed by its y-axis label
+  for (let l = 3; l <= 11; l += 2) {
+    const y = toY(l);
+    const gridLabel = svgEl("text", { x: padL - 8, y: y + 4, "font-size": 10, fill: "#829ab1", "text-anchor": "end" });
+    gridLabel.textContent = `${l}.0`;
+    svg.append(
+      svgEl("line", { x1: padL, y1: y, x2: width - padR, y2: y, stroke: "#e4e7eb", "stroke-dasharray": "3,3" }),
+      gridLabel
+    );
+  }
 
-    <!-- 12.xx final point -->
-    <circle cx="${toX(75000)}" cy="${toY(2.42)}" r="5" fill="#0284c7" stroke="#fff" stroke-width="2" />
-    <text x="${toX(75000) - 10}" y="${toY(2.42) - 10}" font-size="10" font-weight="700" fill="#0369a1" text-anchor="end">12.xx Final: 2.42</text>
-  `;
+  for (const s of stepLabels) {
+    const stepLabel = svgEl("text", { x: toX(s), y: height - 15, "font-size": 10, fill: "#829ab1", "text-anchor": "middle" });
+    stepLabel.textContent = s > 0 ? `${s / 1000}k` : "0";
+    svg.append(stepLabel);
+  }
+
+  // Axis titles
+  const xTitle = svgEl("text", { x: width / 2, y: height - 2, "font-size": 10, fill: "#627d98", "text-anchor": "middle" });
+  xTitle.textContent = "Training Steps (2M tokens/step)";
+  const yTitle = svgEl("text", {
+    x: 12, y: height / 2, "font-size": 10, fill: "#627d98", "text-anchor": "middle",
+    transform: `rotate(-90 12 ${height / 2})`
+  });
+  yTitle.textContent = "Validation Loss";
+  svg.append(xTitle, yTitle);
+
+  // Loss curves: GPT-3 reference, diverged 11.xx, converged 12.xx
+  svg.append(
+    svgEl("path", { d: dGpt, fill: "none", stroke: "#f59e0b", "stroke-width": 2, "stroke-dasharray": "4,4" }),
+    svgEl("path", { d: d11, fill: "none", stroke: "#ef4444", "stroke-width": 2.5 }),
+    svgEl("path", { d: d12, fill: "none", stroke: "#0284c7", "stroke-width": 2.8 })
+  );
+
+  // Exploded 11.xx point
+  const abortedLabel = svgEl("text", { x: toX(6500) + 8, y: toY(5.4) - 8, "font-size": 10, "font-weight": 700, fill: "#dc2626" });
+  abortedLabel.textContent = "11.xx Aborted (Stagnated/NaN)";
+  svg.append(
+    svgEl("circle", { cx: toX(6500), cy: toY(5.4), r: 5, fill: "#ef4444", stroke: "#fff", "stroke-width": 2 }),
+    abortedLabel
+  );
+
+  // 12.xx final point
+  const finalLabel = svgEl("text", {
+    x: toX(75000) - 10, y: toY(2.42) - 10, "font-size": 10, "font-weight": 700,
+    fill: "#0369a1", "text-anchor": "end"
+  });
+  finalLabel.textContent = "12.xx Final: 2.42";
+  svg.append(
+    svgEl("circle", { cx: toX(75000), cy: toY(2.42), r: 5, fill: "#0284c7", stroke: "#fff", "stroke-width": 2 }),
+    finalLabel
+  );
 }
 
 // Interactive Hardware & Cost Failure Simulator

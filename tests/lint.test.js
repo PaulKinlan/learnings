@@ -119,10 +119,6 @@ function scanFile(file) {
     // `notice.innerHTML = userInput` sink in any other file still fails.
     if (file.endsWith('/decision-models/image-lab.js') && NOTICE_CONSTANT_LINE.test(line.trim())) return;
 
-    // Allow the one SVG chart build in opt-chronicles/app.js (renderLossChartSVG),
-    // pinned to its known line. Any other `svg.innerHTML = \`` stays a sink.
-    if (file.endsWith('/opt-chronicles/app.js') && index + 1 === 655 && line.includes('svg.innerHTML')) return;
-
     if (isSinkLine(stripped[index])) {
       failures.push(`File ${file}:${index + 1} uses innerHTML sink: ${line.trim()}`);
     }
