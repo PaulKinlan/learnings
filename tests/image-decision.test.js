@@ -901,3 +901,91 @@ test('simulated demo path: a custom spec reusing a preset title with different o
   // The answer must be drawn from ITS OWN options, not 'retry', 'cancel' etc.
   assert.ok(['new_option', 'another'].includes(actionAnswer.choice), `Expected choice to be drawn from custom spec options, got ${actionAnswer.choice}`);
 });
+
+test('simulated demo path: preset -> fixture invariant holds regardless of key order, and does not over-match (learnings-e0q2)', async () => {
+  for (const [id, preset] of Object.entries(PRESETS)) {
+    // (a) preset's own spec
+    const resA = await decideImage({
+      spec: preset.spec,
+      imagePayload: DUMMY_IMAGE,
+      engine: 'client'
+    });
+    assert.equal(
+      JSON.stringify(resA.data.answers),
+      JSON.stringify(preset.answers),
+      `Preset ${id}: own spec must resolve to curated fixture answers`
+    );
+
+    // (b) a REORDERED COPY of the spec
+    // Reorder top-level question keys
+    const reorderedQuestions = {};
+    const qKeys = Object.keys(preset.spec.questions).reverse();
+    for (const qKey of qKeys) {
+      const q = structuredClone(preset.spec.questions[qKey]);
+      // Reorder choice criteria keys if applicable
+      if (q.type === 'choice') {
+        const cKeys = Object.keys(q.criteria).reverse();
+        const reorderedCriteria = {};
+        for (const cKey of cKeys) {
+          reorderedCriteria[cKey] = q.criteria[cKey];
+        }
+        q.criteria = reorderedCriteria;
+      }
+      reorderedQuestions[qKey] = q;
+    }
+    
+    const reorderedSpec = {
+      title: preset.spec.title,
+      description: preset.spec.description,
+      questions: reorderedQuestions
+    };
+
+    const resB = await decideImage({
+      spec: reorderedSpec,
+      imagePayload: DUMMY_IMAGE,
+      engine: 'client'
+    });
+    assert.equal(
+      JSON.stringify(resB.data.answers),
+      JSON.stringify(preset.answers),
+      `Preset ${id}: reordered copy must resolve to curated fixture answers`
+    );
+  }
+
+  // (c) NEGATIVE CONTROL: genuinely different options must synthesise, not hit a fixture
+  const customSpec = {
+    title: PRESETS.ui.spec.title,
+    description: PRESETS.ui.spec.description,
+    questions: {
+      is_blocked: { type: 'noul', instructions: 'Is the user blocked?' },
+      action: {
+        type: 'choice',
+        instructions: 'Which button?',
+        criteria: {
+          different_1: 'Different 1',
+          different_2: 'Different 2'
+        }
+      }
+    }
+  };
+
+  const resC = await decideImage({
+    spec: customSpec,
+    imagePayload: DUMMY_IMAGE,
+    engine: 'client'
+  });
+  
+  // Must synthesise (not match any preset's answers)
+  for (const preset of Object.values(PRESETS)) {
+    assert.notEqual(
+      JSON.stringify(resC.data.answers),
+      JSON.stringify(preset.answers),
+      `Negative control must synthesise, not match preset ${preset.id}`
+    );
+  }
+  // And it must synthesise from its own options
+  assert.ok(
+    ['different_1', 'different_2'].includes(resC.data.answers.action.choice),
+    'Negative control choice must come from its own options'
+  );
+});
