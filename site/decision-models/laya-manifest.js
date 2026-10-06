@@ -19,6 +19,18 @@
 //   2026-10-05) that main graph is 2023399e…, so a main-ref fetch no longer matches the
 //   vendored hashes at all.
 //
+//   multilingual, s256 — quant-smoke.mjs substitutes two graphs the list above does not name,
+//   laya_ml_s256_embeds_fp32.tflite and laya_ml_s256_embeds_wfp16.tflite, for the main graph.
+//   Their digests come from that same vendored sums file instead of being repeated here: each
+//   has its own row in laya/ml-SHA256SUMS, and laya-engine.js selects the row by the fetched
+//   file's own name, so a graph swapped into the main slot is checked against that graph's
+//   digest, and fails closed when the row is absent or the bytes differ
+//   (tests/laya-engine-integrity.test.js exercises both against the real file). The
+//   per-artifact comparison above is narrower than the sums file on purpose — it covers only
+//   the five artifacts it names — and every other row, the two s256 graphs included, rests on
+//   the vendored file being the pinned revision's own, which is what the 4cb3d664… pin and its
+//   re-derivation in tests/laya-engine.test.js establish.
+//
 //   english — litert-community/laya-LiteRT at 9baf244b… was that repo's HEAD when the vendored
 //   laya/laya_act_head_fp32.tflite and laya/en-tokenizer.json were captured (this repo's commit
 //   9f0d548, 2026-09-29); its SHA256SUMS lists c6f8de9b… and 6c8aaa9a… for those two files,
