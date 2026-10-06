@@ -32,7 +32,7 @@ import {
   decodeQuestion,
   softmax,
 } from "./laya-pack.js";
-import { LAYA_REVISION } from "./laya-manifest.js";
+import { LAYA_REVISION, LAYA_SHA256SUMS_SHA256 } from "./laya-manifest.js";
 
 export const MULTILINGUAL_SPECIAL_IDS = Object.freeze({ cls: 2, sep: 1, pad: 0, unk: 3, mask: 4 });
 export const MULTILINGUAL_MASK_STRING = "<mask>";
@@ -111,8 +111,20 @@ function litert() {
   return litertPromise;
 }
 
-/** Fetch a URL into a Uint8Array with progress callbacks and an optional sha256 check. */
-async function fetchBytes(url, { onProgress = null, sha256 = null, label = url } = {}) {
+async function verifySha256(bytes, sha256, label) {
+  if (!sha256) throw new Error(`no pinned sha256 for ${label}`);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  if (hex !== sha256.toLowerCase()) {
+    throw new Error(
+      `integrity check failed for ${label}: sha256 ${hex.slice(0, 16)}… does not match the publisher's ${sha256.slice(0, 16)}…`,
+    );
+  }
+}
+
+/** Fetch a URL into a Uint8Array with progress callbacks and a required sha256 check. */
+async function fetchBytes(url, { onProgress = null, sha256, label = url } = {}) {
+  if (!sha256) throw new Error(`no pinned sha256 for ${label}`);
   const res = await fetch(url);
   if (!res.ok) throw new Error(`download failed for ${label}: HTTP ${res.status}`);
   const total = Number(res.headers.get("content-length")) || 0;
@@ -132,15 +144,7 @@ async function fetchBytes(url, { onProgress = null, sha256 = null, label = url }
     bytes.set(chunk, offset);
     offset += chunk.length;
   }
-  if (sha256) {
-    const digest = await crypto.subtle.digest("SHA-256", bytes);
-    const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-    if (hex !== sha256.toLowerCase()) {
-      throw new Error(
-        `integrity check failed for ${label}: sha256 ${hex.slice(0, 16)}… does not match the publisher's ${sha256.slice(0, 16)}…`,
-      );
-    }
-  }
+  await verifySha256(bytes, sha256, label);
   return bytes;
 }
 
@@ -208,34 +212,44 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
   //
   // A sums file that does not arrive is a hard failure, on purpose: an empty digest table would
   // turn every check below into no check at all, which is the silent fallback this refuses.
+  // The multilingual sums file itself is checked against the digest in laya-manifest.js.
   const sumsResponse = await fetch(sumsUrl);
   if (!sumsResponse.ok) {
     throw new Error(
       `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: HTTP ${sumsResponse.status} (${sumsUrl})`,
     );
   }
-  const sums = parseSha256Sums(await sumsResponse.text());
+  const sumsBytes = new Uint8Array(await sumsResponse.arrayBuffer());
+  await verifySha256(sumsBytes, LAYA_SHA256SUMS_SHA256[checkpoint], `${spec.repo}/SHA256SUMS`);
+  const sums = parseSha256Sums(new TextDecoder().decode(sumsBytes));
+
+  // Overrides use their final URL's filename (and hence their own published hash).
+  // Vendored filenames may differ from the upstream names, but are byte-identical to
+  // the pinned revision's artifacts; look those up by their upstream names instead.
+  const basename = (url) => String(url).split("/").pop().split("?")[0];
+  const digestFor = (key, file, url) => sums[
+    urls[file] == null && localMap[key] ? file : basename(url)
+  ];
 
   onProgress?.("tokenizer", 0, 0);
+  const tokenizerUrl = urlFor("tokenizer", spec.files.tokenizer);
   const tokenizer = new Tokenizer(
-    JSON.parse(await (await fetch(urlFor("tokenizer", spec.files.tokenizer))).text()),
+    JSON.parse(new TextDecoder().decode(await fetchBytes(tokenizerUrl, {
+      sha256: digestFor("tokenizer", spec.files.tokenizer, tokenizerUrl),
+      label: `${spec.repo}/${spec.files.tokenizer}`,
+    }))),
     {},
   );
-
-  // Integrity is checked against the publisher's SHA256SUMS keyed by the FINAL url's
-  // filename, so test overrides pointing at a different variant are verified by their
-  // own published hash, never the default file's.
-  const basename = (url) => String(url).split("/").pop().split("?")[0];
   const mainUrl = urlFor("main", spec.files.main);
   const actUrl = urlFor("act", spec.files.act);
   const fetchJobs = {
     main: fetchBytes(mainUrl, {
       onProgress: (received, total) => onProgress?.("weights", received, total),
-      sha256: sums[basename(mainUrl)],
+      sha256: digestFor("main", spec.files.main, mainUrl),
       label: `${spec.repo}/${spec.files.main}`,
     }),
     act: fetchBytes(actUrl, {
-      sha256: sums[basename(actUrl)],
+      sha256: digestFor("act", spec.files.act, actUrl),
       label: `${spec.repo}/${spec.files.act}`,
     }),
   };
@@ -243,7 +257,7 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
     const embUrl = urlFor("embeddings", spec.files.embeddings);
     fetchJobs.embeddings = fetchBytes(embUrl, {
       onProgress: (received, total) => onProgress?.("embedding-table", received, total),
-      sha256: sums[basename(embUrl)],
+      sha256: digestFor("embeddings", spec.files.embeddings, embUrl),
       label: `${spec.repo}/${spec.files.embeddings} (host-side token table)`,
     });
   }
@@ -273,7 +287,11 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
   const calibrationUrl = spec.files.calibration
     ? urlFor("calibration", spec.files.calibration)
     : new URL("rl_agent_config.json", LAYA_DIR).href;
-  const calibrationJson = await (await fetch(calibrationUrl)).json();
+  const calibrationFile = spec.files.calibration ?? "rl_agent_config.json";
+  const calibrationJson = JSON.parse(new TextDecoder().decode(await fetchBytes(calibrationUrl, {
+    sha256: digestFor("calibration", calibrationFile, calibrationUrl),
+    label: `${spec.repo}/${calibrationFile}`,
+  })));
   // The fitted calibration is the contract's production default. The publisher's saved
   // conversion GATES used the source config — all T=1, no buckets (ML-HOST_CONTRACT.md §D
   // note) — so "source" exists for gate-comparable answers and honest parity claims.

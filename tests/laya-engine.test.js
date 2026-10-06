@@ -62,4 +62,14 @@ test("the vendored multilingual sums are the pinned revision's own file, and cov
       `${file} has a recorded digest, so its fetch is actually checked`,
     );
   }
+  for (const [local, upstream] of [
+    ["ml-tokenizer.json", "tokenizer.json"],
+    ["laya_ml_act_head_fp32.tflite", "laya_ml_act_head_fp32.tflite"],
+    ["laya_ml_calibration.json", "laya_ml_calibration.json"],
+  ]) {
+    const digest = createHash("sha256")
+      .update(readFileSync(new URL(`../site/decision-models/laya/${local}`, import.meta.url)))
+      .digest("hex");
+    assert.ok(text.includes(`${digest}  ${upstream}\n`), `${local} matches the pinned ${upstream} digest`);
+  }
 });
