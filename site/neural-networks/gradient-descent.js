@@ -42,7 +42,11 @@ const backgrounds = new Map();
 let animation = 0;
 
 const surface = () => SURFACES[state.surface];
-const learningRate = () => 10 ** Number(ui.lr.value);
+// A preset (the race rate for the chosen optimiser) is kept exactly: the log-scale slider only
+// has 0.01 steps, so 0.15 would otherwise come back as 10^-0.82 = 0.151. Moving the slider
+// switches to the slider's value.
+let exactRate = null;
+const learningRate = () => exactRate ?? 10 ** Number(ui.lr.value);
 const num = (v) =>
   Math.abs(v) >= 1e4 || (v !== 0 && Math.abs(v) < 1e-3)
     ? v.toExponential(1)
@@ -284,6 +288,7 @@ function syncControls() {
 }
 
 function setLearningRate(v) {
+  exactRate = v;
   ui.lr.value = Math.log10(v).toFixed(2);
   syncControls();
 }
@@ -309,7 +314,11 @@ function changeSurface() {
 
 ui.surface.addEventListener("change", changeSurface);
 ui.optimizer.addEventListener("change", () => setLearningRate(RACE_LEARNING_RATES[state.surface][ui.optimizer.value]));
-for (const input of [ui.lr, ui.momentum, ui.steps]) input.addEventListener("input", syncControls);
+ui.lr.addEventListener("input", () => {
+  exactRate = null;
+  syncControls();
+});
+for (const input of [ui.momentum, ui.steps]) input.addEventListener("input", syncControls);
 for (const input of [ui.startX, ui.startY]) {
   input.addEventListener("input", () => {
     state.start = [Number(ui.startX.value), Number(ui.startY.value)];

@@ -215,6 +215,7 @@ try{
  await p.goto(base+'neural-networks/gradient-descent.html');await p.waitFor(()=>document.querySelectorAll('#gd-results tr').length===6);
  check('gradient-descent race draws six optimisers, sidebar marks the chapter, MathML renders, no mobile overflow',await p.evaluate(()=>document.querySelectorAll('#gd-results tr').length===6&&document.querySelector('[data-chapter-nav] a[aria-current="page"]')!==null&&document.querySelectorAll('main math').length>=8&&innerWidth===390&&document.documentElement.scrollWidth<=innerWidth));
  check('gradient-descent: every block formula lays out on one line (display: block math)',await p.evaluate(blockMathOnOneLine));
+ check('gradient-descent: the learning-rate readout shows the exact race rate (0.15), not the slider rounding (0.151)',await p.evaluate(()=>document.querySelector('#gd-lr-out').textContent==='0.15'));
  await p.click('#gd-compare');await p.waitFor(()=>document.querySelectorAll('#gd-results tr').length===2);
  check('gradient-descent stability demo: eta 0.19 reaches the minimum and 0.21 diverges',await p.evaluate(()=>{const r=[...document.querySelectorAll('#gd-results tr')].map((t)=>t.textContent);return r[0].includes('Reached')&&r[1].includes('Diverged');}));
  await p.goto(base+'neural-networks/lab.html');await p.waitFor(()=>document.querySelector('#mlp-epoch').textContent!=='0');
