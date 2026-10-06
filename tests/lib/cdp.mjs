@@ -9,7 +9,7 @@
 // The checks drive REAL input: `click()` dispatches an actual mouse event at the element's
 // centre, and `type()` inserts text the way a keyboard does. A test that sets `.value` from
 // script would pass through a page whose controls are not wired to anything at all.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -45,6 +45,28 @@ export function getCandidateBrowsers() {
   ].filter(Boolean);
 }
 
+// A browser gate on a shared VM must clean up: a leaked profile blocks the next lane.
+export async function assertNoBrowserOrphans(profile) {
+  const deadline = Date.now() + 500;
+  while (true) {
+    const processes = execFileSync("ps", ["-eo", "pid=,stat=,args="], { encoding: "utf8", timeout: 1500 });
+    const leftovers = processes.split("\n").filter((line) => {
+      const match = line.trim().match(/^(\d+)\s+(\S+)\s+(.*)$/);
+      if (!match || match[2].startsWith("Z")) return false;
+      const command = match[3];
+      return /(?:^|[\s/])(?:chrome|chromium|chrome_crashpad_handler)(?:\s|$)/.test(command) &&
+        command.split(profile).slice(1).some((rest) => rest === "" || /^[\s/'"]/.test(rest)) &&
+        !command.startsWith("ps ");
+    });
+    if (!leftovers.length) return;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new Error(`browser orphan for profile ${profile}:\n${leftovers.map((line) => `pid/command ${line.trim()}`).join("\n")}`);
+    }
+    await sleep(Math.min(50, remaining));
+  }
+}
+
 const BROWSERS = getCandidateBrowsers();
 
 export function resolveBinary(candidates = null) {
@@ -58,6 +80,12 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
   // A caller may hand in a prepared profile — the only way to give the page a REAL platform
   // answer (a blocked permission) rather than a constructed one.
   const ownProfile = !profile;
+  // mkdtemp creates a fresh directory atomically. A supplied prepared profile may already
+  // exist, but must not be occupied by another browser: fail before Chrome can queue on it.
+  if (profile) {
+    try { await assertNoBrowserOrphans(profile); }
+    catch (error) { throw new Error(`cannot launch with occupied profile ${profile}: ${error.message}`); }
+  }
   profile = profile ?? mkdtempSync(path.join(os.tmpdir(), "voicebox-cdp-"));
   const child = spawn(
     binary,
@@ -73,9 +101,42 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
       "--remote-debugging-port=0",
       "about:blank",
     ],
-    { stdio: ["ignore", "pipe", "pipe"] },
+    { stdio: ["ignore", "pipe", "pipe"], detached: true },
   );
+  let socket;
+  let closed = false;
+  const killGroup = () => {
+    if (child.pid) {
+      try { process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; }
+    }
+  };
+  // Exit also handles uncaught failures and catchable TERM/INT/HUP (timeouts and queue cuts).
+  // SIGKILL cannot run in-process cleanup; the fleet reaper is the external backstop.
+  const onExit = () => {
+    killGroup();
+    if (ownProfile) rmSync(profile, { recursive: true, force: true });
+  };
+  const onSignal = (signal) => process.exit(128 + { SIGHUP: 1, SIGINT: 2, SIGTERM: 15 }[signal]);
+  process.once("exit", onExit);
+  for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) process.on(signal, onSignal);
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    try { socket?.close(); } catch {}
+    killGroup();
+    if (child.exitCode === null && child.signalCode === null) {
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 5000);
+        child.once("exit", () => { clearTimeout(timer); resolve(); });
+      });
+    }
+    if (ownProfile) rmSync(profile, { recursive: true, force: true });
+    process.removeListener("exit", onExit);
+    for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) process.removeListener(signal, onSignal);
+    await assertNoBrowserOrphans(profile);
+  };
 
+  try {
   const wsUrl = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("chromium did not print a DevTools endpoint")), 20000);
     let buffer = "";
@@ -89,10 +150,11 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
     };
     child.stderr.on("data", scan);
     child.stdout.on("data", scan);
-    child.on("exit", (code) => reject(new Error(`chromium exited early (${code})`)));
+    child.once("error", (error) => { clearTimeout(timer); reject(error); });
+    child.once("exit", (code) => { clearTimeout(timer); reject(new Error(`chromium exited early (${code})`)); });
   });
 
-  const socket = new WebSocket(wsUrl);
+  socket = new WebSocket(wsUrl);
   const pending = new Map();
   let nextId = 1;
   const events = [];
@@ -127,19 +189,10 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
   await send("Runtime.enable", {}, sessionId);
 
   const page = {
+    profile,
     sessionId,
     send: (method, params) => send(method, params, sessionId),
-    async close() {
-      try {
-        socket.close();
-      } catch {}
-      try {
-        child.kill("SIGKILL");
-      } catch {}
-      try {
-        if (ownProfile) rmSync(profile, { recursive: true, force: true });
-      } catch {}
-    },
+    close,
   };
 
   page.goto = async (url, { timeout = 20000 } = {}) => {
@@ -358,4 +411,8 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
   };
 
   return page;
+  } catch (error) {
+    await close();
+    throw error;
+  }
 }
