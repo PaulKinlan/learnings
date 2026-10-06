@@ -695,8 +695,23 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
   if (engine === 'client') {
     // Check if matching a preset
     let presetKey = null;
+
+    const canonicalize = (obj) => {
+      if (Array.isArray(obj)) return obj.map(canonicalize);
+      if (obj !== null && typeof obj === 'object') {
+        return Object.keys(obj).sort().reduce((acc, k) => {
+          acc[k] = canonicalize(obj[k]);
+          return acc;
+        }, {});
+      }
+      return obj;
+    };
+
+    // The lookup key is canonicalized (order-insensitive keys) and deliberately excludes
+    // title and description, so identical questions under different titles share a fixture
+    // (intended for an image-agnostic schema preview).
     for (const [k, p] of Object.entries(PRESETS)) {
-      if (JSON.stringify(p.spec.questions) === JSON.stringify(spec.questions)) {
+      if (JSON.stringify(canonicalize(p.spec.questions)) === JSON.stringify(canonicalize(spec.questions))) {
         presetKey = k;
         break;
       }
