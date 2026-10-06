@@ -1,10 +1,10 @@
 // Packing and decoding for Laya's single-row decision format.
 //
-// A JS port of the host contract vendored beside it (laya/HOST_CONTRACT.md §B and §D),
+// A JS port of the host contract vendored beside it (laya/ML-HOST_CONTRACT.md §B and §D),
 // which itself copies laya 0.3.4's common.py and agent.py verbatim. Like kev-pack.js this
 // module is pure: a tokenize function and the special-token ids come in as data, so every
 // index and every probability can be checked without loading a graph. The worked reference
-// rows at the end of HOST_CONTRACT.md are the anchors for tests/laya-pack.test.js.
+// rows at the end of ML-HOST_CONTRACT.md are the anchors for tests/laya-pack.test.js.
 
 export const QTYPE_INDEX = { choice: 0, score: 1, noul: 2 };
 export const QTYPE_ONEHOT = { choice: [1, 0, 0], score: [0, 1, 0], noul: [0, 0, 1] };

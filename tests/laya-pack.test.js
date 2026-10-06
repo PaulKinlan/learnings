@@ -1,6 +1,6 @@
 // tests/laya-pack.test.js — the builder arithmetic and the decoder math, checked without a
 // model, plus one end-to-end pin against the vendored tokenizer and the worked reference row
-// published in site/decision-models/laya/HOST_CONTRACT.md §E (A01/department).
+// published in site/decision-models/laya/ML-HOST_CONTRACT.md §E (A01/department).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -197,7 +197,7 @@ test("act features come from raw probabilities, never calibrated ones", () => {
   assert.equal(kScaled, 4 / 255);
 });
 
-// The worked row, HOST_CONTRACT.md §E A01/department: the decoder must reproduce the
+// The worked row, ML-HOST_CONTRACT.md §E A01/department: the decoder must reproduce the
 // captured probabilities and the captured answer exactly from the captured logits.
 test("A01/department: captured logits decode to the captured answer", () => {
   const rawLogits = [1.0703915357589722, -1.8068784475326538, -2.2441372871398926, -2.46530818939209];
