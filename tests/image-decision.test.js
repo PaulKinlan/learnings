@@ -797,3 +797,33 @@ test('simulated demo path stays ungated and renders offline (learnings-ytm)', as
     );
   }
 });
+
+test('simulated demo path: a custom spec reusing a preset title with different options produces synthesised answers matching ITS OWN options, NOT the preset ones (learnings-mnw)', async (t) => {
+  const customSpec = {
+    title: PRESETS.ui.spec.title, // Reusing the title
+    description: 'Custom description',
+    questions: {
+      action: {
+        type: 'choice',
+        instructions: 'Which button?',
+        criteria: {
+          new_option: 'A new option',
+          another: 'Another option'
+        }
+      }
+    }
+  };
+
+  const res = await decideImage({
+    spec: customSpec,
+    imagePayload: DUMMY_IMAGE,
+    engine: 'client'
+  });
+
+  assert.equal(res.isSimulation, true);
+  const actionAnswer = res.data.answers.action;
+  assert.ok(actionAnswer);
+  
+  // The answer must be drawn from ITS OWN options, not 'retry', 'cancel' etc.
+  assert.ok(['new_option', 'another'].includes(actionAnswer.choice), `Expected choice to be drawn from custom spec options, got ${actionAnswer.choice}`);
+});
