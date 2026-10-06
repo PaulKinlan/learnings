@@ -389,8 +389,8 @@ export const PRESETS = {
           type: 'choice',
           instructions: 'Which button action should automated recovery or user guidance recommend?',
           criteria: {
-            retry: 'Click Retry Payment to attempt card re-authorization',
             cancel: 'Click Cancel Order to abandon the checkout session',
+            retry: 'Click Retry Payment to attempt card re-authorization',
             dismiss: 'Close modal and edit billing address details',
             unclear: 'Screenshot does not present a legible recovery button'
           }
@@ -693,7 +693,9 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
 
   // Engine 1: Demo Mode / Schema Preview (Simulated Fixture)
   if (engine === 'client') {
-    // Check if matching a preset
+    // Check if matching a preset.
+    // The key deliberately excludes title and description, so two specs
+    // with identical questions but different titles share one fixture.
     let presetKey = null;
     for (const [k, p] of Object.entries(PRESETS)) {
       if (JSON.stringify(p.spec.questions) === JSON.stringify(spec.questions)) {

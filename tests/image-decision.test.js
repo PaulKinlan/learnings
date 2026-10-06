@@ -901,3 +901,24 @@ test('simulated demo path: a custom spec reusing a preset title with different o
   // The answer must be drawn from ITS OWN options, not 'retry', 'cancel' etc.
   assert.ok(['new_option', 'another'].includes(actionAnswer.choice), `Expected choice to be drawn from custom spec options, got ${actionAnswer.choice}`);
 });
+
+test('simulated demo path: preset to fixture mapping is byte-exactly pinned (learnings-e0q)', async (t) => {
+  const expectedPresets = ['ui', 'invoice', 'security', 'navigation'];
+  for (const id of expectedPresets) {
+    await t.test(`preset ${id} exactly matches curated fixture`, async () => {
+      const preset = PRESETS[id];
+      const res = await decideImage({
+        spec: preset.spec,
+        imagePayload: DUMMY_IMAGE,
+        engine: 'client'
+      });
+      
+      assert.equal(
+        JSON.stringify(res.data.answers),
+        JSON.stringify(preset.answers),
+        `Preset '${id}' fell through to synthesis: the resolved answers did not exactly match the curated fixture answers.`
+      );
+    });
+  }
+});
+
