@@ -659,6 +659,67 @@ test('image lab clears the prior run on JSON, validation, provider and timeout f
   }
 });
 
+test('image lab cuts off a provider that never answers at the 45s boundary (learnings-eku)', async () => {
+  const { serve } = await import('../scripts/serve.mjs');
+  const { launch } = await import('./lib/cdp.mjs');
+  const { server, url } = await serve();
+  let page;
+  try {
+    page = await launch({ candidates: ['/usr/bin/chromium'] });
+    await page.goto(url + 'decision-models/image-lab.html');
+    await page.waitFor(() => document.querySelector('#preview-image').src.startsWith('data:image/'));
+
+    // A successful run first, so the timeout case has real answers it could fail to clear.
+    await page.click('#run-decision');
+    await page.waitFor(() => document.querySelector('#status').textContent.startsWith('Decision complete'));
+    assert.match(await page.evaluate(() => document.querySelector('#answers').textContent), /actionSelected: retry/);
+
+    // The run handler's own signal is what is under test, so the interval it asks for is recorded
+    // and only the wait is compressed. The provider then accepts the request and never answers, and
+    // the abort that ends it is the platform's (the injected signal's reason), not a thrown fixture.
+    await page.evaluate(() => {
+      window.__timeoutIntervals = [];
+      const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+      AbortSignal.timeout = ms => { window.__timeoutIntervals.push(ms); return realTimeout(50); };
+      window.fetch = (resource, init) => new Promise((resolve, reject) => {
+        // No signal means no boundary: with the wiring reverted this never settles, which is the hang.
+        if (!init.signal) return;
+        init.signal.addEventListener('abort', () => reject(init.signal.reason));
+      });
+    });
+    await page.evaluate(() => {
+      const select = document.querySelector('#engine');
+      select.value = 'local';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    await page.click('#run-decision');
+    await page.waitFor(() => window.__timeoutIntervals.length > 0, { label: 'the run handler to wire a timeout signal' });
+    assert.deepEqual(
+      await page.evaluate(() => window.__timeoutIntervals),
+      [45000],
+      "the run must wire the sibling decision lab's 45s boundary"
+    );
+    await page.waitFor(() => document.querySelector('#status').textContent.startsWith('Error'), { label: 'timeout error' });
+
+    const state = await page.evaluate(() => ({
+      status: document.querySelector('#status').textContent,
+      answers: document.querySelector('#answers').textContent,
+      count: document.querySelectorAll('#answers .answer').length,
+      rawHidden: document.querySelector('#raw-details').hidden,
+      runDisabled: document.querySelector('#run-decision').disabled
+    }));
+    assert.equal(state.status, 'Error: Request cancelled or timed out. No automatic retry.');
+    assert.equal(state.answers, '', 'a timed-out run must not leave the previous readout on screen');
+    assert.equal(state.count, 0);
+    assert.equal(state.rawHidden, true);
+    assert.equal(state.runDisabled, false, 'the timed-out run must terminate and re-enable the run button');
+  } finally {
+    if (page) await page.close();
+    await new Promise((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
+  }
+});
+
 // renderImageAnswers only needs replaceChildren/append, so a recording stub stands in for the DOM
 // and the rendered tree can be asserted on directly.
 const answerTarget = () => ({

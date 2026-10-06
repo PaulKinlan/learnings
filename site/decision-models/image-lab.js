@@ -678,6 +678,17 @@ export function validateImageSpec(spec, imagePayload) {
   return true;
 }
 
+// core.js post() reports an aborted signal as a timeout instead of a connection failure, so both
+// labs say the same thing when a provider accepts the connection and then never answers.
+async function fetchVision(url, init, signal) {
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    if (signal?.aborted) throw new Error('Request cancelled or timed out. No automatic retry.');
+    throw err;
+  }
+}
+
 /**
  * Execute image decision evaluation across selected engine.
  */
@@ -782,12 +793,12 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
       model: model || 'jpt-9b'
     };
 
-    const res = await fetch(url, {
+    const res = await fetchVision(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
       signal
-    });
+    }, signal);
     if (!res.ok) {
       throw new Error(`Local vision server returned HTTP ${res.status}.`);
     }
@@ -814,7 +825,7 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
       questions: spec.questions,
       model: model || 'wity-1'
     };
-    const res = await fetch('https://api.typesafe.ai/v1/systemone', {
+    const res = await fetchVision('https://api.typesafe.ai/v1/systemone', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -822,7 +833,7 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
       },
       body: JSON.stringify(payload),
       signal
-    });
+    }, signal);
     if (!res.ok) {
       throw new Error(`Multimodal API returned HTTP ${res.status}. Note: direct browser calls may require CORS configuration or local proxy relay.`);
     }
@@ -1173,6 +1184,8 @@ export function setupImageLab() {
       runBtn.disabled = true;
 
       try {
+        // Without a signal, a provider that accepts the connection and never answers leaves the lab
+        // on "Evaluating visual decision..." forever. 45s is the sibling decision lab's boundary.
         const result = await decideImage({
           spec,
           imagePayload: currentImagePayload,
@@ -1180,7 +1193,7 @@ export function setupImageLab() {
           endpoint,
           key,
           model
-        });
+        }, AbortSignal.timeout(45000));
 
         lastResult = result;
         if (statusEl) {
