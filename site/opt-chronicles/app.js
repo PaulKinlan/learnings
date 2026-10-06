@@ -251,6 +251,8 @@ let activeCategoryFilter = "all";
 let activeSearchQuery = "";
 let selectedEventId = "e-omicron-cluster-deletion";
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+
 export function el(tag, text, cls) {
   if (typeof document === 'undefined') {
     return {
@@ -277,6 +279,17 @@ export function el(tag, text, cls) {
   const n = document.createElement(tag);
   if (text !== undefined) n.textContent = text;
   if (cls) n.className = cls;
+  return n;
+}
+
+/**
+ * Namespace-aware sibling of el(). SVG tag names only mean something inside the SVG namespace:
+ * createElement("circle") hands back an inert HTML unknown element, so every SVG node here goes
+ * through createElementNS and every interpolated field through a text node or an attribute value.
+ */
+function svgEl(tag, attrs) {
+  const n = document.createElementNS(SVG_NS, tag);
+  for (const [name, value] of Object.entries(attrs)) n.setAttribute(name, String(value));
   return n;
 }
 
@@ -486,15 +499,6 @@ function renderTimelineSVG() {
     { start: "2021-12-16", end: "2022-01-10", label: "56-100% (Omicron SEV & Finish)", color: "rgba(240, 235, 255, 0.5)" },
   ];
 
-  let phaseBandsSVG = phases.map(p => {
-    const x1 = paddingX + ((new Date(p.start).getTime() - startTime) / totalSpan) * (width - 2 * paddingX);
-    const x2 = paddingX + ((new Date(p.end).getTime() - startTime) / totalSpan) * (width - 2 * paddingX);
-    return `
-      <rect x="${x1}" y="20" width="${x2 - x1}" height="140" fill="${p.color}" />
-      <text x="${x1 + 6}" y="36" font-size="11" font-weight="600" fill="#627d98">${p.label}</text>
-    `;
-  }).join("");
-
   // Category Colors
   const catColors = {
     sev: "#e02424",
@@ -505,8 +509,29 @@ function renderTimelineSVG() {
     auto: "#0d9488"
   };
 
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.replaceChildren();
+
+  // Draw the bands
+  for (const p of phases) {
+    const x1 = paddingX + ((new Date(p.start).getTime() - startTime) / totalSpan) * (width - 2 * paddingX);
+    const x2 = paddingX + ((new Date(p.end).getTime() - startTime) / totalSpan) * (width - 2 * paddingX);
+    const bandLabel = svgEl("text", { x: x1 + 6, y: 36, "font-size": 11, "font-weight": 600, fill: "#627d98" });
+    bandLabel.textContent = p.label;
+    svg.append(
+      svgEl("rect", { x: x1, y: 20, width: x2 - x1, height: 140, fill: p.color }),
+      bandLabel
+    );
+  }
+
+  // Main axis line
+  svg.append(svgEl("line", {
+    x1: paddingX, y1: baselineY, x2: width - paddingX, y2: baselineY,
+    stroke: "#9fb3c8", "stroke-width": 2
+  }));
+
   // Markers
-  let markersSVG = CHRONICLE_EVENTS.map(ev => {
+  CHRONICLE_EVENTS.forEach((ev, idx) => {
     const t = new Date(ev.date).getTime();
     const x = paddingX + ((t - startTime) / totalSpan) * (width - 2 * paddingX);
     const isVisible = filtered.some(f => f.id === ev.id);
@@ -514,47 +539,53 @@ function renderTimelineSVG() {
     const color = catColors[ev.category] || "#4b5563";
     const radius = isSelected ? 9 : 6;
     const opacity = isVisible ? (isSelected ? 1.0 : 0.85) : 0.15;
-    
+
     // Stagger alternate markers up/down to avoid crowding
-    const idx = CHRONICLE_EVENTS.indexOf(ev);
     const yOffset = (idx % 2 === 0) ? -24 : 24;
     const markerY = baselineY + yOffset;
 
-    return `
-      <g class="event-marker ${isSelected ? 'selected' : ''}" role="button" tabindex="0" aria-label="${ev.date}: ${ev.title}" data-id="${ev.id}" opacity="${opacity}">
-        <line x1="${x}" y1="${baselineY}" x2="${x}" y2="${markerY}" stroke="${color}" stroke-width="${isSelected ? 2.5 : 1.2}" stroke-dasharray="${isSelected ? 'none' : '2,2'}" />
-        <circle cx="${x}" cy="${markerY}" r="${radius}" fill="${color}" stroke="${isSelected ? '#fff' : 'none'}" stroke-width="2" />
-        <text x="${x}" y="${markerY + (yOffset > 0 ? 16 : -10)}" font-size="10" font-weight="${isSelected ? '750' : '600'}" fill="${isSelected ? '#0e2b44' : '#486581'}" text-anchor="middle">
-          ${ev.date.slice(5)}
-        </text>
-      </g>
-    `;
-  }).join("");
-
-  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.innerHTML = `
-    <!-- Background Phases -->
-    ${phaseBandsSVG}
-    <!-- Main Axis Line -->
-    <line x1="${paddingX}" y1="${baselineY}" x2="${width - paddingX}" y2="${baselineY}" stroke="#9fb3c8" stroke-width="2" />
-    <!-- Markers -->
-    ${markersSVG}
-  `;
-
-  // Attach click and keyboard handlers to SVG markers
-  svg.querySelectorAll(".event-marker").forEach(g => {
-    g.addEventListener("click", () => {
-      // @ts-ignore
-      selectEvent(g.dataset.id);
+    const marker = svgEl("g", {
+      class: isSelected ? "event-marker selected" : "event-marker",
+      role: "button",
+      tabindex: 0,
+      "aria-label": `${ev.date}: ${ev.title}`,
+      "data-id": ev.id,
+      opacity: opacity
     });
-    g.addEventListener("keydown", (e) => {
-      // @ts-ignore
+
+    marker.append(
+      svgEl("line", {
+        x1: x, y1: baselineY, x2: x, y2: markerY, stroke: color,
+        "stroke-width": isSelected ? 2.5 : 1.2,
+        "stroke-dasharray": isSelected ? "none" : "2,2"
+      }),
+      svgEl("circle", {
+        cx: x, cy: markerY, r: radius, fill: color,
+        stroke: isSelected ? "#fff" : "none", "stroke-width": 2
+      })
+    );
+
+    const dateLabel = svgEl("text", {
+      x: x, y: markerY + (yOffset > 0 ? 16 : -10), "font-size": 10,
+      "font-weight": isSelected ? "750" : "600",
+      fill: isSelected ? "#0e2b44" : "#486581", "text-anchor": "middle"
+    });
+    dateLabel.textContent = ev.date.slice(5);
+    marker.append(dateLabel);
+
+    // Handlers go on the marker that was just built, so `ev` is already in scope: no
+    // re-querying the tree and reading data-id back to find out which one was hit.
+    marker.addEventListener("click", () => {
+      selectEvent(ev.id);
+    });
+    marker.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        // @ts-ignore
-        selectEvent(g.dataset.id);
+        selectEvent(ev.id);
       }
     });
+
+    svg.append(marker);
   });
 }
 
