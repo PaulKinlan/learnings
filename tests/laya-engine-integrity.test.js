@@ -33,7 +33,7 @@ const payloads = Object.fromEntries(Object.entries(names).map(([key]) => [key,
 ]));
 const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
-async function withFixture({ missing, tampered, local = false, sumsUnavailable = false, sumsTampered = false } = {}, check) {
+async function withFixture({ missing, tampered, local = false, explicitVendoredTokenizer = false, alternateGraph = null, sumsUnavailable = false, sumsTampered = false } = {}, check) {
   const sums = Object.entries(names)
     .filter(([key]) => key !== missing)
     .map(([key, file]) => `${sha(payloads[key])}  ${file}\n`)
@@ -42,7 +42,9 @@ async function withFixture({ missing, tampered, local = false, sumsUnavailable =
   const urls = Object.fromEntries(Object.entries(names).map(([key, file]) => [file,
     `https://fixture.invalid/${file}`,
   ]));
-  urls.SHA256SUMS = "https://fixture.invalid/SHA256SUMS";
+  urls.SHA256SUMS = explicitVendoredTokenizer ? "./laya/ml-SHA256SUMS" : "https://fixture.invalid/SHA256SUMS";
+  if (explicitVendoredTokenizer) urls[names.tokenizer] = "./laya/ml-tokenizer.json";
+  if (alternateGraph) urls[names.main] = `./laya/laya_ml_s256_${alternateGraph}.tflite`;
   const originalFetch = globalThis.fetch;
   const originalCrypto = Object.getOwnPropertyDescriptor(globalThis, "crypto");
   globalThis.__layaTokenizerConstructions = 0;
@@ -55,7 +57,8 @@ async function withFixture({ missing, tampered, local = false, sumsUnavailable =
     if (!key) throw new Error(`unexpected fixture fetch: ${url}`);
     const changed = key === "tokenizer" ? '{"fixture":"changed"}' :
       key === "calibration" ? '{"temperature":[9,9,9],"temperature_by_options":{}}' : `tampered ${key}`;
-    return new Response(tampered === key ? encoder.encode(changed) : payloads[key]);
+    return new Response(tampered === key ? encoder.encode(changed) :
+      alternateGraph && key === "main" ? encoder.encode("s256 graph") : payloads[key]);
   };
   // The real manifest pins the real sums. For these small synthetic sums only, supply the
   // fixture's pin; every artifact still goes through the real SHA-256 implementation.
@@ -133,5 +136,52 @@ test("vendored filenames resolve to upstream digest keys", async () => {
   });
   await withFixture({ local: true, tampered: "tokenizer" }, async ({ urls }) => {
     await expectFailure(loadLaya({ urls }), /integrity check failed for .*\/tokenizer\.json/, "tampered vendored tokenizer");
+  });
+});
+
+test("explicit vendored tokenizer override loads and verifies like measure and quant-smoke", async () => {
+  await withFixture({ explicitVendoredTokenizer: true }, async ({ urls }) => {
+    assert.equal(urls[names.tokenizer], "./laya/ml-tokenizer.json");
+    const session = await loadLaya({ checkpoint: "multilingual", calibration: "source", urls });
+    assert.equal(session.tokenizer.json.fixture, "tokenizer");
+    assert.equal(globalThis.__layaTokenizerConstructions, 1);
+  });
+  await withFixture({ explicitVendoredTokenizer: true, tampered: "tokenizer" }, async ({ urls }) => {
+    await expectFailure(loadLaya({ checkpoint: "multilingual", calibration: "source", urls }),
+      /integrity check failed for .*\/tokenizer\.json/, "tampered explicitly overridden tokenizer");
+    assert.equal(globalThis.__layaTokenizerConstructions, 0);
+  });
+  await withFixture({ explicitVendoredTokenizer: true, missing: "tokenizer" }, async ({ urls }) => {
+    await expectFailure(loadLaya({ checkpoint: "multilingual", calibration: "source", urls }),
+      /no pinned sha256 for \.\/laya\/ml-tokenizer\.json/, "missing explicitly overridden tokenizer digest");
+  });
+});
+
+test("s256 graph requires explicit unverified declaration and reports the skip", async () => {
+  for (const variant of ["embeds_fp32", "embeds_wfp16"]) {
+    await withFixture({ alternateGraph: variant, explicitVendoredTokenizer: true }, async ({ urls }) => {
+      const graphUrl = urls[names.main];
+      const warnings = [];
+      const originalWarn = console.warn;
+      console.warn = (message) => warnings.push(message);
+      try {
+        const session = await loadLaya({ checkpoint: "multilingual", calibration: "source", window: 256,
+          urls, unverified: [graphUrl] });
+        assert.equal(session.tokenizer.json.fixture, "tokenizer");
+        assert.deepEqual(session.unverifiedArtifacts, [graphUrl]);
+        assert.ok(warnings.some((message) => message.includes(`Laya loaded unverified artifact: ${graphUrl}`)));
+        assert.equal(session.window, 256);
+      } finally {
+        console.warn = originalWarn;
+      }
+    });
+  }
+  await withFixture({ alternateGraph: "embeds_wfp16", explicitVendoredTokenizer: true }, async ({ urls }) => {
+    await expectFailure(loadLaya({ checkpoint: "multilingual", window: 256, urls }),
+      /integrity check failed for .*\/laya_ml_s512_embeds_wfp16\.tflite/, "undeclared s256 graph with s512 digest");
+  });
+  await withFixture({ alternateGraph: "embeds_wfp16", explicitVendoredTokenizer: true, missing: "main" }, async ({ urls }) => {
+    await expectFailure(loadLaya({ checkpoint: "multilingual", window: 256, urls }),
+      /no pinned sha256 for \.\/laya\/laya_ml_s256_embeds_wfp16\.tflite/, "undeclared s256 graph with missing main digest");
   });
 });

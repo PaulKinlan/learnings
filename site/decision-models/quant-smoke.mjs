@@ -7,6 +7,7 @@ async function runVariant(name) {
   const graphUrl = './laya/laya_ml_s256_' + name + '.tflite';
   const session = await loadLaya({
     checkpoint: 'multilingual', calibration: 'source', window: 256,
+    unverified: [graphUrl], // s256 variants have no publisher SHA256SUMS entries; reported on the session.
     urls: {
       'laya_ml_s512_embeds_wfp16.tflite': graphUrl,
       'token_embeddings_fp16.bin': './laya/token_embeddings_fp16.bin',
@@ -16,6 +17,7 @@ async function runVariant(name) {
       'laya_ml_calibration.json': './laya/laya_ml_calibration.json',
     },
   });
+  window.__quant.unverified = [...(window.__quant.unverified ?? []), ...session.unverifiedArtifacts];
   const out = [];
   for (const row of SAMPLE) {
     const q = row.question;
