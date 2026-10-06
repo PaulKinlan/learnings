@@ -691,8 +691,11 @@ async function fetchVision(url, init, signal) {
 
 /**
  * Execute image decision evaluation across selected engine.
+ * The signal defaults because this is exported: wiring the boundary only at the lab's call site
+ * leaves every other caller with no timeout, and a provider that accepts the connection and never
+ * answers then never settles. core.js decide()/generate() default the same 45s for the same reason.
  */
-export async function decideImage({ spec, imagePayload, engine = 'client', endpoint = '', key = '', model = 'Imajev-4B' }, signal) {
+export async function decideImage({ spec, imagePayload, engine = 'client', endpoint = '', key = '', model = 'Imajev-4B' }, signal = AbortSignal.timeout(45000)) {
   validateImageSpec(spec, imagePayload);
 
   // Global mock interceptor for test suites

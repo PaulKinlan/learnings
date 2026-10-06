@@ -720,6 +720,55 @@ test('image lab cuts off a provider that never answers at the 45s boundary (lear
   }
 });
 
+test('decideImage cuts off a provider that never answers for direct callers that pass no signal (learnings-ndz)', async (t) => {
+  // The lab wires its own signal, but decideImage is exported and the eku review flagged the gap:
+  // a caller that forgets it hangs exactly as the lab did. This drives decideImage directly with
+  // no signal. The interval asked for is recorded and only the wait is compressed, so the 45s
+  // boundary is exercised rather than a thrown fixture, matching the eku regression's convention.
+  const intervals = [];
+  const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+  AbortSignal.timeout = ms => { intervals.push(ms); return realTimeout(50); };
+  t.after(() => { AbortSignal.timeout = realTimeout; });
+
+  const originalFetch = globalThis.fetch;
+  // The provider accepts the request and never answers; the abort that ends it is the default
+  // signal's own reason, not a fixture. With no signal wired this never settles, which is the hang.
+  globalThis.fetch = (resource, init) => new Promise((resolve, reject) => {
+    if (!init.signal) return;
+    init.signal.addEventListener('abort', () => reject(init.signal.reason));
+  });
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  // Bounded, so the reverted mutation reports a failed assertion instead of hanging the suite.
+  let hangTimer;
+  const hung = new Promise(resolve => {
+    hangTimer = setTimeout(() => resolve({ state: 'hung' }), 5000);
+    hangTimer.unref();
+  });
+  t.after(() => clearTimeout(hangTimer));
+
+  const outcome = await Promise.race([
+    decideImage({
+      spec: PRESETS.ui.spec,
+      imagePayload: DUMMY_IMAGE,
+      engine: 'local',
+      endpoint: 'http://127.0.0.1:8009/v1/systemone',
+      model: 'jpt-9b'
+    }).then(
+      () => ({ state: 'resolved' }),
+      err => ({ state: 'rejected', message: err.message })
+    ),
+    hung
+  ]);
+
+  assert.deepEqual(
+    outcome,
+    { state: 'rejected', message: 'Request cancelled or timed out. No automatic retry.' },
+    "a direct caller that passes no signal must be cut off on decideImage's own boundary, not hang"
+  );
+  assert.deepEqual(intervals, [45000], "decideImage's default must be the sibling decision lab's 45s boundary");
+});
+
 // renderImageAnswers only needs replaceChildren/append, so a recording stub stands in for the DOM
 // and the rendered tree can be asserted on directly.
 const answerTarget = () => ({
