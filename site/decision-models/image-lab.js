@@ -696,7 +696,7 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
     // Check if matching a preset
     let presetKey = null;
     for (const [k, p] of Object.entries(PRESETS)) {
-      if (p.spec.title === spec.title) {
+      if (JSON.stringify(p.spec.questions) === JSON.stringify(spec.questions)) {
         presetKey = k;
         break;
       }
