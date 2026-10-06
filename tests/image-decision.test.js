@@ -952,25 +952,17 @@ test('simulated demo path: preset -> fixture invariant holds regardless of key o
     );
   }
 
-  // (c) NEGATIVE CONTROL: genuinely different options must synthesise, not hit a fixture
-  const customSpec = {
-    title: PRESETS.ui.spec.title,
-    description: PRESETS.ui.spec.description,
-    questions: {
-      is_blocked: { type: 'noul', instructions: 'Is the user blocked?' },
-      action: {
-        type: 'choice',
-        instructions: 'Which button?',
-        criteria: {
-          different_1: 'Different 1',
-          different_2: 'Different 2'
-        }
-      }
-    }
-  };
+  // (c) NEGATIVE CONTROL: the ui preset's own question/option KEYS, but ONE primitive value
+  // altered (a criterion label). Key-order canonicalization preserves values, so the changed
+  // value breaks the match and the spec synthesises. A value-blind canonicalizer that discards
+  // every primitive value would collapse this to the ui preset's keys and return the curated
+  // fixture, so this control catches exactly that over-match.
+  const alteredSpec = structuredClone(PRESETS.ui.spec);
+  alteredSpec.questions.action.criteria.retry =
+    'Click Retry Payment to attempt card re-authorization (altered label)';
 
   const resC = await decideImage({
-    spec: customSpec,
+    spec: alteredSpec,
     imagePayload: DUMMY_IMAGE,
     engine: 'client'
   });
@@ -983,9 +975,9 @@ test('simulated demo path: preset -> fixture invariant holds regardless of key o
       `Negative control must synthesise, not match preset ${preset.id}`
     );
   }
-  // And it must synthesise from its own options
+  // And it must synthesise from its own options (the altered spec keeps the ui option keys)
   assert.ok(
-    ['different_1', 'different_2'].includes(resC.data.answers.action.choice),
+    ['retry', 'cancel', 'dismiss', 'unclear'].includes(resC.data.answers.action.choice),
     'Negative control choice must come from its own options'
   );
 });
