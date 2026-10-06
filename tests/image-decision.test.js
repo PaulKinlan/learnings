@@ -585,6 +585,80 @@ test('Simulated demo mode: carries explicit simulation disclosure in metadata an
 
 const DUMMY_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
+test('image lab clears the prior run on JSON, validation, provider and timeout failures (learnings-63h)', async () => {
+  const { serve } = await import('../scripts/serve.mjs');
+  const { launch } = await import('./lib/cdp.mjs');
+  const { server, url } = await serve();
+  let page;
+  try {
+    page = await launch({ candidates: ['/usr/bin/chromium'] });
+    await page.goto(url + 'decision-models/image-lab.html');
+    await page.waitFor(() => document.querySelector('#preview-image').src.startsWith('data:image/'));
+    const run = async prefix => {
+      await page.click('#run-decision');
+      await page.waitFor(p => document.querySelector('#status').textContent.startsWith(p), { args: [prefix], label: prefix });
+    };
+    const emptyResult = async prefix => {
+      await run(prefix);
+      const state = await page.evaluate(() => ({
+        status: document.querySelector('#status').textContent,
+        answers: document.querySelector('#answers').textContent,
+        count: document.querySelectorAll('#answers .answer').length,
+        rawHidden: document.querySelector('#raw-details').hidden
+      }));
+      assert.equal(state.answers, '', `${state.status}: previous answers must be gone`);
+      assert.equal(state.count, 0);
+      assert.equal(state.rawHidden, true);
+    };
+    await run('Decision complete');
+    const first = await page.evaluate(() => document.querySelector('#answers').textContent);
+    assert.match(first, /is_blockedp\(yes\): 0\.965/);
+    assert.match(first, /actionSelected: retry/);
+    assert.match(first, /Confidence score: 0\.912/);
+    assert.match(first, /severityExpected score: 1\.94/);
+
+    await page.type('#questions', '{');
+    await emptyResult('JSON Error:');
+    await page.click('#preset-ui');
+    await run('Decision complete');
+    await page.type('#questions', JSON.stringify({ questions: {} }));
+    await emptyResult('Error: Specification requires a non-empty title string.');
+
+    const selectEngine = async value => page.evaluate(v => {
+      const select = document.querySelector('#engine');
+      select.value = v;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    }, value);
+    const previousSuccess = async () => {
+      await selectEngine('client');
+      await page.click('#preset-ui');
+      await run('Decision complete');
+      assert.equal(await page.evaluate(() => document.querySelector('#answers').textContent), first);
+      await selectEngine('local');
+    };
+    await previousSuccess();
+    await page.evaluate(() => { window.fetch = async () => ({ ok: true, json: async () => ({ model: 'bad-provider', answers: {} }) }); });
+    await emptyResult('Error:'); // validateAnswers refuses missing provider answers
+    await page.evaluate(() => { document.querySelector('#threshold').dispatchEvent(new Event('input')); });
+    assert.equal(await page.evaluate(() => document.querySelector('#answers').textContent), '', 'threshold must not restore the stale result');
+
+    await previousSuccess();
+    await page.evaluate(() => { window.fetch = async () => { throw new TypeError('fixture fetch failure'); }; });
+    await emptyResult('Error: fixture fetch failure');
+    await previousSuccess();
+    await page.evaluate(() => { window.fetch = async () => { throw new DOMException('fixture timeout', 'TimeoutError'); }; });
+    await emptyResult('Error: fixture timeout');
+
+    await selectEngine('client');
+    await page.click('#preset-ui');
+    await run('Decision complete');
+    assert.equal(await page.evaluate(() => document.querySelector('#answers').textContent), first, 'successful fixture readout unchanged after failures');
+  } finally {
+    if (page) await page.close();
+    await new Promise((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
+  }
+});
+
 // renderImageAnswers only needs replaceChildren/append, so a recording stub stands in for the DOM
 // and the rendered tree can be asserted on directly.
 const answerTarget = () => ({
