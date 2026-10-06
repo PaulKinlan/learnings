@@ -1137,6 +1137,9 @@ export function setupImageLab() {
   // Run decision button
   if (runBtn) {
     runBtn.addEventListener('click', async () => {
+      if (answersEl) answersEl.replaceChildren();
+      if (rawDetails) rawDetails.hidden = true;
+      lastResult = null;
       let spec;
       try {
         spec = JSON.parse(questionsArea?.value || '{}');
