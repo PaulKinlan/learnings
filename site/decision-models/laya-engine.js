@@ -17,8 +17,7 @@
 //
 // The main graph's weights download once from huggingface.co (the ONLY network requests, each
 // from an immutable commit revision and each verified byte-for-byte against the publisher's
-// SHA256SUMS unless an override explicitly declares an unpinned variant unverified — an
-// integrity check and not a root of trust, see the note in loadLaya); the act
+// SHA256SUMS (an integrity check and not a root of trust, see the note in loadLaya); the act
 // head, the contract texts and this module are served from this site. Packing and decoding live
 // in laya-pack.js, pinned id-for-id against the publisher's gate captures.
 
@@ -124,8 +123,8 @@ async function verifySha256(bytes, sha256, label) {
 }
 
 /** Fetch a URL into a Uint8Array with progress callbacks and a required sha256 check. */
-async function fetchBytes(url, { onProgress = null, sha256, label = url, unverified = false, onUnverified = null } = {}) {
-  if (!sha256 && !unverified) throw new Error(`no pinned sha256 for ${label}`);
+async function fetchBytes(url, { onProgress = null, sha256, label = url } = {}) {
+  if (!sha256) throw new Error(`no pinned sha256 for ${label}`);
   const res = await fetch(url);
   if (!res.ok) throw new Error(`download failed for ${label}: HTTP ${res.status}`);
   const total = Number(res.headers.get("content-length")) || 0;
@@ -145,12 +144,7 @@ async function fetchBytes(url, { onProgress = null, sha256, label = url, unverif
     bytes.set(chunk, offset);
     offset += chunk.length;
   }
-  if (unverified) {
-    console.warn(`Laya loaded unverified artifact: ${url} (requested as ${label})`);
-    onUnverified?.(label);
-  } else {
-    await verifySha256(bytes, sha256, label);
-  }
+  await verifySha256(bytes, sha256, label);
   return bytes;
 }
 
@@ -190,10 +184,9 @@ function fp16Lut() {
  * Load the engine. Nothing downloads until this is called — never on page load.
  * `onProgress(stage, received, total)` reports the weight downloads so a slow connection
  * shows progress. `urls` overrides individual asset URLs (used by tests to serve local
- * copies instead of re-downloading from the hub). `unverified` explicitly names override
- * URLs with no published digest; each is warned and recorded on the returned session.
+ * copies instead of re-downloading from the hub).
  */
-export async function loadLaya({ checkpoint = "multilingual", calibration = "fitted", window = null, onProgress = null, urls = {}, unverified = [] } = {}) {
+export async function loadLaya({ checkpoint = "multilingual", calibration = "fitted", window = null, onProgress = null, urls = {} } = {}) {
   const baseSpec = CHECKPOINTS[checkpoint];
   const spec = window ? { ...baseSpec, window } : baseSpec;
   if (!spec) throw new Error(`unknown checkpoint '${checkpoint}' (known: ${Object.keys(CHECKPOINTS).join(", ")})`);
@@ -234,22 +227,7 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
   // from the upstream names, including when explicitly overridden by a driver; in that
   // case their byte-identical upstream artifact supplies the digest.
   const basename = (url) => String(url).split("/").pop().split("?")[0];
-  const unverifiedArtifacts = [];
-  const declaredUnverified = new Set(unverified);
-  for (const url of declaredUnverified) {
-    if (!Object.values(urls).includes(url) || url === sumsUrl) {
-      throw new Error(`unverified declaration must name an artifact override: ${url}`);
-    }
-  }
-  const usedUnverified = new Set();
   const integrityFor = (key, file, url) => {
-    if (declaredUnverified.has(url)) {
-      if (urls[file] !== url || sums[basename(url)] || (localMap[key] === basename(url) && sums[file])) {
-        throw new Error(`cannot declare pinned or non-overridden artifact unverified: ${url}`);
-      }
-      usedUnverified.add(url);
-      return { unverified: true, onUnverified: () => unverifiedArtifacts.push(url) };
-    }
     const sha256 = sums[urls[file] == null && localMap[key] ? file : basename(url)] ?? sums[file];
     if (!sha256 && urls[file] != null && basename(url) !== file) {
       throw new Error(`no pinned sha256 for ${url} (${spec.repo}/${file})`);
@@ -328,16 +306,13 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
         temperature_by_options: calibrationJson.temperature_by_options,
       };
 
-  for (const url of declaredUnverified) {
-    if (!usedUnverified.has(url)) throw new Error(`unused unverified artifact declaration: ${url}`);
-  }
   const encode = (text) => tokenizer.encode(text, { add_special_tokens: false }).ids;
 
-  return new LayaSession({ spec, checkpoint, main, act, tokenizer, encode, config, embeddings, unverifiedArtifacts });
+  return new LayaSession({ spec, checkpoint, main, act, tokenizer, encode, config, embeddings });
 }
 
 export class LayaSession {
-  constructor({ spec, checkpoint, main, act, tokenizer, encode, config, embeddings, unverifiedArtifacts = [] }) {
+  constructor({ spec, checkpoint, main, act, tokenizer, encode, config, embeddings }) {
     this.spec = spec;
     this.checkpointName = checkpoint;
     this.checkpoint = `${spec.repo} — ${spec.label}`;
@@ -347,7 +322,6 @@ export class LayaSession {
     this.encode = encode;
     this.config = config;
     this.embeddings = embeddings; // Uint16Array fp16, [256000,768] row-major, when external
-    this.unverifiedArtifacts = unverifiedArtifacts;
     this.lut = embeddings ? fp16Lut() : null;
     this.window = spec.window;
     this.pooledDim = spec.pooledDim;
