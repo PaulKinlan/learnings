@@ -5,7 +5,7 @@
  * and JevImageBench v0.1.5 explorer table.
  */
 
-import { gate, loopbackEndpoint } from './core.js';
+import { gate, loopbackEndpoint, validateAnswers } from './core.js';
 import {
   BENCHMARK_META,
   JEV_IMAGE_BENCH_DATA,
@@ -776,7 +776,11 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
     if (!res.ok) {
       throw new Error(`Local vision server returned HTTP ${res.status}.`);
     }
-    const data = await res.json();
+    // The response is externally derived, so it passes the same validator core.js decide()
+    // applies: a wrong type, non-finite probability, bad distribution or out-of-set choice
+    // throws naming the question instead of reaching renderImageAnswers.
+    // The client engine above is deliberately not gated - it is the disclosed offline fixture.
+    const data = validateAnswers(await res.json(), spec.questions);
     return {
       data,
       elapsed: performance.now() - start,
@@ -807,7 +811,8 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
     if (!res.ok) {
       throw new Error(`Multimodal API returned HTTP ${res.status}. Note: direct browser calls may require CORS configuration or local proxy relay.`);
     }
-    const data = await res.json();
+    // Same boundary as the local engine: the hosted provider's JSON is validated before render.
+    const data = validateAnswers(await res.json(), spec.questions);
     return {
       data,
       elapsed: performance.now() - start,

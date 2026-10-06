@@ -17,7 +17,7 @@ import {
   decideImage,
   renderImageAnswers
 } from '../site/decision-models/image-lab.js';
-import { gate } from '../site/decision-models/core.js';
+import { gate, validateAnswers } from '../site/decision-models/core.js';
 
 test('JevImageBench v0.1.5: dataset integrity & metadata', () => {
   assert.equal(BENCHMARK_META.name, 'JevImageBench');
@@ -574,11 +574,7 @@ test('Simulated demo mode: carries explicit simulation disclosure in metadata an
   assert.equal(res.data.simulationNotice, expectedNotice);
 
   // Verify UI rendering of simulation disclosure badge
-  const dummyTarget = {
-    children: [],
-    replaceChildren() { this.children = []; },
-    append(...items) { this.children.push(...items); }
-  };
+  const dummyTarget = answerTarget();
 
   renderImageAnswers(dummyTarget, res, 0.8);
   const badge = dummyTarget.children.find(c => c.id === 'simulation-badge');
@@ -587,8 +583,61 @@ test('Simulated demo mode: carries explicit simulation disclosure in metadata an
   assert.ok(badge.textContent.includes('Connect a local vision server'));
 });
 
+const DUMMY_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+// renderImageAnswers only needs replaceChildren/append, so a recording stub stands in for the DOM
+// and the rendered tree can be asserted on directly.
+const answerTarget = () => ({
+  children: [],
+  replaceChildren() { this.children = []; },
+  append(...items) { this.children.push(...items); }
+});
+
+// A contract-shaped vision provider response for PRESETS.ui.spec (noul + choice + score).
+// The image lab posts the reader's image to a local or hosted provider and renders whatever
+// comes back, so this is the payload every provider-path test starts from and mutates.
+const visionResponse = () => ({
+  model: 'stub-vision-server',
+  answers: {
+    is_blocked: { type: 'noul', noul: 0.93, confidence: 0.93 },
+    action: {
+      type: 'choice',
+      choice: 'retry',
+      confidence: 0.88,
+      probabilities: { retry: 0.88, cancel: 0.06, dismiss: 0.04, unclear: 0.02 }
+    },
+    severity: {
+      type: 'score',
+      score: 1.9,
+      confidence: 0.9,
+      probabilities: { '0': 0.02, '1': 0.08, '2': 0.9 }
+    }
+  }
+});
+
+// Stub the network so a test controls exactly what the provider returns. Returns the URLs called.
+function stubProvider(payload, t) {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return { ok: true, status: 200, json: async () => structuredClone(payload) };
+  };
+  t.after(() => { globalThis.fetch = original; });
+  return calls;
+}
+
+const runEngine = (engine, spec = PRESETS.ui.spec) => decideImage({
+  spec,
+  imagePayload: DUMMY_IMAGE,
+  engine,
+  endpoint: 'http://127.0.0.1:8009/v1/systemone',
+  key: 'synthetic-test-not-a-real-key',
+  model: engine === 'local' ? 'jpt-9b' : 'wity-1'
+});
+
 test('Local vision endpoint uses the core.js loopback contract (learnings-8u9)', async (t) => {
-  const dummyImage = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const dummyImage = DUMMY_IMAGE;
   const spec = PRESETS.ui.spec;
   const run = endpoint => decideImage({ spec, imagePayload: dummyImage, engine: 'local', endpoint, model: 'jpt-9b' });
 
@@ -596,7 +645,9 @@ test('Local vision endpoint uses the core.js loopback contract (learnings-8u9)',
   let calls = [];
   globalThis.fetch = async (url, options) => {
     calls.push({ url, options });
-    return { ok: true, json: async () => ({ model: 'stub-vision-server', answers: {} }) };
+    // Contract-shaped, because the response is now gated by core.js validateAnswers:
+    // this test pins the endpoint contract, so it must not trip the answer gate.
+    return { ok: true, json: async () => visionResponse() };
   };
   t.after(() => { globalThis.fetch = original; });
 
@@ -644,5 +695,105 @@ test('Local vision endpoint uses the core.js loopback contract (learnings-8u9)',
       assert.deepEqual(Object.keys(JSON.parse(calls[0].options.body).questions), Object.keys(spec.questions));
       assert.equal(res.source, 'Local Vision Decision Server');
     });
+  }
+});
+
+// The two engines below post the reader's image to a provider and used to hand `await res.json()`
+// straight to renderImageAnswers. They now pass it through the same validator core.js decide() uses,
+// so there is one convention for externally derived answers rather than an image-specific second one.
+test('local and api engines refuse malformed provider answers with the core.js message (learnings-ytm)', async (t) => {
+  const refused = [
+    ['an out-of-set choice', () => { const r = visionResponse(); r.answers.action.choice = 'rm_rf'; return r; }, /Out-of-set choice: action\./],
+    ['a confidence outside zero to one', () => { const r = visionResponse(); r.answers.action.confidence = 99; return r; }, /Invalid confidence: action\./],
+    ['a non-finite probability', () => { const r = visionResponse(); r.answers.action.probabilities.retry = Infinity; return r; }, /Invalid distribution: action\./],
+    ['a distribution over the wrong option set', () => { const r = visionResponse(); r.answers.action.probabilities = { retry: 1 }; return r; }, /Invalid distribution: action\./],
+    ['a distribution that does not sum to one', () => { const r = visionResponse(); r.answers.action.probabilities = { retry: 0.9, cancel: 0.9, dismiss: 0.9, unclear: 0.9 }; return r; }, /Distribution does not sum to one: action\./],
+    ['a non-numeric probability', () => { const r = visionResponse(); r.answers.is_blocked.noul = 'very likely'; return r; }, /Invalid probability: is_blocked\./],
+    ['a wrong answer type', () => { const r = visionResponse(); r.answers.is_blocked.type = 'choice'; return r; }, /Missing or wrong answer type: is_blocked\./],
+    ['a missing answer', () => { const r = visionResponse(); delete r.answers.severity; return r; }, /Missing or wrong answer type: severity\./],
+    ['a score outside the level range', () => { const r = visionResponse(); r.answers.severity.score = 99; return r; }, /Invalid score: severity\./],
+    ['an empty answers object', () => ({ model: 'stub-vision-server', answers: {} }), /Missing or wrong answer type: is_blocked\./],
+    ['no answers object at all', () => ({ model: 'stub-vision-server' }), /Provider did not return an answers object\./]
+  ];
+
+  for (const engine of ['local', 'api']) {
+    for (const [name, build, message] of refused) {
+      await t.test(`${engine} engine refuses ${name}`, async (st) => {
+        const calls = stubProvider(build(), st);
+        await assert.rejects(runEngine(engine), message);
+        assert.equal(calls.length, 1, 'the refusal is about the response, so the request still reaches the provider');
+      });
+    }
+  }
+});
+
+// The other half of the gate: a well-formed provider response must still render in full.
+test('local and api engines still render a valid provider response (learnings-ytm)', async (t) => {
+  const payload = visionResponse();
+  const expected = {
+    local: 'http://127.0.0.1:8009/v1/systemone',
+    api: 'https://api.typesafe.ai/v1/systemone'
+  };
+
+  for (const engine of ['local', 'api']) {
+    await t.test(`${engine} engine renders every question with its gate verdict`, async (st) => {
+      const calls = stubProvider(payload, st);
+      const res = await runEngine(engine);
+
+      assert.equal(calls.length, 1, 'a valid run still makes exactly one provider request');
+      assert.equal(calls[0].url, expected[engine]);
+      assert.deepEqual(res.data, payload, 'a valid response passes through unchanged');
+      assert.notEqual(res.isSimulation, true, 'a provider run must not claim to be a simulation');
+      assert.equal(res.source, engine === 'local' ? 'Local Vision Decision Server' : 'Multimodal API (wity-1)');
+
+      const target = answerTarget();
+      renderImageAnswers(target, res, 0.8);
+      assert.equal(target.children.length, 3, 'one rendered answer per question, and no simulation badge');
+      assert.equal(target.children.find(c => c.id === 'simulation-badge'), undefined);
+      assert.deepEqual(
+        target.children.map(c => c.textContent.match(/Gate verdict: \w+/)[0]),
+        ['Gate verdict: positive', 'Gate verdict: accept', 'Gate verdict: accept']
+      );
+      assert.ok(target.children[0].textContent.includes('p(yes): 0.930'));
+      assert.ok(target.children[1].textContent.includes('Selected: retry'));
+      assert.ok(target.children[2].textContent.includes('Expected score: 1.90'));
+    });
+  }
+});
+
+// The demo engine is deliberately NOT gated: it is the disclosed offline path that must work with no
+// server at all, so a fixture must never be refused by a provider-side validator. This pins that it
+// still renders, and that the fixtures stay contract-shaped so both readouts share one convention.
+test('simulated demo path stays ungated and renders offline (learnings-ytm)', async (t) => {
+  const customSpec = {
+    title: 'Custom image triage',
+    questions: {
+      blocked: { type: 'noul', instructions: 'Is the user blocked?' },
+      act: { type: 'choice', instructions: 'Which action?', criteria: { go: 'Proceed', stop: 'Halt' } },
+      lvl: { type: 'score', instructions: 'How severe?', criteria: ['low', 'mid', 'high'] }
+    }
+  };
+  const runs = [...Object.entries(PRESETS).map(([key, p]) => [`preset ${key}`, p.spec]), ['custom image with no preset match', customSpec]];
+
+  for (const [name, spec] of runs) {
+    await t.test(`demo engine renders ${name} with no server and no validation refusal`, async () => {
+      const res = await decideImage({ spec, imagePayload: DUMMY_IMAGE, engine: 'client' });
+      assert.equal(res.isSimulation, true);
+      assert.equal(res.data.simulated, true);
+
+      const target = answerTarget();
+      renderImageAnswers(target, res, 0.8);
+      const badge = target.children.find(c => c.id === 'simulation-badge');
+      assert.ok(badge, 'the simulation disclosure badge still renders');
+      assert.equal(target.children.length, Object.keys(spec.questions).length + 1, 'disclosure badge plus one answer per question');
+      assert.deepEqual(Object.keys(res.data.answers), Object.keys(spec.questions), 'every question is answered offline');
+    });
+  }
+
+  for (const [key, preset] of Object.entries(PRESETS)) {
+    assert.doesNotThrow(
+      () => validateAnswers({ answers: preset.answers }, preset.spec.questions),
+      `preset ${key} fixture answers must stay contract-shaped, so the demo and a validated provider run read the same`
+    );
   }
 });
