@@ -167,9 +167,12 @@ test("Classifier API: classify formats decisions for binary, categorical and ord
 const PROTO_ID = "__proto__";
 
 // The caller's own path: JSON.parse yields `__proto__` as an ordinary own key, so the id does
-// reach this loop. The literal-syntax trap is in a map's key, not in this field: `{ id: "__proto__" }`
-// is a question whose id string is `__proto__`, while a computed key such as `{ [q.id]: q }` would
-// set the prototype instead of adding an entry.
+// reach this loop, and `{ id: "__proto__" }` is no trap — the property name is `id`, so its value is
+// just the string `__proto__`. The trap is a plain `{}` map keyed by an untrusted id or label —
+// `layaQuestions[q.id] = ...` or `crit[label] = ...`: the key resolves to the accessor inherited
+// from Object.prototype, so the setter runs — an object value replaces the map's prototype, a
+// string value is ignored and no own property appears. A computed key never does this:
+// `{ [q.id]: q }` defines an own property and never touches the prototype.
 function playgroundSchema() {
   return JSON.parse(
     '{"questions":[' +
