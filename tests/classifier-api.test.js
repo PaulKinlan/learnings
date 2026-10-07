@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { Classifier, toLayaQuestions } from "../site/decision-models/classifier-api.js";
+import { renderOptions } from "../site/decision-models/laya-pack.js";
 
 // Mock Laya session for testing Classifier wrapper and mapping
 class MockLayaSession {
@@ -165,8 +166,15 @@ test("Classifier API: classify formats decisions for binary, categorical and ord
 // demo-5 schema textarea's JSON.parse output and no id validation in front of it.
 const PROTO_ID = "__proto__";
 
-// The caller's own path: JSON.parse yields `__proto__` as an ordinary own key, whereas the object
-// literal `{ id: "__proto__" }` would set the prototype instead and never reach the loop.
+// The caller's own path: the schema row is parsed from JSON that names the id as
+// `{"id":"__proto__"}`, so JSON.parse yields an ordinary own key `id` whose string *value* is
+// `__proto__` — the id reaches this loop as `q.id`, a legal non-empty string id, not as an own
+// `__proto__` key of the parsed row. The trap is the plain `{}` map written by assignment with that
+// untrusted id or label as the key —
+// `layaQuestions[q.id] = ...` or `crit[label] = ...`: the key resolves to the accessor inherited
+// from Object.prototype, so the setter runs — an object value replaces the map's prototype, a
+// string value is ignored and no own property appears. A computed key in an object literal never
+// does this: `{ [q.id]: q }` defines an own property and never touches the prototype.
 function playgroundSchema() {
   return JSON.parse(
     '{"questions":[' +
@@ -222,4 +230,79 @@ test("Classifier API: classify() returns a __proto__ question id as an own decis
   assert.equal(result.tool.label, "list_tabs");
 
   classifier.destroy();
+});
+
+// learnings-e7p: the categorical criteria map inside toLayaQuestions() is keyed by the caller's
+// option label, and `__proto__` is a legal label on the same textarea-JSON-to-create() path as the
+// ids above. On a plain {} accumulator the assignment lands on the inherited accessor, which
+// ignores a non-object value, so the option is dropped from the criteria map and renderOptions()
+// names one option fewer than the caller did. With a single survivor left, laya-pack's
+// buildSequence() rejects the whole sequence — "the inference contract needs at least two
+// options"; with two or more survivors the run simply proceeds against the truncated question.
+// decodeQuestion()'s "N logits for M choice criteria" guard does not fire on this drop — it and
+// renderOptions() read the same criteria map, so their counts agree — it only catches a genuine
+// disagreement between the gathered logits and the number of criteria.
+test("Classifier API: toLayaQuestions keeps a __proto__ option label as an own criterion (learnings-e7p)", () => {
+  // Mirrors the playground caller: the demo-5 schema textarea's text, JSON.parsed — `__proto__`
+  // arrives as an ordinary string in the first option's `label` field, not as an own key of the
+  // parsed rows — and handed to create().
+  const questions = JSON.parse(
+    '{"questions":[{"id":"tool","type":"categorical","prompt":"Which tool?","options":[' +
+      '{"label":"__proto__","description":"Escalate?"},{"label":"list_tabs","description":"List them"}]}]}',
+  ).questions;
+
+  const crit = toLayaQuestions(questions, null).tool.crit;
+
+  assert.deepEqual(
+    Object.keys(crit),
+    ["__proto__", "list_tabs"],
+    "every option label the caller named comes back as a criterion key, in the caller's order",
+  );
+  assert.ok(
+    Object.hasOwn(crit, "__proto__"),
+    "a __proto__ option label must be an own property, not a reassignment of the map's prototype",
+  );
+  assert.equal(crit["__proto__"], "Escalate?");
+  assert.equal(crit.list_tabs, "List them");
+  assert.equal(
+    Object.getPrototypeOf(crit),
+    null,
+    "the criteria accumulator is prototype-less, so no option label can reach an inherited accessor",
+  );
+
+  // The engine's own prompt builder reads this map with Object.entries(crit), so the label has to
+  // survive as far as the rendered option text.
+  assert.deepEqual(
+    renderOptions({ t: "choice", crit }),
+    ["__proto__: Escalate?", "list_tabs: List them"],
+    "a __proto__ option is rendered into the prompt like any other option",
+  );
+});
+
+test("Classifier API: toLayaQuestions maps ordinary categorical labels unchanged (learnings-e7p)", () => {
+  const questions = [
+    {
+      id: "dept",
+      type: "categorical",
+      prompt: "Which team?",
+      options: [
+        { label: "billing", description: "Payments" },
+        { label: "tech", description: "Bugs" },
+        { label: "plain" },
+        "ask_human",
+      ],
+    },
+  ];
+
+  const crit = toLayaQuestions(questions, null).dept.crit;
+
+  // Spread into a plain object: the criteria are still content-identical to the pre-fix map, only
+  // the prototype is (deliberately) different.
+  assert.deepEqual({ ...crit }, {
+    billing: "Payments",
+    tech: "Bugs",
+    plain: "plain",
+    ask_human: "ask_human",
+  });
+  assert.deepEqual(Object.keys(crit), ["billing", "tech", "plain", "ask_human"], "label-index order is unchanged");
 });
