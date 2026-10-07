@@ -166,13 +166,15 @@ test("Classifier API: classify formats decisions for binary, categorical and ord
 // demo-5 schema textarea's JSON.parse output and no id validation in front of it.
 const PROTO_ID = "__proto__";
 
-// The caller's own path: JSON.parse yields `__proto__` as an ordinary own key, so the id does
-// reach this loop, and `{ id: "__proto__" }` is no trap — the property name is `id`, so its value is
-// just the string `__proto__`. The trap is a plain `{}` map keyed by an untrusted id or label —
+// The caller's own path: the schema row is parsed from JSON that names the id as
+// `{"id":"__proto__"}`, so JSON.parse yields an ordinary own key `id` whose string *value* is
+// `__proto__` — the id reaches this loop as `q.id`, a legal non-empty string id, not as an own
+// `__proto__` key of the parsed row. The trap is the plain `{}` map written by assignment with that
+// untrusted id or label as the key —
 // `layaQuestions[q.id] = ...` or `crit[label] = ...`: the key resolves to the accessor inherited
 // from Object.prototype, so the setter runs — an object value replaces the map's prototype, a
-// string value is ignored and no own property appears. A computed key never does this:
-// `{ [q.id]: q }` defines an own property and never touches the prototype.
+// string value is ignored and no own property appears. A computed key in an object literal never
+// does this: `{ [q.id]: q }` defines an own property and never touches the prototype.
 function playgroundSchema() {
   return JSON.parse(
     '{"questions":[' +
@@ -233,12 +235,17 @@ test("Classifier API: classify() returns a __proto__ question id as an own decis
 // learnings-e7p: the categorical criteria map inside toLayaQuestions() is keyed by the caller's
 // option label, and `__proto__` is a legal label on the same textarea-JSON-to-create() path as the
 // ids above. On a plain {} accumulator the assignment lands on the inherited accessor, which
-// ignores a non-object value, so the option is dropped from the criteria map and the engine is
-// asked for one option fewer than the caller named (laya-pack's decodeQuestion() rejects that with
-// "N logits for M choice criteria").
+// ignores a non-object value, so the option is dropped from the criteria map and renderOptions()
+// names one option fewer than the caller did. With a single survivor left, laya-pack's
+// buildSequence() rejects the whole sequence — "the inference contract needs at least two
+// options"; with two or more survivors the run simply proceeds against the truncated question.
+// decodeQuestion()'s "N logits for M choice criteria" guard does not fire on this drop — it and
+// renderOptions() read the same criteria map, so their counts agree — it only catches a genuine
+// disagreement between the gathered logits and the number of criteria.
 test("Classifier API: toLayaQuestions keeps a __proto__ option label as an own criterion (learnings-e7p)", () => {
-  // Mirrors the playground caller: the demo-5 schema textarea's text, JSON.parsed (which yields
-  // `__proto__` as an ordinary own key) and handed to create().
+  // Mirrors the playground caller: the demo-5 schema textarea's text, JSON.parsed — `__proto__`
+  // arrives as an ordinary string in the first option's `label` field, not as an own key of the
+  // parsed rows — and handed to create().
   const questions = JSON.parse(
     '{"questions":[{"id":"tool","type":"categorical","prompt":"Which tool?","options":[' +
       '{"label":"__proto__","description":"Escalate?"},{"label":"list_tabs","description":"List them"}]}]}',
