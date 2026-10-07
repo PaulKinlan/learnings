@@ -42,6 +42,59 @@ async function getLaya(onProgress, urls) {
   return loadingLayaPromise;
 }
 
+/**
+ * Map Classifier questions (the caller's schema) into Laya's {t, ins, crit} contract.
+ *
+ * A null-prototype map, because the id is caller-supplied and `Classifier.create()` validates
+ * only that it is a non-empty string. On a normal object, `map['__proto__'] = {...}` hits the
+ * inherited accessor and reassigns the prototype instead of adding a key, so the question the
+ * caller asked is dropped before `classify()`'s Object.entries() ever runs it. JSON.parse (the
+ * playground hands the schema textarea's text straight here) yields `__proto__` as an ordinary
+ * own key, so the id does reach this loop.
+ */
+export function toLayaQuestions(questions, context) {
+  const layaQuestions = Object.create(null);
+  for (const q of questions) {
+    const prompt = context ? `${context}\n${q.prompt || ""}` : q.prompt || "";
+    const qtype = (q.type || "categorical").toLowerCase();
+
+    if (qtype === "binary" || qtype === "boolean") {
+      layaQuestions[q.id] = {
+        t: "noul",
+        ins: prompt,
+        crit: {},
+        meta: { originalType: "binary", q },
+      };
+    } else if (qtype === "ordinal" || qtype === "score") {
+      const optionsList = Array.isArray(q.options) ? q.options : [];
+      const crit = optionsList.map((o) => (typeof o === "string" ? o : o.description || o.label));
+      layaQuestions[q.id] = {
+        t: "score",
+        ins: prompt,
+        crit,
+        meta: { originalType: "ordinal", q, optionsList },
+      };
+    } else {
+      // Categorical / choice
+      const optionsList = Array.isArray(q.options) ? q.options : [];
+      const crit = {};
+      for (const o of optionsList) {
+        const label = typeof o === "string" ? o : o.label;
+        const desc = typeof o === "string" ? o : o.description || o.label;
+        crit[label] = desc;
+      }
+      layaQuestions[q.id] = {
+        t: "choice",
+        ins: prompt,
+        crit,
+        meta: { originalType: "categorical", q, optionsList },
+      };
+    }
+  }
+
+  return layaQuestions;
+}
+
 export class Classifier {
   constructor(session, schema, layaQuestions) {
     this._session = session;
@@ -106,46 +159,7 @@ export class Classifier {
     signal?.throwIfAborted();
 
     // Map Classifier questions to Laya format
-    const layaQuestions = {};
-    for (const q of questions) {
-      const prompt = context ? `${context}\n${q.prompt || ""}` : q.prompt || "";
-      const qtype = (q.type || "categorical").toLowerCase();
-
-      if (qtype === "binary" || qtype === "boolean") {
-        layaQuestions[q.id] = {
-          t: "noul",
-          ins: prompt,
-          crit: {},
-          meta: { originalType: "binary", q },
-        };
-      } else if (qtype === "ordinal" || qtype === "score") {
-        const optionsList = Array.isArray(q.options) ? q.options : [];
-        const crit = optionsList.map((o) => (typeof o === "string" ? o : o.description || o.label));
-        layaQuestions[q.id] = {
-          t: "score",
-          ins: prompt,
-          crit,
-          meta: { originalType: "ordinal", q, optionsList },
-        };
-      } else {
-        // Categorical / choice
-        const optionsList = Array.isArray(q.options) ? q.options : [];
-        const crit = {};
-        for (const o of optionsList) {
-          const label = typeof o === "string" ? o : o.label;
-          const desc = typeof o === "string" ? o : o.description || o.label;
-          crit[label] = desc;
-        }
-        layaQuestions[q.id] = {
-          t: "choice",
-          ins: prompt,
-          crit,
-          meta: { originalType: "categorical", q, optionsList },
-        };
-      }
-    }
-
-    return new Classifier(session, options, layaQuestions);
+    return new Classifier(session, options, toLayaQuestions(questions, context));
   }
 
   get contextWindow() {
@@ -165,7 +179,10 @@ export class Classifier {
     signal?.throwIfAborted();
 
     const stateText = context ? `${context}\n${String(input)}` : String(input);
-    const results = {};
+    // Null-prototype for the same reason as toLayaQuestions(): every key here is a
+    // caller-supplied question id, and a `__proto__` id on a normal object would reassign the
+    // prototype instead of adding the decision, dropping it from the returned map.
+    const results = Object.create(null);
 
     for (const [qid, qConfig] of Object.entries(this._layaQuestions)) {
       signal?.throwIfAborted();
