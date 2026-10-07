@@ -29,6 +29,12 @@ export function requestFor(spec, model) { validateSpec(spec); text(model,'Model'
 export function validateAnswers(data, questions) {
   if(!record(data) || !record(data.answers)) fail('Provider did not return an answers object.');
   const unit = v => typeof v==='number' && Number.isFinite(v) && v>=0 && v<=1;
+  // The answer-ID set must match the question-ID set exactly. An unexpected or duplicated
+  // answer ID is refused here, before any caller renders a single block, so a provider that
+  // returns extra answers fails closed instead of half-rendering the requested ones.
+  for(const id of Object.keys(data.answers)) {
+    if(!own(questions, id)) fail(`Unexpected answer ID: ${id}.`);
+  }
   for(const [id,q] of Object.entries(questions)) {
     const a=data.answers[id]; if(!record(a) || a.type!==q.type) fail(`Missing or wrong answer type: ${id}.`);
     if(q.type==='noul') { if(!unit(a.noul)) fail(`Invalid probability: ${id}.`); continue; }

@@ -165,3 +165,58 @@ test('playground Jev run rejects malformed provider answers and still renders va
     await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
   }
 });
+
+test('playground Jev run refuses an unexpected answer ID before any render (learnings-wnn)', async () => {
+  const { serve } = await import('../scripts/serve.mjs');
+  const { launch } = await import('./lib/cdp.mjs');
+  const { server, url } = await serve();
+  let page;
+  try {
+    page = await launch({ candidates: ['/usr/bin/chromium'] });
+    await page.goto(url + 'decision-models/playground.html');
+    await page.waitFor(() => document.querySelector('#engine') !== null);
+    await loadJev(page);
+
+    // The question set has exactly one question, `tool`. A provider that returns a valid `tool`
+    // answer PLUS an unrequested answer ID used to render the `tool` block and then crash inside
+    // renderAnswer on questions['unrequested'].ins — a half-render with an honest-looking answer.
+    await page.evaluate(() => {
+      window.fetch = async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: 'synthetic-provider',
+          answers: {
+            tool: {
+              type: 'choice',
+              choice: 'screenshot_tool',
+              confidence: 0.9,
+              probabilities: { screenshot_tool: 0.9, read_page: 0.03, history_search: 0.03, download_manager: 0.04 },
+            },
+            unrequested: {
+              type: 'noul',
+              noul: 0.5,
+              confidence: 0.5,
+            },
+          },
+        }),
+      });
+    });
+    await page.click('.demo .run-demo');
+    await page.waitFor(() => document.querySelector('.demo .results').textContent.includes('Run failed'), {
+      label: 'unexpected-answer refusal',
+    });
+
+    const state = await page.evaluate(() => ({
+      results: document.querySelector('.demo .results').textContent,
+      answerCount: document.querySelectorAll('.demo .results .answer').length,
+      runDisabled: document.querySelector('.demo .run-demo').disabled,
+    }));
+    assert.equal(state.answerCount, 0, 'an unexpected answer ID must fail closed with no partial render');
+    assert.equal(state.results, 'Run failed: Unexpected answer ID: unrequested.');
+    assert.equal(state.runDisabled, false, 'the refused run must re-enable the run button');
+  } finally {
+    if (page) await page.close();
+    await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+  }
+});
