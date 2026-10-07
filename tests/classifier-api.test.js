@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { Classifier, toLayaQuestions } from "../site/decision-models/classifier-api.js";
+import { renderOptions } from "../site/decision-models/laya-pack.js";
 
 // Mock Laya session for testing Classifier wrapper and mapping
 class MockLayaSession {
@@ -165,8 +166,10 @@ test("Classifier API: classify formats decisions for binary, categorical and ord
 // demo-5 schema textarea's JSON.parse output and no id validation in front of it.
 const PROTO_ID = "__proto__";
 
-// The caller's own path: JSON.parse yields `__proto__` as an ordinary own key, whereas the object
-// literal `{ id: "__proto__" }` would set the prototype instead and never reach the loop.
+// The caller's own path: JSON.parse yields `__proto__` as an ordinary own key, so the id does
+// reach this loop. The literal-syntax trap is in a map's key, not in this field: `{ id: "__proto__" }`
+// is a question whose id string is `__proto__`, while a computed key such as `{ [q.id]: q }` would
+// set the prototype instead of adding an entry.
 function playgroundSchema() {
   return JSON.parse(
     '{"questions":[' +
@@ -222,4 +225,74 @@ test("Classifier API: classify() returns a __proto__ question id as an own decis
   assert.equal(result.tool.label, "list_tabs");
 
   classifier.destroy();
+});
+
+// learnings-e7p: the categorical criteria map inside toLayaQuestions() is keyed by the caller's
+// option label, and `__proto__` is a legal label on the same textarea-JSON-to-create() path as the
+// ids above. On a plain {} accumulator the assignment lands on the inherited accessor, which
+// ignores a non-object value, so the option is dropped from the criteria map and the engine is
+// asked for one option fewer than the caller named (laya-pack's decodeQuestion() rejects that with
+// "N logits for M choice criteria").
+test("Classifier API: toLayaQuestions keeps a __proto__ option label as an own criterion (learnings-e7p)", () => {
+  // Mirrors the playground caller: the demo-5 schema textarea's text, JSON.parsed (which yields
+  // `__proto__` as an ordinary own key) and handed to create().
+  const questions = JSON.parse(
+    '{"questions":[{"id":"tool","type":"categorical","prompt":"Which tool?","options":[' +
+      '{"label":"__proto__","description":"Escalate?"},{"label":"list_tabs","description":"List them"}]}]}',
+  ).questions;
+
+  const crit = toLayaQuestions(questions, null).tool.crit;
+
+  assert.deepEqual(
+    Object.keys(crit),
+    ["__proto__", "list_tabs"],
+    "every option label the caller named comes back as a criterion key, in the caller's order",
+  );
+  assert.ok(
+    Object.hasOwn(crit, "__proto__"),
+    "a __proto__ option label must be an own property, not a reassignment of the map's prototype",
+  );
+  assert.equal(crit["__proto__"], "Escalate?");
+  assert.equal(crit.list_tabs, "List them");
+  assert.equal(
+    Object.getPrototypeOf(crit),
+    null,
+    "the criteria accumulator is prototype-less, so no option label can reach an inherited accessor",
+  );
+
+  // The engine's own prompt builder reads this map with Object.entries(crit), so the label has to
+  // survive as far as the rendered option text.
+  assert.deepEqual(
+    renderOptions({ t: "choice", crit }),
+    ["__proto__: Escalate?", "list_tabs: List them"],
+    "a __proto__ option is rendered into the prompt like any other option",
+  );
+});
+
+test("Classifier API: toLayaQuestions maps ordinary categorical labels unchanged (learnings-e7p)", () => {
+  const questions = [
+    {
+      id: "dept",
+      type: "categorical",
+      prompt: "Which team?",
+      options: [
+        { label: "billing", description: "Payments" },
+        { label: "tech", description: "Bugs" },
+        { label: "plain" },
+        "ask_human",
+      ],
+    },
+  ];
+
+  const crit = toLayaQuestions(questions, null).dept.crit;
+
+  // Spread into a plain object: the criteria are still content-identical to the pre-fix map, only
+  // the prototype is (deliberately) different.
+  assert.deepEqual({ ...crit }, {
+    billing: "Payments",
+    tech: "Bugs",
+    plain: "plain",
+    ask_human: "ask_human",
+  });
+  assert.deepEqual(Object.keys(crit), ["billing", "tech", "plain", "ask_human"], "label-index order is unchanged");
 });

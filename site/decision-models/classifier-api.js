@@ -77,7 +77,10 @@ export function toLayaQuestions(questions, context) {
     } else {
       // Categorical / choice
       const optionsList = Array.isArray(q.options) ? q.options : [];
-      const crit = {};
+      // Null-prototype for the same reason as the map above: the key here is the caller's option
+      // label, and on a normal object `crit['__proto__'] = desc` hits the inherited accessor,
+      // which ignores a string value, so the caller's option never reaches the prompt.
+      const crit = Object.create(null);
       for (const o of optionsList) {
         const label = typeof o === "string" ? o : o.label;
         const desc = typeof o === "string" ? o : o.description || o.label;
