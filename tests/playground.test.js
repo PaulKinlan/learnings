@@ -220,3 +220,122 @@ test('playground Jev run refuses an unexpected answer ID before any render (lear
     await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
   }
 });
+
+test('playground Jev keeps a __proto__ question id through the Laya→Jev translation (learnings-wnn)', async () => {
+  const { serve } = await import('../scripts/serve.mjs');
+  const { launch } = await import('./lib/cdp.mjs');
+  const { server, url } = await serve();
+  let page;
+  try {
+    page = await launch({ candidates: ['/usr/bin/chromium'] });
+    await page.goto(url + 'decision-models/playground.html');
+    await page.waitFor(() => document.querySelector('#engine') !== null);
+    await loadJev(page);
+
+    // Replace the first demo's questions with a single __proto__ question. The textarea holds raw
+    // JSON, and JSON.parse creates __proto__ as an ordinary own property (unlike an object literal
+    // or `tsQuestions[id] =` on a normal object, which would treat it as the prototype).
+    await page.evaluate(() => {
+      document.querySelector('.demo .state-questions').value =
+        '{"__proto__":{"t":"choice","ins":"Is the prototype key preserved?","crit":{"yes":"kept","no":"lost"}}}';
+      window.__sentBody = null;
+      window.fetch = async (url, init) => {
+        window.__sentBody = init.body;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => JSON.parse(
+            '{"model":"synthetic-provider","answers":{"__proto__":{"type":"choice","choice":"yes","confidence":0.9,"probabilities":{"yes":0.9,"no":0.1}}}}',
+          ),
+        };
+      };
+    });
+
+    await page.click('.demo .run-demo');
+    await page.waitFor(() => document.querySelector('.demo .results .answer') !== null, {
+      label: '__proto__ answer render',
+    });
+
+    const state = await page.evaluate(() => ({
+      sentBody: window.__sentBody,
+      results: document.querySelector('.demo .results').textContent,
+      answerCount: document.querySelectorAll('.demo .results .answer').length,
+      runDisabled: document.querySelector('.demo .run-demo').disabled,
+    }));
+    // The wire body is the observable that bites: with tsQuestions = {} the __proto__ question is
+    // dropped from the request entirely, so a real provider would never answer it.
+    assert.match(state.sentBody, /"__proto__"/, 'the request body must carry the __proto__ question');
+    assert.equal(state.answerCount, 1, 'a __proto__ question must survive the translation and render');
+    assert.match(state.results, /__proto__/);
+    assert.doesNotMatch(state.results, /Run failed/);
+    assert.equal(state.runDisabled, false);
+
+    // The question must also be validated, not just passed through: an out-of-set choice on the
+    // __proto__ question is refused before render, exactly like any other question.
+    await page.evaluate(() => {
+      window.fetch = async () => ({
+        ok: true,
+        status: 200,
+        json: async () => JSON.parse(
+          '{"model":"synthetic-provider","answers":{"__proto__":{"type":"choice","choice":"rm_rf","confidence":0.9,"probabilities":{"yes":0.9,"no":0.1}}}}',
+        ),
+      });
+    });
+    await page.click('.demo .run-demo');
+    await page.waitFor(() => document.querySelector('.demo .results').textContent.includes('Run failed'), {
+      label: '__proto__ out-of-set refusal',
+    });
+    const refused = await page.evaluate(() => ({
+      results: document.querySelector('.demo .results').textContent,
+      answerCount: document.querySelectorAll('.demo .results .answer').length,
+    }));
+    assert.equal(refused.results, 'Run failed: Out-of-set choice: __proto__.');
+    assert.equal(refused.answerCount, 0, 'an out-of-set __proto__ choice must be refused, proving the question is validated');
+  } finally {
+    if (page) await page.close();
+    await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+  }
+});
+
+test('playground Jev duplicate wire answer IDs collapse to last-wins (documented limitation) (learnings-wnn)', async () => {
+  const { serve } = await import('../scripts/serve.mjs');
+  const { launch } = await import('./lib/cdp.mjs');
+  const { server, url } = await serve();
+  let page;
+  try {
+    page = await launch({ candidates: ['/usr/bin/chromium'] });
+    await page.goto(url + 'decision-models/playground.html');
+    await page.waitFor(() => document.querySelector('#engine') !== null);
+    await loadJev(page);
+
+    // RFC 8259 §4 leaves duplicate object names to the parser; JSON.parse (and therefore
+    // res.json()) keeps the last occurrence. This test pins that actual behaviour explicitly
+    // instead of letting a duplicate wire ID be accepted silently or claimed as refused.
+    await page.evaluate(() => {
+      window.fetch = async () => ({
+        ok: true,
+        status: 200,
+        json: async () => JSON.parse(
+          '{"model":"synthetic-provider","answers":{"tool":null,"tool":{"type":"choice","choice":"screenshot_tool","confidence":0.9,"probabilities":{"screenshot_tool":0.9,"read_page":0.03,"history_search":0.03,"download_manager":0.04}}}}',
+        ),
+      });
+    });
+    await page.click('.demo .run-demo');
+    await page.waitFor(() => document.querySelector('.demo .results .answer') !== null, {
+      label: 'duplicate-wire-ID last-wins render',
+    });
+
+    const state = await page.evaluate(() => ({
+      results: document.querySelector('.demo .results').textContent,
+      answerCount: document.querySelectorAll('.demo .results .answer').length,
+      runDisabled: document.querySelector('.demo .run-demo').disabled,
+    }));
+    assert.equal(state.answerCount, 1, 'duplicate wire IDs collapse to the last value before validation (documented)');
+    assert.match(state.results, /choice: screenshot_tool/);
+    assert.doesNotMatch(state.results, /Run failed/);
+    assert.equal(state.runDisabled, false);
+  } finally {
+    if (page) await page.close();
+    await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+  }
+});

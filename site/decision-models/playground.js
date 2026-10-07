@@ -50,7 +50,11 @@ const engines = {
       return {
         checkpoint: "api.typesafe.ai/v1/systemone (hosted Jev)",
         decideAll: async (state, questions) => {
-          const tsQuestions = {};
+          // A null-prototype object so a question id of `__proto__` is stored as an ordinary own
+          // property. On a normal object, tsQuestions['__proto__'] = {...} triggers the inherited
+          // accessor and reassigns the prototype instead of adding a key, silently dropping the
+          // question from the wire body before it ever reaches validateAnswers().
+          const tsQuestions = Object.create(null);
           for (const [id, q] of Object.entries(questions)) {
             tsQuestions[id] = {
               type: q.t === "choice" ? "choice" : q.t === "score" ? "score" : "noul",
@@ -85,6 +89,14 @@ const engines = {
             throw error;
           }
           if (!res.ok) throw new Error(`Jev API returned HTTP ${res.status}`);
+          // Known, pinned limitation: res.json() (JSON.parse) collapses duplicate object keys to
+          // the last occurrence, per ECMAScript and RFC 8259 §4 ("The names within an object
+          // SHOULD be unique"). A provider that emits {"tool":null,"tool":<valid>} therefore
+          // reaches validateAnswers() as a single last-wins `tool` answer, not as a duplicate.
+          // That residual is accepted and pinned by a browser test rather than detected with a
+          // raw-text re-scan: a regex key scan can false-positive on `"` inside string values and
+          // reject a legitimate response (regressing the passing Jev path), and a correct
+          // duplicate detector is a second JSON tokenizer — not a cheap pre-check.
           const json = await res.json();
           // Invariants I1/I11: hosted-provider JSON is externally derived, so it passes the same
           // validator core.js decide() and image-lab.js decideImage() apply before rendering.

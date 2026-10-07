@@ -29,9 +29,11 @@ export function requestFor(spec, model) { validateSpec(spec); text(model,'Model'
 export function validateAnswers(data, questions) {
   if(!record(data) || !record(data.answers)) fail('Provider did not return an answers object.');
   const unit = v => typeof v==='number' && Number.isFinite(v) && v>=0 && v<=1;
-  // The answer-ID set must match the question-ID set exactly. An unexpected or duplicated
-  // answer ID is refused here, before any caller renders a single block, so a provider that
-  // returns extra answers fails closed instead of half-rendering the requested ones.
+  // The answer-ID set must match the question-ID set exactly. An unexpected answer ID is
+  // refused here, before any caller renders a single block, so a provider that returns extra
+  // answers fails closed instead of half-rendering the requested ones. (Duplicate wire keys are
+  // not detectable here: response.json()/JSON.parse has already collapsed them to the last
+  // occurrence — a documented, pinned limitation, see site/decision-models/playground.js.)
   for(const id of Object.keys(data.answers)) {
     if(!own(questions, id)) fail(`Unexpected answer ID: ${id}.`);
   }
