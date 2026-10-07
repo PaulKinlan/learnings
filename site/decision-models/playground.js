@@ -9,6 +9,7 @@
 import { loadLaya } from "./laya-engine.js";
 import { loadKev, KevSession } from "./kev-engine.js";
 import { Classifier } from "./classifier-api.js";
+import { validateAnswers } from "./core.js";
 import { renderOptions, choiceConfidence } from "./laya-pack.js";
 import {
   choose as kevChoose,
@@ -49,7 +50,11 @@ const engines = {
       return {
         checkpoint: "api.typesafe.ai/v1/systemone (hosted Jev)",
         decideAll: async (state, questions) => {
-          const tsQuestions = {};
+          // A null-prototype object so a question id of `__proto__` is stored as an ordinary own
+          // property. On a normal object, tsQuestions['__proto__'] = {...} triggers the inherited
+          // accessor and reassigns the prototype instead of adding a key, silently dropping the
+          // question from the wire body before it ever reaches validateAnswers().
+          const tsQuestions = Object.create(null);
           for (const [id, q] of Object.entries(questions)) {
             tsQuestions[id] = {
               type: q.t === "choice" ? "choice" : q.t === "score" ? "score" : "noul",
@@ -57,22 +62,47 @@ const engines = {
               criteria: q.crit || {},
             };
           }
-          const res = await fetch("https://api.typesafe.ai/v1/systemone", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${key}`,
-            },
-            body: JSON.stringify({
-              model: "jev-1.13.0",
-              state,
-              questions: tsQuestions,
-            }),
-          });
+          // Invariant I2: a UI-blocking hosted call carries a bounded AbortSignal. The sibling
+          // labs wire the same 45s boundary (core.js decide()/generate(), image-lab.js
+          // decideImage()), so a provider that accepts the connection and never answers still
+          // ends the run instead of leaving the Run button disabled with no way out.
+          const signal = AbortSignal.timeout(45000);
+          let res;
+          try {
+            res = await fetch("https://api.typesafe.ai/v1/systemone", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${key}`,
+              },
+              body: JSON.stringify({
+                model: "jev-1.13.0",
+                state,
+                questions: tsQuestions,
+              }),
+              signal,
+            });
+          } catch (error) {
+            // core.js post() reports an aborted signal as a timeout, so the playground says the
+            // same thing when a provider accepts the connection and then never answers.
+            if (signal.aborted) throw new Error("Request cancelled or timed out. No automatic retry.");
+            throw error;
+          }
           if (!res.ok) throw new Error(`Jev API returned HTTP ${res.status}`);
+          // Known, pinned limitation: res.json() (JSON.parse) collapses duplicate object keys to
+          // the last occurrence, per ECMAScript and RFC 8259 §4 ("The names within an object
+          // SHOULD be unique"). A provider that emits {"tool":null,"tool":<valid>} therefore
+          // reaches validateAnswers() as a single last-wins `tool` answer, not as a duplicate.
+          // That residual is accepted and pinned by a browser test rather than detected with a
+          // raw-text re-scan: a regex key scan can false-positive on `"` inside string values and
+          // reject a legitimate response (regressing the passing Jev path), and a correct
+          // duplicate detector is a second JSON tokenizer — not a cheap pre-check.
           const json = await res.json();
+          // Invariants I1/I11: hosted-provider JSON is externally derived, so it passes the same
+          // validator core.js decide() and image-lab.js decideImage() apply before rendering.
+          const data = validateAnswers(json, tsQuestions);
           return {
-            answers: json.answers,
+            answers: data.answers,
             usage: json.usage || { input_tokens: 0 },
           };
         },
