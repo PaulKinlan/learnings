@@ -397,7 +397,12 @@ export class LayaSession {
 
   /** Several questions over one state, each its own row (the contract's single-row rule). */
   async decideAll(state, questions) {
-    const answers = {};
+    // A null-prototype object so a question id of `__proto__` is stored as an ordinary own
+    // property. On a normal object, answers['__proto__'] = {...} triggers the inherited accessor
+    // and reassigns the prototype instead of adding a key, so the question is answered and then
+    // silently dropped before the caller's Object.entries() ever sees it (the playground passes
+    // the question textarea's JSON straight here, with no id validation in front of it).
+    const answers = Object.create(null);
     let inputTokens = 0;
     for (const [id, question] of Object.entries(questions)) {
       const { answer, tokens } = await this.decide(state, question);
