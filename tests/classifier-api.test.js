@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Classifier } from "../site/decision-models/classifier-api.js";
+import { readFileSync } from "node:fs";
+import { Classifier, toLayaQuestions } from "../site/decision-models/classifier-api.js";
 
 // Mock Laya session for testing Classifier wrapper and mapping
 class MockLayaSession {
@@ -156,4 +157,69 @@ test("Classifier API: classify formats decisions for binary, categorical and ord
   // destroy
   classifier.destroy();
   await assert.rejects(() => classifier.classify("test"), /The classifier session has been destroyed/);
+});
+
+// learnings-aak: both accumulators in classifier-api.js are keyed by caller-supplied question ids,
+// so both are null-prototype maps. `__proto__` is a valid id as far as create()'s validation goes
+// (it checks only that the id is a non-empty string), and the playground reaches create() with the
+// demo-5 schema textarea's JSON.parse output and no id validation in front of it.
+const PROTO_ID = "__proto__";
+
+// The caller's own path: JSON.parse yields `__proto__` as an ordinary own key, whereas the object
+// literal `{ id: "__proto__" }` would set the prototype instead and never reach the loop.
+function playgroundSchema() {
+  return JSON.parse(
+    '{"questions":[' +
+      '{"id":"tool","type":"categorical","prompt":"Which tool?","options":[{"label":"list_tabs","description":"List them"},{"label":"other","description":"Something else"}]},' +
+      '{"id":"__proto__","type":"binary","prompt":"Escalate?"}]}',
+  ).questions;
+}
+
+test("Classifier API: toLayaQuestions keys a __proto__ question id as an own property (learnings-aak)", () => {
+  const questions = playgroundSchema();
+  const map = toLayaQuestions(questions, null);
+
+  assert.deepEqual(Object.keys(map), ["tool", PROTO_ID]);
+  assert.equal(Object.getPrototypeOf(map), null, "the map must be prototype-safe");
+  assert.ok(Object.hasOwn(map, PROTO_ID), "the caller's __proto__ question must survive as an own key");
+  assert.equal(map[PROTO_ID].t, "noul");
+  assert.equal(map[PROTO_ID].ins, "Escalate?");
+
+  // The context prefix is part of the mapping, so it is pinned through the same helper.
+  const withContext = toLayaQuestions(playgroundSchema(), "Triage");
+  assert.deepEqual(Object.keys(withContext), ["tool", PROTO_ID]);
+  assert.equal(withContext[PROTO_ID].ins, "Triage\nEscalate?");
+});
+
+// toLayaQuestions() is only worth anything if the live API still routes through it. create()
+// cannot run in node (getLaya() downloads and verifies the LiteRT checkpoints), so the
+// delegation is pinned by reading the method body: an inline `{}` accumulator is a failure.
+test("Classifier API: create() delegates its question mapping to toLayaQuestions (learnings-aak)", () => {
+  const source = readFileSync(new URL("../site/decision-models/classifier-api.js", import.meta.url), "utf8");
+  const create = source.slice(source.indexOf("static async create("), source.indexOf("get contextWindow"));
+  assert.match(
+    create,
+    /new Classifier\(\s*session,\s*options,\s*toLayaQuestions\(/,
+    "create() must map its questions through the helper under test",
+  );
+  assert.doesNotMatch(create, /const layaQuestions = \{\}/, "create() must not rebuild the map with a plain {} accumulator");
+});
+
+test("Classifier API: classify() returns a __proto__ question id as an own decision key (learnings-aak)", async () => {
+  const questions = playgroundSchema();
+  const classifier = new Classifier(new MockLayaSession(), { questions }, toLayaQuestions(questions, null));
+
+  const result = await classifier.classify("Payment failed for invoice #4421");
+
+  assert.deepEqual(Object.keys(result), ["tool", PROTO_ID]);
+  assert.equal(Object.getPrototypeOf(result), null, "the returned map must be prototype-safe");
+  assert.ok(Object.hasOwn(result, PROTO_ID), "the __proto__ decision must survive as an own key");
+  assert.equal(result[PROTO_ID].id, PROTO_ID);
+  assert.equal(result[PROTO_ID].label, "true");
+  assert.equal(result[PROTO_ID].probability, 0.85);
+  assert.equal(result[PROTO_ID].probabilities.length, 2);
+  assert.equal(result.tool.id, "tool");
+  assert.equal(result.tool.label, "list_tabs");
+
+  classifier.destroy();
 });
