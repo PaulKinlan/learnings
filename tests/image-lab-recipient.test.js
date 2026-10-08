@@ -30,7 +30,9 @@ test('image lab api key and model fields state the TypeSafe recipient (learnings
   assert.ok(apiField, 'api-field must exist');
   const fields = apiField[1];
   assert.match(fields, /TypeSafe API key/, 'api key label must name TypeSafe');
-  assert.match(fields, /Model ID \(hosted by TypeSafe\)/, 'model ID label must state it is hosted by TypeSafe');
+  assert.match(fields, /Model ID \(informational/, 'model ID label must mark the ID informational');
+  assert.match(fields, /does not change the recipient/, 'model ID label must state the ID does not change the recipient');
+  assert.match(fields, /api\.typesafe\.ai\/v1\/systemone/, 'model ID label must name the fixed recipient');
   assert.doesNotMatch(fields, /Wity-1|OpenAI|Gemini/, 'api fields must not advertise a different provider');
 });
 
@@ -86,4 +88,52 @@ test('image lab api engine sends the key and image to api.typesafe.ai and says s
   assert.equal(calls[0].options.headers.Authorization, `Bearer ${key}`, 'the key must go only to the TypeSafe recipient');
   assert.equal(JSON.parse(calls[0].options.body).image, dummyImage, 'the image must go only to the TypeSafe recipient');
   assert.equal(res.source, 'TypeSafe API (Imajev-4B)', 'the reported source must name TypeSafe');
+});
+
+test('image lab api engine names TypeSafe when the transport fails (learnings-mem)', async (t) => {
+  const spec = PRESETS.ui.spec;
+  const dummyImage = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+  const original = globalThis.fetch;
+  // A transport failure is exactly the case that showed a bare "Error: Failed to fetch": the fetch
+  // rejects before any HTTP status exists. The api engine must name where the request was sent.
+  globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
+  t.after(() => { globalThis.fetch = original; });
+
+  await assert.rejects(
+    () => decideImage({
+      spec,
+      imagePayload: dummyImage,
+      engine: 'api',
+      endpoint: '',
+      key: 'synthetic-test-not-a-real-key',
+      model: 'Imajev-4B'
+    }),
+    /TypeSafe API request failed: Failed to fetch/,
+    'a transport failure must name TypeSafe and keep the underlying detail'
+  );
+});
+
+test('image lab api engine names TypeSafe when the request aborts (learnings-mem)', async (t) => {
+  const spec = PRESETS.ui.spec;
+  const dummyImage = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const controller = new AbortController();
+  controller.abort();
+
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => { throw controller.signal.reason; };
+  t.after(() => { globalThis.fetch = original; });
+
+  await assert.rejects(
+    () => decideImage({
+      spec,
+      imagePayload: dummyImage,
+      engine: 'api',
+      endpoint: '',
+      key: 'synthetic-test-not-a-real-key',
+      model: 'Imajev-4B'
+    }, controller.signal),
+    /TypeSafe API request failed: Request cancelled or timed out\. No automatic retry\./,
+    'an aborted request must still name TypeSafe'
+  );
 });

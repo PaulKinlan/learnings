@@ -828,15 +828,22 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
       questions: spec.questions,
       model: model || 'Imajev-4B'
     };
-    const res = await fetchVision('https://api.typesafe.ai/v1/systemone', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${key.trim()}`
-      },
-      body: JSON.stringify(payload),
-      signal
-    }, signal);
+    let res;
+    try {
+      res = await fetchVision('https://api.typesafe.ai/v1/systemone', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${key.trim()}`
+        },
+        body: JSON.stringify(payload),
+        signal
+      }, signal);
+    } catch (err) {
+      // Transport failures (a rejected fetch or the abort timeout) surface here. The recipient is
+      // fixed regardless of the Model ID, so the error names where the request was sent.
+      throw new Error(`TypeSafe API request failed: ${err.message}`);
+    }
     if (!res.ok) {
       throw new Error(`TypeSafe API returned HTTP ${res.status}. Note: direct browser calls may require CORS configuration or local proxy relay.`);
     }
