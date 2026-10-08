@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { KEV_REVISION, KEV_SHA256, KEV_MAX_BYTES } from "../site/decision-models/kev-manifest.js";
+import { KEV_REVISION, KEV_SHA256, KEV_MAX_BYTES, KEV_DEFAULT_MAX_BYTES } from "../site/decision-models/kev-manifest.js";
 import { fetchVerified, kevArtifactUrl } from "../site/decision-models/kev-engine.js";
 
 const ARTIFACTS = ["tokenizer.json", "config.json", "onnx/model_q4.onnx", "onnx/model_q4.onnx_data"];
@@ -129,3 +129,33 @@ test("streamed chunks exceeding maximum allowed size abort streaming before full
   }
 });
 
+test("inherited Object.prototype keys cannot suppress the bounded fallback cap", async () => {
+  const oneByte = new Uint8Array([7]);
+  const goodDigest = createHash("sha256").update(oneByte).digest("hex");
+  for (const name of ["constructor", "__proto__", "toString"]) {
+    const originalFetch = globalThis.fetch;
+    const mockResponse = {
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-length": "2000000000" }),
+      get body() {
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(oneByte);
+            controller.close();
+          },
+        });
+      },
+    };
+    globalThis.fetch = async () => mockResponse;
+    try {
+      await assert.rejects(
+        fetchVerified(`https://fixture.invalid/${name}`, { sha256: goodDigest }),
+        new RegExp(`Content-Length 2000000000 exceeds maximum allowed size ${KEV_DEFAULT_MAX_BYTES} bytes`),
+        `${name}: an inherited Object.prototype member suppressed the bounded fallback cap`,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+});

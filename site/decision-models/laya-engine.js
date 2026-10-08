@@ -128,6 +128,19 @@ async function verifySha256(bytes, sha256, label) {
 }
 
 /**
+ * Prototype-safe own-property lookup for a manifest size cap. The frozen MAX_BYTES maps inherit
+ * Object.prototype, so a plain `map[filename]` resolves `constructor`, `__proto__`, `toString` and
+ * friends to Object members — non-number values that make `total > limit` / `received > limit`
+ * compare NaN (always false) and silently disable the bounded fallback. Only an own key whose
+ * value is a finite positive number is trusted; anything else falls through the cap chain to
+ * LAYA_DEFAULT_MAX_BYTES, so every artifact gets a bounded cap (tm-unbounded-download-buffer).
+ */
+function ownCap(caps, key) {
+  const value = Object.hasOwn(caps, key) ? caps[key] : undefined;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+/**
  * Fetch a URL into a Uint8Array with progress callbacks, bounded streaming via AbortController,
  * and a required sha256 check. Rejects early if Content-Length exceeds maxBytes, and aborts
  * streaming immediately if accumulated chunks exceed maxBytes before SHA-256 verification
@@ -137,7 +150,11 @@ export async function fetchBytes(url, { onProgress = null, sha256, label = url, 
   if (!sha256) throw new Error(`no pinned sha256 for ${label}`);
   const basename = String(url).split("/").pop()?.split("?")[0] ?? "";
   const labelBasename = String(label).split("/").pop()?.split("?")[0] ?? "";
-  const limit = maxBytes ?? LAYA_MAX_BYTES[labelBasename] ?? LAYA_MAX_BYTES[basename] ?? LAYA_DEFAULT_MAX_BYTES;
+  const limit =
+    maxBytes ??
+    ownCap(LAYA_MAX_BYTES, labelBasename) ??
+    ownCap(LAYA_MAX_BYTES, basename) ??
+    LAYA_DEFAULT_MAX_BYTES;
 
   const controller = new AbortController();
   const res = await fetch(url, { signal: controller.signal });
@@ -180,7 +197,9 @@ export async function fetchBytes(url, { onProgress = null, sha256, label = url, 
 }
 
 function parseSha256Sums(text) {
-  const out = {};
+  // Null-prototype so a sums row named `constructor` / `__proto__` / `toString` is an ordinary
+  // own key, never a read-through to Object.prototype members.
+  const out = Object.create(null);
   for (const line of text.split("\n")) {
     const match = line.match(/^([0-9a-f]{64})[ *]+(.+)$/);
     if (match) out[match[2].trim()] = match[1];
@@ -259,12 +278,36 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
       `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: Content-Length ${sumsTotal} exceeds maximum allowed size ${sumsLimit} bytes`,
     );
   }
-  const sumsBytes = new Uint8Array(await sumsResponse.arrayBuffer());
-  if (sumsLimit != null && sumsBytes.byteLength > sumsLimit) {
-    throw new Error(
-      `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: size ${sumsBytes.byteLength} exceeds maximum allowed size ${sumsLimit} bytes`,
-    );
+  // The sums file is tiny but still arrives from the network, so the cap is enforced DURING
+  // streaming — not after arrayBuffer() has already buffered an unbounded body. An absent or
+  // lying Content-Length must abort before EOF and before digest (tm-unbounded-download-buffer).
+  const sumsReader = sumsResponse.body.getReader();
+  const sumsChunks = [];
+  let sumsReceived = 0;
+  for (;;) {
+    const { done, value } = await sumsReader.read();
+    if (done) break;
+    sumsReceived += value.length;
+    if (sumsLimit != null && sumsReceived > sumsLimit) {
+      sumsController.abort();
+      try { await sumsReader.cancel(); } catch {}
+      throw new Error(
+        `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: stream exceeded maximum allowed size ${sumsLimit} bytes (received ${sumsReceived} bytes)`,
+      );
+    }
+    sumsChunks.push(value);
   }
+  const sumsBytes = sumsChunks.length === 1
+    ? sumsChunks[0]
+    : (() => {
+        const b = new Uint8Array(sumsReceived);
+        let offset = 0;
+        for (const chunk of sumsChunks) {
+          b.set(chunk, offset);
+          offset += chunk.length;
+        }
+        return b;
+      })();
   await verifySha256(sumsBytes, LAYA_SHA256SUMS_SHA256[checkpoint], `${spec.repo}/SHA256SUMS`);
   const sums = parseSha256Sums(new TextDecoder().decode(sumsBytes));
 
@@ -279,9 +322,9 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
       throw new Error(`no pinned sha256 for ${url} (${spec.repo}/${file})`);
     }
     const maxBytes =
-      LAYA_MAX_BYTES[resolvedName] ??
-      LAYA_MAX_BYTES[file] ??
-      LAYA_MAX_BYTES[basename(url)] ??
+      ownCap(LAYA_MAX_BYTES, resolvedName) ??
+      ownCap(LAYA_MAX_BYTES, file) ??
+      ownCap(LAYA_MAX_BYTES, basename(url)) ??
       LAYA_DEFAULT_MAX_BYTES;
     return { sha256, maxBytes };
   };

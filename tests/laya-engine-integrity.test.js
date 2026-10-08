@@ -255,3 +255,96 @@ test("renaming a pinned graph cannot bypass verification with a legacy declarati
       /integrity check failed for .*\/laya_ml_s512_embeds_wfp16\.tflite/, "renamed graph plus legacy declaration");
   });
 });
+
+test("SHA256SUMS stream is bounded: aborts before EOF with absent/lying Content-Length", async () => {
+  const chunk = new Uint8Array(768 * 1024); // 768 KiB; the sums cap is 1 MiB
+  for (const headers of [{}, { "content-length": "1" }]) {
+    let pulls = 0;
+    let cancelled = false;
+    let closed = false;
+    const stream = new ReadableStream({
+      pull(controller) {
+        pulls++;
+        if (pulls <= 4) controller.enqueue(chunk);
+        else {
+          closed = true;
+          controller.close();
+        }
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("SHA256SUMS")) return new Response(stream, { headers });
+      throw new Error(`unexpected fixture fetch: ${url}`);
+    };
+    try {
+      await assert.rejects(
+        loadLaya({ urls: { SHA256SUMS: "https://fixture.invalid/SHA256SUMS" } }),
+        /SHA256SUMS unavailable for .*: stream exceeded maximum allowed size 1048576 bytes/,
+        `headers=${JSON.stringify(headers)}: the sums stream was buffered instead of aborted`,
+      );
+      assert.equal(cancelled, true, `headers=${JSON.stringify(headers)}: sums stream was cancelled before EOF`);
+      assert.equal(closed, false, `headers=${JSON.stringify(headers)}: sums stream reached EOF instead of being aborted`);
+      assert.ok(pulls < 4, `headers=${JSON.stringify(headers)}: aborted after ${pulls} reads, before the final chunk`);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+});
+
+test("an inherited-name override filename still gets a bounded cap (integrityFor)", async () => {
+  const sums = Object.entries(names)
+    .map(([key, file]) => `${sha(payloads[key])}  ${file}\n`)
+    .join("");
+  const sumsBytes = encoder.encode(sums);
+  const overrideUrl = "https://fixture.invalid/constructor";
+  const urls = Object.fromEntries(Object.entries(names).map(([key, file]) => [file, `https://fixture.invalid/${file}`]));
+  urls[names.main] = overrideUrl;
+  urls.SHA256SUMS = "https://fixture.invalid/SHA256SUMS";
+
+  const originalFetch = globalThis.fetch;
+  const originalCrypto = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  globalThis.__layaTokenizerConstructions = 0;
+  globalThis.fetch = async (url) => {
+    if (url === urls.SHA256SUMS) return new Response(sumsBytes);
+    const key = Object.keys(names).find((candidate) => url === urls[names[candidate]]);
+    if (!key) throw new Error(`unexpected fixture fetch: ${url}`);
+    if (url === overrideUrl) {
+      // A truthful digest body but a lying oversized Content-Length. The cap derived from the
+      // underlying artifact (not the inherited `constructor` key) must reject before any read.
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(payloads[key]);
+          controller.close();
+        },
+      });
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-length": String(2 * 1024 * 1024 * 1024) }),
+        get body() {
+          return body;
+        },
+      };
+    }
+    return new Response(payloads[key]);
+  };
+  Object.defineProperty(globalThis, "crypto", { configurable: true, value: { subtle: { digest: (algorithm, bytes) =>
+    Buffer.from(bytes).equals(Buffer.from(sumsBytes))
+      ? Promise.resolve(Buffer.from(LAYA_SHA256SUMS_SHA256.multilingual, "hex"))
+      : webcrypto.subtle.digest(algorithm, bytes) } } });
+  try {
+    await assert.rejects(
+      loadLaya({ urls }),
+      /Content-Length 2147483648 exceeds maximum allowed size 335544320 bytes/,
+      "inherited-name override filename must fall back to the artifact's documented cap",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, "crypto", originalCrypto);
+    delete globalThis.__layaTokenizerConstructions;
+  }
+});

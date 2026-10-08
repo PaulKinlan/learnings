@@ -45,6 +45,19 @@ ort.env.logLevel = "warning";
 const SPECIAL_TOKEN_FILES = ["special_tokens_map.json", "added_tokens.json"];
 
 /**
+ * Prototype-safe own-property lookup for a manifest size cap. The frozen MAX_BYTES maps inherit
+ * Object.prototype, so a plain `map[filename]` resolves `constructor`, `__proto__`, `toString` and
+ * friends to Object members — non-number values that make `total > limit` / `received > limit`
+ * compare NaN (always false) and silently disable the bounded fallback. Only an own key whose
+ * value is a finite positive number is trusted; anything else falls through the cap chain to
+ * KEV_DEFAULT_MAX_BYTES, so every artifact gets a bounded cap (tm-unbounded-download-buffer).
+ */
+function ownCap(caps, key) {
+  const value = Object.hasOwn(caps, key) ? caps[key] : undefined;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+/**
  * Fetch one artifact into bytes, reporting progress, and refuse bytes whose SHA-256 does not
  * match the pinned digest. Downloads are strictly bounded by a maximum byte cap enforced
  * via AbortController while streaming (and checked against Content-Length before streaming begins)
@@ -57,7 +70,11 @@ export async function fetchVerified(url, { onProgress = null, sha256, label = ur
   if (!sha256) throw new Error(`no pinned sha256 for ${label}`);
   const basename = String(url).split("/").pop()?.split("?")[0] ?? "";
   const labelBasename = String(label).split("/").pop()?.split("?")[0] ?? "";
-  const limit = maxBytes ?? KEV_MAX_BYTES[labelBasename] ?? KEV_MAX_BYTES[basename] ?? KEV_DEFAULT_MAX_BYTES;
+  const limit =
+    maxBytes ??
+    ownCap(KEV_MAX_BYTES, labelBasename) ??
+    ownCap(KEV_MAX_BYTES, basename) ??
+    KEV_DEFAULT_MAX_BYTES;
 
   const controller = new AbortController();
   const res = await fetch(url, { signal: controller.signal });
