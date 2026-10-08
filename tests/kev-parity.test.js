@@ -44,17 +44,14 @@ const UPSTREAM_CONFIG = {
   },
 };
 
-// Check for local tokenizer artifact (can be fetched via `node scripts/fetch-kev-fixtures.mjs`)
-const TOKENIZER_PATHS = [
-  "/tmp/kev-files/tokenizer.json",
-  "/tmp/review-verify-downloads/tokenizer.json",
-];
-const tokenizerPath = TOKENIZER_PATHS.find((p) => existsSync(p));
-const hasTokenizer = Boolean(tokenizerPath);
+// Canonical fixture directory with environment variable override
+const KEV_FILES_DIR = process.env.KEV_FILES_DIR || "/tmp/kev-files";
+const tokenizerPath = resolve(KEV_FILES_DIR, "tokenizer.json");
+const hasTokenizer = existsSync(tokenizerPath);
 
 if (!hasTokenizer) {
   console.warn(
-    "[parity test] Notice: tokenizer.json missing in /tmp/kev-files/; skipping real-tokenizer assertions. Run 'npm run fetch:kev' to enable.",
+    `[parity test] Notice: tokenizer.json missing in ${KEV_FILES_DIR}; skipping real-tokenizer assertions. Run 'npm run fetch:kev' to enable.`,
   );
 }
 
@@ -178,19 +175,81 @@ test("packing layout parity: option score positions match PyTorch opt_idx", () =
   );
 });
 
+// UNCONDITIONAL: Runs purely from committed research/kev-distribution-parity.json without external files.
+test("distribution parity: readAnswers indexes full sequence logits to match reference distributions (< 1e-6 tolerance)", () => {
+  const parityPath = resolve("research/kev-distribution-parity.json");
+  const parityData = JSON.parse(readFileSync(parityPath, "utf8"));
+  assert.equal(parityData.summary.real_model_evaluated, true, "dataset built from real ONNX model evaluation");
+  const tolerance = parityData.summary.tolerance || 1e-6;
+
+  for (const exercise of parityData.exercises) {
+    const fullLogits = exercise.full_sequence_logits;
+    const ends = [exercise.option_end_positions];
+
+    // Raw temperature T = 1.0
+    const browserRawDist = readAnswers({ scores: fullLogits, ends, temperature: 1.0 })[0];
+    const modelRawDist = exercise.model_inference_reference.temperature_1_0;
+    assert.equal(browserRawDist.length, modelRawDist.length);
+
+    for (let i = 0; i < browserRawDist.length; i++) {
+      const diff = Math.abs(browserRawDist[i] - modelRawDist[i]);
+      assert.ok(
+        diff < tolerance,
+        `Ex ${exercise.id} raw opt ${i}: browser ${browserRawDist[i]} vs reference ${modelRawDist[i]} (diff ${diff} < ${tolerance})`,
+      );
+    }
+
+    // Calibrated temperature T = KEV_CALIBRATED_TEMPERATURE
+    const browserCalDist = readAnswers({
+      scores: fullLogits,
+      ends,
+      temperature: KEV_CALIBRATED_TEMPERATURE,
+    })[0];
+    const modelCalDist = exercise.model_inference_reference.temperature_calibrated;
+    assert.equal(browserCalDist.length, modelCalDist.length);
+
+    for (let i = 0; i < browserCalDist.length; i++) {
+      const diff = Math.abs(browserCalDist[i] - modelCalDist[i]);
+      assert.ok(
+        diff < tolerance,
+        `Ex ${exercise.id} cal opt ${i}: browser ${browserCalDist[i]} vs reference ${modelCalDist[i]} (diff ${diff} < ${tolerance})`,
+      );
+    }
+
+    // Strict Argmax Invariance
+    assert.equal(
+      choose(browserRawDist),
+      choose(browserCalDist),
+      `Ex ${exercise.id} argmax is invariant under temperature scaling`,
+    );
+
+    // Expected winner check if annotated
+    if (typeof exercise.winner_index === "number") {
+      assert.equal(choose(browserRawDist), exercise.winner_index, `Ex ${exercise.id} winner matches expected`);
+    }
+
+    // Verdict check for Noul
+    if (exercise.kind === "noul" && exercise.verdict) {
+      assert.equal(verdict(noulProbability(browserRawDist)), exercise.verdict, `Ex ${exercise.id} verdict matches`);
+    }
+  }
+});
+
+// ARTIFACT-DEPENDENT: Validates packDecision token reproduction using real Qwen fast tokenizer.
 test(
-  "distribution parity: packDecision reproduces recorded tokens and readAnswers matches model inference reference (< 1e-6 tolerance)",
-  { skip: !hasTokenizer ? "requires tokenizer.json in /tmp/kev-files/ (run node scripts/fetch-kev-fixtures.mjs)" : false },
+  "tokenizer & sequence packing parity: packDecision reproduces exact token IDs and option end positions",
+  {
+    skip: !hasTokenizer
+      ? `requires tokenizer.json in ${KEV_FILES_DIR}; run npm run fetch:kev to download`
+      : false,
+  },
   () => {
     const parityPath = resolve("research/kev-distribution-parity.json");
     const parityData = JSON.parse(readFileSync(parityPath, "utf8"));
-    assert.equal(parityData.summary.real_model_evaluated, true, "dataset built from real ONNX model evaluation");
-    const tolerance = parityData.summary.tolerance || 1e-6;
     const ids = readDelimiterIds(UPSTREAM_CONFIG.kev);
     const tokenizeFn = (text) => realTokenizer.encode(text, { add_special_tokens: false }).ids;
 
     for (const exercise of parityData.exercises) {
-      // 1. Validate packDecision reproduces exact token sequence and gather positions
       const packed = packDecision({
         ids,
         tokenize: tokenizeFn,
@@ -213,56 +272,6 @@ test(
         exercise.option_end_positions,
         `Ex ${exercise.id} option gather positions match recorded option end positions`,
       );
-
-      // 2. Validate readAnswers directly indexing the full sequence logits at packed.ends
-      const fullLogits = exercise.full_sequence_logits;
-
-      // Raw temperature T = 1.0
-      const browserRawDist = readAnswers({ scores: fullLogits, ends: packed.ends, temperature: 1.0 })[0];
-      const modelRawDist = exercise.model_inference_reference.temperature_1_0;
-      assert.equal(browserRawDist.length, modelRawDist.length);
-
-      for (let i = 0; i < browserRawDist.length; i++) {
-        const diff = Math.abs(browserRawDist[i] - modelRawDist[i]);
-        assert.ok(
-          diff < tolerance,
-          `Ex ${exercise.id} raw opt ${i}: browser ${browserRawDist[i]} vs reference ${modelRawDist[i]} (diff ${diff} < ${tolerance})`,
-        );
-      }
-
-      // Calibrated temperature T = KEV_CALIBRATED_TEMPERATURE
-      const browserCalDist = readAnswers({
-        scores: fullLogits,
-        ends: packed.ends,
-        temperature: KEV_CALIBRATED_TEMPERATURE,
-      })[0];
-      const modelCalDist = exercise.model_inference_reference.temperature_calibrated;
-      assert.equal(browserCalDist.length, modelCalDist.length);
-
-      for (let i = 0; i < browserCalDist.length; i++) {
-        const diff = Math.abs(browserCalDist[i] - modelCalDist[i]);
-        assert.ok(
-          diff < tolerance,
-          `Ex ${exercise.id} cal opt ${i}: browser ${browserCalDist[i]} vs reference ${modelCalDist[i]} (diff ${diff} < ${tolerance})`,
-        );
-      }
-
-      // Strict Argmax Invariance
-      assert.equal(
-        choose(browserRawDist),
-        choose(browserCalDist),
-        `Ex ${exercise.id} argmax is invariant under temperature scaling`,
-      );
-
-      // Expected winner check if annotated
-      if (typeof exercise.winner_index === "number") {
-        assert.equal(choose(browserRawDist), exercise.winner_index, `Ex ${exercise.id} winner matches expected`);
-      }
-
-      // Verdict check for Noul
-      if (exercise.kind === "noul" && exercise.verdict) {
-        assert.equal(verdict(noulProbability(browserRawDist)), exercise.verdict, `Ex ${exercise.id} verdict matches`);
-      }
     }
   },
 );

@@ -62,10 +62,10 @@ Automated full-ancestor traversal of `model_q4.onnx` (`scripts/inspect-kev-graph
 **Result:** Auditing all ancestor nodes in the pointer head subgraph confirms **zero `Div` nodes** (`has_temperature_division_in_graph: false`, `div_nodes_in_pointer_head_lineage: []`). The ONNX graph emits raw uncalibrated logits ($T = 1.0$).
 
 ### Upstream PyTorch Calibration Provenance
-In upstream PyTorch Kev (`jaredpalmer/kev`), the promoted 0.6B checkpoint (trial `v7-06b/02-trial-2`, seed 2 of 3) fit a calibration temperature on in-distribution development rows:
+In upstream PyTorch Kev (`jaredpalmer/kev`), temperature is fitted using `scripts/calibrate_checkpoint.py` on development records and stored in `head.pt`. For the promoted 0.6B checkpoint (trial `v7-06b/02-trial-2`, seed 2 of 3), the fitted calibration temperature was:
 $$T_{\text{calibrated}} = 1.9318726578496908 \approx 1.932$$
 
-Upstream empirical evaluation demonstrates the value of this scaling:
+In `onnx-community/kev-0.6b-ONNX`, the model graph was exported with raw uncalibrated logits ($T = 1.0$), delegating temperature scaling to the host runtime. Upstream empirical evaluation demonstrates the value of this scaling:
 | Metric | Raw Logits ($T = 1.0$) | Calibrated ($T = 1.932$) | Impact |
 |---|---|---|---|
 | Accuracy | 80.06% | 80.06% | Identical (argmax invariant) |

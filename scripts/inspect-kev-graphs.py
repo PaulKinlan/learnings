@@ -6,6 +6,7 @@ and absence of baked-in temperature division by tracing the full ancestor
 subgraph from logits back to backbone projections.
 """
 import json
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -84,8 +85,9 @@ def inspect_graph(onnx_path: str):
 
 
 def main():
-    q4_path = sys.argv[1] if len(sys.argv) > 1 else "/tmp/kev-files/onnx/model_q4.onnx"
-    q4f16_path = sys.argv[2] if len(sys.argv) > 2 else "/tmp/kev-inspect/model_q4f16.onnx"
+    default_dir = Path(os.environ.get("KEV_FILES_DIR", "/tmp/kev-files"))
+    q4_path = sys.argv[1] if len(sys.argv) > 1 else str(default_dir / "onnx/model_q4.onnx")
+    q4f16_path = sys.argv[2] if len(sys.argv) > 2 else str(default_dir / "onnx/model_q4f16.onnx")
 
     out = {}
     if Path(q4_path).exists():
