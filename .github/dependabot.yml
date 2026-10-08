@@ -2,10 +2,18 @@
 #
 # pages.yml pins every `uses:` to a full 40-character commit SHA with a trailing
 # `# vX.Y.Z` comment (supply-chain pinning, learnings-hip). Dependabot's
-# github-actions ecosystem rewrites that SHA in place and refreshes the comment,
-# so the pins stay immutable while still receiving upstream releases. Pinning
-# style is a property of the workflow, not of this file: nothing below can turn
-# a SHA pin back into a mutable tag or branch, so keep the workflow pinned.
+# github-actions updater is expected to update that pinned SHA and its version
+# comment, so the pins keep receiving upstream releases while staying immutable.
+#
+# Expected is not guaranteed: this file cannot establish what the hosted service
+# does, and not every update path (tag resolution, security updates) is certain
+# to preserve the SHA form. Once this config reaches the default branch, confirm
+# the behaviour from real Dependabot PRs — each one must keep a full 40-character
+# SHA and a correct `# vX.Y.Z` comment. Do not merge a PR that rewrites a pin
+# back into a mutable tag or branch.
+#
+# Pinning style is a property of the workflow, not of this file, so keep the
+# workflow pinned.
 version: 2
 updates:
   - package-ecosystem: github-actions
