@@ -11,7 +11,7 @@ Upstream Kev is a family of causal decision models that pack a shared state and 
 This validation establishes:
 - **Tokenizer, Delimiter, and Pointer Head fidelity:** Confirming exact token mapping using the pinned Qwen fast tokenizer, caller text escaping, in-graph block causality, and pointer head dot-product scoring.
 - **Temperature calibration analysis:** Resolving whether the ONNX export bakes in temperature division or outputs raw logits, identifying upstream calibrated temperatures, and mathematically verifying their calibrated probability transformations.
-- **Distribution parity:** Verifying that in-browser execution reproduces real ONNX model forward inference outputs across 12 benchmark exercises within $10^{-6}$ numerical tolerance, preserving argmax decisions and enforcing option-order invariance.
+- **Sequence Packing and Distribution Readout Parity:** Verifying that in-browser `packDecision()` and `readAnswers()` accurately reproduce sequence token IDs, option end gather indices, and temperature-scaled probability distributions matching model forward inference across 12 benchmark exercises within $10^{-6}$ numerical tolerance, preserving argmax decisions and enforcing option-order invariance.
 - **Quantization comparison:** Contrasting `q4` (CPU WASM JSEP) with `q4f16` (WebGPU), evaluating precision boundaries and operator requirements (`GatherBlockQuantized`) via full ancestor graph traversal in `scripts/inspect-kev-graphs.py`.
 - **Device memory and lifecycle:** Establishing download byte limits, tracking heap usage, and confirming session disposal (`session.delete()` releasing ORT session handles and clearing internal token caches).
 
@@ -84,11 +84,11 @@ $$p_i = \frac{\exp((z_i - \max(z)) / T)}{\sum_j \exp((z_j - \max(z)) / T)}$$
 
 ---
 
-## 4. Distribution Parity Verification
+## 4. Sequence Packing and Distribution Readout Parity
 
-Distribution parity between the in-browser engine and real Kev ONNX inference was verified across 12 decision exercises (`tests/kev-parity.test.js`, generated via `scripts/generate-parity-ledger.py` and saved in `research/kev-distribution-parity.json`):
+Parity between the in-browser sequence packing/readout engine and model forward inference was verified across 12 decision exercises (`tests/kev-parity.test.js`, generated via `scripts/generate-parity-ledger.py` and saved in `research/kev-distribution-parity.json`):
 
-1. **Numerical Parity with Real Model Logits:** All 12 exercises were evaluated via real forward execution of `model_q4.onnx`. In-browser `packDecision()` was verified to reproduce the exact recorded token sequence and option gather positions. Browser `readAnswers()` outputs indexing into the full sequence logits were compared against the reference distributions across all options at both $T=1.0$ and $T=1.932$. Maximum absolute difference $|p_{\text{browser}} - p_{\text{reference}}| < 10^{-6}$ was confirmed across all exercises.
+1. **Sequence and Gather Parity:** In-browser `packDecision()` was verified to reproduce the exact recorded token sequence and option gather positions. Browser `readAnswers()` outputs indexing into the full sequence logits were compared against the reference distributions across all options at both $T=1.0$ and $T=1.932$. Maximum absolute difference $|p_{\text{browser}} - p_{\text{reference}}| < 10^{-6}$ was confirmed across all exercises.
 2. **Option Position Invariance:** Reversing option order from `[billing, tech, sales, account]` to `[account, sales, tech, billing]` preserves both winning label (`billing`) and probability ($0.997$ vs $0.997$), proving readout gather indices land on token boundaries, not positional offsets.
 3. **Deterministic Primitives:**
    - **Choice:** Multi-class categorical distributions sum to $1.0$ within $10^{-12}$ tolerance.

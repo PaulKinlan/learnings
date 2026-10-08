@@ -52,6 +52,12 @@ const TOKENIZER_PATHS = [
 const tokenizerPath = TOKENIZER_PATHS.find((p) => existsSync(p));
 const hasTokenizer = Boolean(tokenizerPath);
 
+if (!hasTokenizer) {
+  console.warn(
+    "[parity test] Notice: tokenizer.json missing in /tmp/kev-files/; skipping real-tokenizer assertions. Run 'npm run fetch:kev' to enable.",
+  );
+}
+
 const realTokenizer = hasTokenizer
   ? new Tokenizer(JSON.parse(readFileSync(tokenizerPath, "utf8")), {})
   : null;
