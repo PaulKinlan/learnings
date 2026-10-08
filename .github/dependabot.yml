@@ -1,0 +1,14 @@
+# Update PRs for the Actions pinned in .github/workflows/.
+#
+# pages.yml pins every `uses:` to a full 40-character commit SHA with a trailing
+# `# vX.Y.Z` comment (supply-chain pinning, learnings-hip). Dependabot's
+# github-actions ecosystem rewrites that SHA in place and refreshes the comment,
+# so the pins stay immutable while still receiving upstream releases. Pinning
+# style is a property of the workflow, not of this file: nothing below can turn
+# a SHA pin back into a mutable tag or branch, so keep the workflow pinned.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
