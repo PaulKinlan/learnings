@@ -163,18 +163,44 @@ test("packing layout parity: real tokenizer tokenization and option score positi
   );
 });
 
-test("distribution parity: browser readAnswers reproduces real model inference outputs (< 1e-6 tolerance)", () => {
+test("distribution parity: packDecision reproduces recorded tokens and readAnswers matches real ONNX execution (< 1e-6 tolerance)", () => {
   const parityPath = resolve("research/kev-distribution-parity.json");
   const parityData = JSON.parse(readFileSync(parityPath, "utf8"));
   assert.equal(parityData.summary.real_model_evaluated, true, "dataset built from real ONNX model evaluation");
   const tolerance = parityData.summary.tolerance || 1e-6;
+  const ids = readDelimiterIds(UPSTREAM_CONFIG.kev);
+  const tokenizeFn = (text) => realTokenizer.encode(text, { add_special_tokens: false }).ids;
 
   for (const exercise of parityData.exercises) {
-    const rawScores = exercise.raw_logits;
-    const ends = [rawScores.map((_, i) => i)];
+    // 1. Validate packDecision reproduces exact token sequence and gather positions
+    const packed = packDecision({
+      ids,
+      tokenize: tokenizeFn,
+      state: exercise.state,
+      questions: [
+        {
+          instruction: exercise.instruction,
+          options: exercise.options,
+        },
+      ],
+    });
 
-    // 1. Raw logits temperature T = 1.0
-    const browserRawDist = readAnswers({ scores: rawScores, ends, temperature: 1.0 })[0];
+    assert.deepEqual(
+      packed.inputIds,
+      exercise.recorded_input_ids,
+      `Ex ${exercise.id} packed inputIds match recorded model input token sequence`,
+    );
+    assert.deepEqual(
+      packed.ends[0],
+      exercise.option_end_positions,
+      `Ex ${exercise.id} option gather positions match recorded option end positions`,
+    );
+
+    // 2. Validate readAnswers directly indexing the full sequence logits at packed.ends
+    const fullLogits = exercise.full_sequence_logits;
+
+    // Raw temperature T = 1.0
+    const browserRawDist = readAnswers({ scores: fullLogits, ends: packed.ends, temperature: 1.0 })[0];
     const realRawDist = exercise.real_onnx_inference.temperature_1_0;
     assert.equal(browserRawDist.length, realRawDist.length);
 
@@ -186,10 +212,10 @@ test("distribution parity: browser readAnswers reproduces real model inference o
       );
     }
 
-    // 2. Calibrated temperature T = KEV_CALIBRATED_TEMPERATURE
+    // Calibrated temperature T = KEV_CALIBRATED_TEMPERATURE
     const browserCalDist = readAnswers({
-      scores: rawScores,
-      ends,
+      scores: fullLogits,
+      ends: packed.ends,
       temperature: KEV_CALIBRATED_TEMPERATURE,
     })[0];
     const realCalDist = exercise.real_onnx_inference.temperature_calibrated;
@@ -203,23 +229,40 @@ test("distribution parity: browser readAnswers reproduces real model inference o
       );
     }
 
-    // 3. Strict Argmax Invariance
+    // Strict Argmax Invariance
     assert.equal(
       choose(browserRawDist),
       choose(browserCalDist),
       `Ex ${exercise.id} argmax is invariant under temperature scaling`,
     );
 
-    // 4. Expected winner check if annotated
+    // Expected winner check if annotated
     if (typeof exercise.winner_index === "number") {
       assert.equal(choose(browserRawDist), exercise.winner_index, `Ex ${exercise.id} winner matches expected`);
     }
 
-    // 5. Verdict check for Noul
+    // Verdict check for Noul
     if (exercise.kind === "noul" && exercise.verdict) {
       assert.equal(verdict(noulProbability(browserRawDist)), exercise.verdict, `Ex ${exercise.id} verdict matches`);
     }
   }
+});
+
+test("softmax temperature boundary safety: subtract-max-before-divide prevents overflow on small T", () => {
+  // Test small temperatures that would overflow if dividing logits before subtracting max
+  const scores = [0, 1];
+  const tinyT = 1e-100;
+  const result = softmax(scores, tinyT);
+
+  assert.equal(result.length, 2);
+  assert.equal(result[0], 0, "non-maximal element is 0 at near-zero temperature");
+  assert.equal(result[1], 1, "maximal element is 1 at near-zero temperature");
+
+  // Large logits with small temperature
+  const largeScores = [1000, 2000];
+  const largeResult = softmax(largeScores, 1e-50);
+  assert.equal(largeResult[0], 0);
+  assert.equal(largeResult[1], 1);
 });
 
 test("noul and score primitives: temperature calibration behavior and binary threshold math", () => {
@@ -232,7 +275,7 @@ test("noul and score primitives: temperature calibration behavior and binary thr
   assert.equal(verdict(noulProbability(calNoul)), "yes");
   assert.ok(noulProbability(rawNoul) > noulProbability(calNoul), "confidence is calmed under calibration");
 
-  // Verify exact math on binary negative (Exercise 5: raw p_yes = 0.021)
+  // Verify exact math on binary negative (raw p_yes = 0.021)
   // z_1 - z_0 = ln(0.021 / 0.979) = -3.84205
   // At T = 1.93187..., (z_1 - z_0) / T = -1.98877
   // sigma(-1.98877) = 1 / (1 + exp(1.98877)) = 0.120387

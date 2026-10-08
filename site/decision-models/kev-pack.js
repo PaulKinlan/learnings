@@ -102,9 +102,8 @@ export function softmax(values, temperature = 1.0) {
   if (typeof temperature !== "number" || !Number.isFinite(temperature) || temperature <= 0) {
     throw new Error(`temperature must be a finite positive number, got ${String(temperature)}`);
   }
-  const scaled = temperature === 1.0 ? values : values.map((v) => v / temperature);
-  const max = Math.max(...scaled);
-  const exps = scaled.map((v) => Math.exp(v - max));
+  const max = Math.max(...values);
+  const exps = values.map((v) => Math.exp((v - max) / temperature));
   const total = exps.reduce((a, b) => a + b, 0);
   if (!Number.isFinite(total) || total <= 0) throw new Error("softmax produced no usable total.");
   return exps.map((e) => e / total);
