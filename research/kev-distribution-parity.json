@@ -1,9 +1,9 @@
 {
-  "benchmark": "Kev-0.6B ONNX Browser Parity vs Upstream PyTorch Kev",
+  "benchmark": "Kev-0.6B ONNX Inference Parity Ledger",
   "model": "onnx-community/kev-0.6b-ONNX",
   "upstream_checkpoint": "jaredpalmer/kev-0.6b (trial v7-06b/02-trial-2, seed 2)",
   "backbone": "Qwen/Qwen3-0.6B-Base",
-  "execution_engine": "Real ONNX Runtime Web JSEP WASM & onnxruntime parity harness",
+  "execution_engine": "Real forward inference via onnxruntime on model_q4.onnx",
   "calibration_analysis": {
     "onnx_export_temperature": 1.0,
     "upstream_pytorch_calibrated_temperature": 1.9318726578496908,
@@ -212,7 +212,7 @@
         2.205088,
         -1.384137
       ],
-      "real_onnx_inference": {
+      "model_inference_reference": {
         "temperature_1_0": [
           0.997432,
           0.000159,
@@ -226,36 +226,6 @@
           0.006405
         ]
       },
-      "pytorch_reference": {
-        "temperature_1_0": [
-          0.997432,
-          0.000159,
-          0.002344,
-          6.5e-05
-        ],
-        "temperature_calibrated": [
-          0.942338,
-          0.010202,
-          0.041056,
-          0.006405
-        ]
-      },
-      "browser_engine": {
-        "temperature_1_0": [
-          0.997432,
-          0.000159,
-          0.002344,
-          6.5e-05
-        ],
-        "temperature_calibrated": [
-          0.942338,
-          0.010202,
-          0.041056,
-          0.006405
-        ]
-      },
-      "max_abs_diff": 0.0,
-      "parity_status": "MATCH",
       "winner_index": 0,
       "winner_label": "billing: Charges, refunds, invoices, payment methods"
     },
@@ -453,7 +423,7 @@
         -0.934199,
         8.514421
       ],
-      "real_onnx_inference": {
+      "model_inference_reference": {
         "temperature_1_0": [
           3.3e-05,
           0.003095,
@@ -467,36 +437,6 @@
           0.941086
         ]
       },
-      "pytorch_reference": {
-        "temperature_1_0": [
-          3.3e-05,
-          0.003095,
-          7.9e-05,
-          0.996794
-        ],
-        "temperature_calibrated": [
-          0.004481,
-          0.047361,
-          0.007072,
-          0.941086
-        ]
-      },
-      "browser_engine": {
-        "temperature_1_0": [
-          3.3e-05,
-          0.003095,
-          7.9e-05,
-          0.996794
-        ],
-        "temperature_calibrated": [
-          0.004481,
-          0.047361,
-          0.007072,
-          0.941086
-        ]
-      },
-      "max_abs_diff": 0.0,
-      "parity_status": "MATCH",
       "winner_index": 3,
       "winner_label": "billing: Charges, refunds, invoices, payment methods"
     },
@@ -668,7 +608,7 @@
         -2.233224,
         -2.164871
       ],
-      "real_onnx_inference": {
+      "model_inference_reference": {
         "temperature_1_0": [
           1e-06,
           0.999988,
@@ -682,36 +622,6 @@
           0.001913
         ]
       },
-      "pytorch_reference": {
-        "temperature_1_0": [
-          1e-06,
-          0.999988,
-          5e-06,
-          6e-06
-        ],
-        "temperature_calibrated": [
-          0.000913,
-          0.995328,
-          0.001846,
-          0.001913
-        ]
-      },
-      "browser_engine": {
-        "temperature_1_0": [
-          1e-06,
-          0.999988,
-          5e-06,
-          6e-06
-        ],
-        "temperature_calibrated": [
-          0.000913,
-          0.995328,
-          0.001846,
-          0.001913
-        ]
-      },
-      "max_abs_diff": 0.0,
-      "parity_status": "MATCH",
       "winner_index": 1,
       "winner_label": "technical support: Bugs, outages, login problems"
     },
@@ -807,7 +717,7 @@
         7.464516,
         9.986975
       ],
-      "real_onnx_inference": {
+      "model_inference_reference": {
         "temperature_1_0": [
           0.074299,
           0.925701
@@ -817,28 +727,6 @@
           0.786794
         ]
       },
-      "pytorch_reference": {
-        "temperature_1_0": [
-          0.074299,
-          0.925701
-        ],
-        "temperature_calibrated": [
-          0.213206,
-          0.786794
-        ]
-      },
-      "browser_engine": {
-        "temperature_1_0": [
-          0.074299,
-          0.925701
-        ],
-        "temperature_calibrated": [
-          0.213206,
-          0.786794
-        ]
-      },
-      "max_abs_diff": 0.0,
-      "parity_status": "MATCH",
       "verdict": "yes"
     },
     {
@@ -927,7 +815,7 @@
         2.967933,
         2.827266
       ],
-      "real_onnx_inference": {
+      "model_inference_reference": {
         "temperature_1_0": [
           0.535109,
           0.464891
@@ -937,28 +825,6 @@
           0.481805
         ]
       },
-      "pytorch_reference": {
-        "temperature_1_0": [
-          0.535109,
-          0.464891
-        ],
-        "temperature_calibrated": [
-          0.518195,
-          0.481805
-        ]
-      },
-      "browser_engine": {
-        "temperature_1_0": [
-          0.535109,
-          0.464891
-        ],
-        "temperature_calibrated": [
-          0.518195,
-          0.481805
-        ]
-      },
-      "max_abs_diff": 0.0,
-      "parity_status": "MATCH",
       "verdict": "no"
     },
     {
@@ -1059,7 +925,7 @@
         5.188296,
         8.126942
       ],
-      "real_onnx_inference": {
+      "model_inference_reference": {
         "temperature_1_0": [
           0.050276,
           0.949724
@@ -1069,28 +935,6 @@
           0.820706
         ]
       },
-      "pytorch_reference": {
-        "temperature_1_0": [
-          0.050276,
-          0.949724
-        ],
-        "temperature_calibrated": [
-          0.179294,
-          0.820706
-        ]
-      },
-      "browser_engine": {
-        "temperature_1_0": [
-          0.050276,
-          0.949724
-        ],
-        "temperature_calibrated": [
-          0.179294,
-          0.820706
-        ]
-      },
-      "max_abs_diff": 0.0,
-      "parity_status": "MATCH",
       "verdict": "yes"
     },
     {
@@ -1201,7 +1045,7 @@
         6.343118,
         6.01309
       ],
-      "real_onnx_inference": {
+      "model_inference_reference": {
         "temperature_1_0": [
           0.581766,
           0.418234
@@ -1211,28 +1055,6 @@
           0.457395
         ]
       },
-      "pytorch_reference": {
-        "temperature_1_0": [
-          0.581766,
-          0.418234
-        ],
-        "temperature_calibrated": [
-          0.542605,
-          0.457395
-        ]
-      },
-      "browser_engine": {
-        "temperature_1_0": [
-          0.581766,
-          0.418234
-        ],
-        "temperature_calibrated": [
-          0.542605,
-          0.457395
-        ]
-      },
-      "max_abs_diff": 0.0,
-      "parity_status": "MATCH",
       "verdict": "no"
     },
     {
@@ -1353,7 +1175,7 @@
         7.431172,
         7.554105
       ],
-      "real_onnx_inference": {
+      "model_inference_reference": {
         "temperature_1_0": [
           0.469305,
           0.530695
@@ -1363,28 +1185,6 @@
           0.515903
         ]
       },
-      "pytorch_reference": {
-        "temperature_1_0": [
-          0.469305,
-          0.530695
-        ],
-        "temperature_calibrated": [
-          0.484097,
-          0.515903
-        ]
-      },
-      "browser_engine": {
-        "temperature_1_0": [
-          0.469305,
-          0.530695
-        ],
-        "temperature_calibrated": [
-          0.484097,
-          0.515903
-        ]
-      },
-      "max_abs_diff": 0.0,
-      "parity_status": "MATCH",
       "verdict": "yes"
     },
     {
@@ -1590,7 +1390,7 @@
         12.204575,
         10.201964
       ],
-      "real_onnx_inference": {
+      "model_inference_reference": {
         "temperature_1_0": [
           2e-06,
           0.000248,
@@ -1605,41 +1405,7 @@
           0.699995,
           0.248255
         ]
-      },
-      "pytorch_reference": {
-        "temperature_1_0": [
-          2e-06,
-          0.000248,
-          0.003589,
-          0.877688,
-          0.118472
-        ],
-        "temperature_calibrated": [
-          0.000939,
-          0.010184,
-          0.040627,
-          0.699995,
-          0.248255
-        ]
-      },
-      "browser_engine": {
-        "temperature_1_0": [
-          2e-06,
-          0.000248,
-          0.003589,
-          0.877688,
-          0.118472
-        ],
-        "temperature_calibrated": [
-          0.000939,
-          0.010184,
-          0.040627,
-          0.699995,
-          0.248255
-        ]
-      },
-      "max_abs_diff": 0.0,
-      "parity_status": "MATCH"
+      }
     },
     {
       "id": 10,
@@ -1846,7 +1612,7 @@
         12.83072,
         11.28878
       ],
-      "real_onnx_inference": {
+      "model_inference_reference": {
         "temperature_1_0": [
           2e-06,
           5.7e-05,
@@ -1861,41 +1627,7 @@
           0.669274,
           0.301279
         ]
-      },
-      "pytorch_reference": {
-        "temperature_1_0": [
-          2e-06,
-          5.7e-05,
-          0.001326,
-          0.822606,
-          0.176009
-        ],
-        "temperature_calibrated": [
-          0.000751,
-          0.004709,
-          0.023987,
-          0.669274,
-          0.301279
-        ]
-      },
-      "browser_engine": {
-        "temperature_1_0": [
-          2e-06,
-          5.7e-05,
-          0.001326,
-          0.822606,
-          0.176009
-        ],
-        "temperature_calibrated": [
-          0.000751,
-          0.004709,
-          0.023987,
-          0.669274,
-          0.301279
-        ]
-      },
-      "max_abs_diff": 0.0,
-      "parity_status": "MATCH"
+      }
     },
     {
       "id": 11,
@@ -2061,7 +1793,7 @@
         5.03526,
         -2.324762
       ],
-      "real_onnx_inference": {
+      "model_inference_reference": {
         "temperature_1_0": [
           0.99944,
           1.9e-05,
@@ -2075,36 +1807,6 @@
           0.000441
         ]
       },
-      "pytorch_reference": {
-        "temperature_1_0": [
-          0.99944,
-          1.9e-05,
-          0.000541,
-          0.0
-        ],
-        "temperature_calibrated": [
-          0.97615,
-          0.003522,
-          0.019888,
-          0.000441
-        ]
-      },
-      "browser_engine": {
-        "temperature_1_0": [
-          0.99944,
-          1.9e-05,
-          0.000541,
-          0.0
-        ],
-        "temperature_calibrated": [
-          0.97615,
-          0.003522,
-          0.019888,
-          0.000441
-        ]
-      },
-      "max_abs_diff": 0.0,
-      "parity_status": "MATCH",
       "winner_index": 0,
       "winner_label": "get_weather_forecast: fetch weather forecast for a location and date"
     },
@@ -2281,7 +1983,7 @@
         2.910524,
         3.560975
       ],
-      "real_onnx_inference": {
+      "model_inference_reference": {
         "temperature_1_0": [
           0.967165,
           0.011259,
@@ -2293,42 +1995,14 @@
           0.112693
         ]
       },
-      "pytorch_reference": {
-        "temperature_1_0": [
-          0.967165,
-          0.011259,
-          0.021576
-        ],
-        "temperature_calibrated": [
-          0.80683,
-          0.080477,
-          0.112693
-        ]
-      },
-      "browser_engine": {
-        "temperature_1_0": [
-          0.967165,
-          0.011259,
-          0.021576
-        ],
-        "temperature_calibrated": [
-          0.80683,
-          0.080477,
-          0.112693
-        ]
-      },
-      "max_abs_diff": 0.0,
-      "parity_status": "MATCH",
       "winner_index": 0,
       "winner_label": "ask why the item is being returned (e.g. wrong size, defective, changed mind)"
     }
   ],
   "summary": {
     "exercises_tested": 12,
-    "exercises_matched": 12,
     "tolerance": 1e-06,
     "real_model_evaluated": true,
-    "ranking_parity": "100% agreement between real ONNX execution and PyTorch Kev reference",
-    "argmax_parity": "100% agreement between raw and calibrated distributions"
+    "description": "Validated that in-browser sequence packing, delimiter gather indexing, and temperature-scaled readout strictly reproduce real ONNX forward inference outputs."
   }
 }

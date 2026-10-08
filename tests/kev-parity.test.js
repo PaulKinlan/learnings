@@ -1,7 +1,7 @@
 // tests/kev-parity.test.js
-// Distribution parity against upstream PyTorch Kev (jaredpalmer/kev).
+// Distribution parity against upstream Kev ONNX model inference.
 // Validates real tokenizer, delimiter mapping, packing arithmetic, pointer head scoring,
-// temperature scaling, and reproducible distribution readout matching upstream PyTorch.
+// temperature scaling, and reproducible distribution readout matching model inference.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
@@ -173,7 +173,7 @@ test("packing layout parity: option score positions match PyTorch opt_idx", () =
 });
 
 test(
-  "distribution parity: packDecision reproduces recorded tokens and readAnswers matches real ONNX & PyTorch reference (< 1e-6 tolerance)",
+  "distribution parity: packDecision reproduces recorded tokens and readAnswers matches model inference reference (< 1e-6 tolerance)",
   { skip: !hasTokenizer ? "requires tokenizer.json in /tmp/kev-files/ (run node scripts/fetch-kev-fixtures.mjs)" : false },
   () => {
     const parityPath = resolve("research/kev-distribution-parity.json");
@@ -213,24 +213,14 @@ test(
 
       // Raw temperature T = 1.0
       const browserRawDist = readAnswers({ scores: fullLogits, ends: packed.ends, temperature: 1.0 })[0];
-      const realRawDist = exercise.real_onnx_inference.temperature_1_0;
-      const pytorchRawDist = exercise.pytorch_reference.temperature_1_0;
-      assert.equal(browserRawDist.length, realRawDist.length);
-      assert.equal(browserRawDist.length, pytorchRawDist.length);
+      const modelRawDist = exercise.model_inference_reference.temperature_1_0;
+      assert.equal(browserRawDist.length, modelRawDist.length);
 
       for (let i = 0; i < browserRawDist.length; i++) {
-        // Compare with real ONNX model output
-        const diffReal = Math.abs(browserRawDist[i] - realRawDist[i]);
+        const diff = Math.abs(browserRawDist[i] - modelRawDist[i]);
         assert.ok(
-          diffReal < tolerance,
-          `Ex ${exercise.id} raw opt ${i}: browser ${browserRawDist[i]} vs real ONNX ${realRawDist[i]} (diff ${diffReal} < ${tolerance})`,
-        );
-
-        // Compare with PyTorch reference distribution
-        const diffPyTorch = Math.abs(browserRawDist[i] - pytorchRawDist[i]);
-        assert.ok(
-          diffPyTorch < tolerance,
-          `Ex ${exercise.id} raw opt ${i}: browser ${browserRawDist[i]} vs PyTorch ${pytorchRawDist[i]} (diff ${diffPyTorch} < ${tolerance})`,
+          diff < tolerance,
+          `Ex ${exercise.id} raw opt ${i}: browser ${browserRawDist[i]} vs reference ${modelRawDist[i]} (diff ${diff} < ${tolerance})`,
         );
       }
 
@@ -240,24 +230,14 @@ test(
         ends: packed.ends,
         temperature: KEV_CALIBRATED_TEMPERATURE,
       })[0];
-      const realCalDist = exercise.real_onnx_inference.temperature_calibrated;
-      const pytorchCalDist = exercise.pytorch_reference.temperature_calibrated;
-      assert.equal(browserCalDist.length, realCalDist.length);
-      assert.equal(browserCalDist.length, pytorchCalDist.length);
+      const modelCalDist = exercise.model_inference_reference.temperature_calibrated;
+      assert.equal(browserCalDist.length, modelCalDist.length);
 
       for (let i = 0; i < browserCalDist.length; i++) {
-        // Compare with real ONNX calibrated output
-        const diffRealCal = Math.abs(browserCalDist[i] - realCalDist[i]);
+        const diff = Math.abs(browserCalDist[i] - modelCalDist[i]);
         assert.ok(
-          diffRealCal < tolerance,
-          `Ex ${exercise.id} cal opt ${i}: browser ${browserCalDist[i]} vs real ONNX ${realCalDist[i]} (diff ${diffRealCal} < ${tolerance})`,
-        );
-
-        // Compare with PyTorch reference distribution
-        const diffPyTorchCal = Math.abs(browserCalDist[i] - pytorchCalDist[i]);
-        assert.ok(
-          diffPyTorchCal < tolerance,
-          `Ex ${exercise.id} cal opt ${i}: browser ${browserCalDist[i]} vs PyTorch ${pytorchCalDist[i]} (diff ${diffPyTorchCal} < ${tolerance})`,
+          diff < tolerance,
+          `Ex ${exercise.id} cal opt ${i}: browser ${browserCalDist[i]} vs reference ${modelCalDist[i]} (diff ${diff} < ${tolerance})`,
         );
       }
 

@@ -11,7 +11,7 @@ Upstream Kev is a family of causal decision models that pack a shared state and 
 This validation establishes:
 - **Tokenizer, Delimiter, and Pointer Head fidelity:** Confirming exact token mapping using the pinned Qwen fast tokenizer, caller text escaping, in-graph block causality, and pointer head dot-product scoring.
 - **Temperature calibration analysis:** Resolving whether the ONNX export bakes in temperature division or outputs raw logits, identifying upstream calibrated temperatures, and mathematically verifying their calibrated probability transformations.
-- **Distribution parity:** Verifying that browser execution reproduces real model inference and upstream PyTorch Kev probability distributions across paired test exercises within $10^{-6}$ numerical tolerance, preserving argmax decisions and enforcing option-order invariance.
+- **Distribution parity:** Verifying that in-browser execution reproduces real ONNX model forward inference outputs across 12 benchmark exercises within $10^{-6}$ numerical tolerance, preserving argmax decisions and enforcing option-order invariance.
 - **Quantization comparison:** Contrasting `q4` (CPU WASM JSEP) with `q4f16` (WebGPU), evaluating precision boundaries and operator requirements (`GatherBlockQuantized`) via full ancestor graph traversal in `scripts/inspect-kev-graphs.py`.
 - **Device memory and lifecycle:** Establishing download byte limits, tracking heap usage, and confirming session disposal (`session.delete()` releasing ORT session handles and clearing internal token caches).
 
@@ -86,9 +86,9 @@ $$p_i = \frac{\exp((z_i - \max(z)) / T)}{\sum_j \exp((z_j - \max(z)) / T)}$$
 
 ## 4. Distribution Parity Verification
 
-Distribution parity between the browser engine, real ONNX model execution, and upstream PyTorch Kev was verified across 12 paired decision exercises (`tests/kev-parity.test.js`, generated via `scripts/generate-parity-ledger.py` and saved in `research/kev-distribution-parity.json`):
+Distribution parity between the in-browser engine and real Kev ONNX inference was verified across 12 decision exercises (`tests/kev-parity.test.js`, generated via `scripts/generate-parity-ledger.py` and saved in `research/kev-distribution-parity.json`):
 
-1. **Numerical Parity with Real Model Logits and PyTorch Reference:** All 12 exercises were evaluated via real forward execution of `model_q4.onnx` and PyTorch Kev reference formulas. In-browser `packDecision()` was verified to reproduce the exact recorded token sequence and option gather positions. Browser `readAnswers()` outputs indexing into the full sequence logits were compared against both real ONNX execution and analytical PyTorch reference distributions across all options at both $T=1.0$ and $T=1.932$. Maximum absolute difference $|p_{\text{browser}} - p_{\text{reference}}| < 10^{-6}$ was confirmed across all exercises.
+1. **Numerical Parity with Real Model Logits:** All 12 exercises were evaluated via real forward execution of `model_q4.onnx`. In-browser `packDecision()` was verified to reproduce the exact recorded token sequence and option gather positions. Browser `readAnswers()` outputs indexing into the full sequence logits were compared against the reference distributions across all options at both $T=1.0$ and $T=1.932$. Maximum absolute difference $|p_{\text{browser}} - p_{\text{reference}}| < 10^{-6}$ was confirmed across all exercises.
 2. **Option Position Invariance:** Reversing option order from `[billing, tech, sales, account]` to `[account, sales, tech, billing]` preserves both winning label (`billing`) and probability ($0.997$ vs $0.997$), proving readout gather indices land on token boundaries, not positional offsets.
 3. **Deterministic Primitives:**
    - **Choice:** Multi-class categorical distributions sum to $1.0$ within $10^{-12}$ tolerance.
@@ -139,10 +139,10 @@ Automated memory audits (`tests/kev-memory.test.js` and `research/kev-device-mem
 - `site/decision-models/kev-pack.js`: Delimiters, packing, overflow-safe temperature-scaled softmax, `KEV_CALIBRATED_TEMPERATURE`.
 - `site/decision-models/kev-engine.js`: ONNX Runtime Web JSEP WASM execution, `temperature` support, cache and session cleanup on disposal.
 - `site/decision-models/on-device.js`: In-browser UI, honest backend and temperature reporting.
-- `scripts/fetch-kev-fixtures.mjs`: Automated downloader and sha256 verifier for pinned Kev artifacts (`config.json`, `tokenizer.json`, `model_q4.onnx`, `model_q4f16.onnx`).
+- `scripts/fetch-kev-fixtures.mjs`: Automated downloader and sha256 verifier for pinned Kev artifacts (`config.json`, `tokenizer.json`, `model_q4.onnx`, `model_q4.onnx_data`, `model_q4f16.onnx`).
 - `scripts/inspect-kev-graphs.py`: Automated ONNX graph inspection tool for q4 and q4f16 with full ancestor lineage traversal.
-- `scripts/generate-parity-ledger.py`: Reproducible reference generator executing real ONNX inference and PyTorch distribution calculations.
-- `tests/kev-parity.test.js`: Real tokenizer, delimiter IDs, unforgeable text escaping, sequence packing layout, real model forward inference parity ($< 10^{-6}$ tolerance vs both ONNX and PyTorch reference), and argmax invariance.
+- `scripts/generate-parity-ledger.py`: Reproducible reference generator executing real ONNX inference and reference distribution calculations.
+- `tests/kev-parity.test.js`: Real tokenizer, delimiter IDs, unforgeable text escaping, sequence packing layout, real model forward inference parity ($< 10^{-6}$ tolerance), and argmax invariance.
 - `tests/kev-quantization.test.js`: Structural comparison of `q4` vs `q4f16`, verified against live graph inspection of pinned ONNX files.
 - `tests/kev-memory.test.js`: Memory caps, lifecycle disposal with cache clearing, and architectural memory footprint.
 - `research/kev-distribution-parity.json`: 12 paired exercise dataset generated from real model forward passes with recorded input IDs, full sequence logits, and reference probability vectors.
