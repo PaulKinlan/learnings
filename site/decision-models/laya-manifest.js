@@ -73,4 +73,3 @@ export const LAYA_MAX_BYTES = Object.freeze({
 });
 
 export const LAYA_DEFAULT_MAX_BYTES = 1000 * 1024 * 1024; // 1 GB fallback cap
-
