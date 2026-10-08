@@ -41,7 +41,7 @@
           <select id="engine">
             <option value="client">Demo Mode / Schema Preview (Simulated Fixture)</option>
             <option value="local">Local Vision Decision Server (loopback: 8009)</option>
-            <option value="api">Multimodal API Adapter (Wity-1 / OpenAI / Gemini)</option>
+            <option value="api">TypeSafe-hosted multimodal adapter (api.typesafe.ai)</option>
           </select>
           <div id="engine-notice" class="notice" style="margin-top:.6rem">
             <strong>Notice: UI and schema validation simulation.</strong> Connect a local vision server (e.g. llama.cpp / vLLM / Kev serve) or multimodal API endpoint below to run actual model weights.
@@ -52,9 +52,9 @@
           <input id="endpoint" value="http://127.0.0.1:8009/v1/systemone" autocomplete="off">
         </div>
         <div id="api-field" hidden>
-          <label for="api-key">API Key (memory only)</label>
+          <label for="api-key">TypeSafe API key (memory only)</label>
           <input id="api-key" type="password" autocomplete="off" spellcheck="false">
-          <label for="model-name" style="margin-top:.4rem">Model ID</label>
+          <label for="model-name" style="margin-top:.4rem">Model ID (informational — changing it does not change the recipient: api.typesafe.ai/v1/systemone)</label>
           <input id="model-name" value="Imajev-4B" autocomplete="off">
         </div>
         <div>
