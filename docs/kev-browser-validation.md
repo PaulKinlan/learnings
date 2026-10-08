@@ -89,12 +89,12 @@ $$p_i = \frac{\exp((z_i - \max(z)) / T)}{\sum_j \exp((z_j - \max(z)) / T)}$$
 Parity between the in-browser sequence packing/readout engine and model forward inference was verified across 12 decision exercises (`tests/kev-parity.test.js`, generated via `scripts/generate-parity-ledger.py` and saved in `research/kev-distribution-parity.json`):
 
 1. **Sequence and Gather Parity:** In-browser `packDecision()` was verified to reproduce the exact recorded token sequence and option gather positions. Browser `readAnswers()` outputs indexing into the full sequence logits were compared against the reference distributions across all options at both $T=1.0$ and $T=1.932$. Maximum absolute difference $|p_{\text{browser}} - p_{\text{reference}}| < 10^{-6}$ was confirmed across all exercises.
-2. **Option Position Invariance:** Reversing option order from `[billing, tech, sales, account]` to `[account, sales, tech, billing]` preserves both winning label (`billing`) and probability ($0.997$ vs $0.997$), proving readout gather indices land on token boundaries, not positional offsets.
+2. **Option Position Robustness:** Reversing option order from `[billing, tech, sales, account]` to `[account, sales, tech, billing]` preserves the winning label (`billing`) with very close dominant probabilities ($0.9974$ vs $0.9968$), proving readout gather indices land on token boundaries rather than positional offsets.
 3. **Deterministic Primitives:**
    - **Choice:** Multi-class categorical distributions sum to $1.0$ within $10^{-12}$ tolerance.
    - **Noul:** Binary calibrated probabilities evaluate second option `p(yes)` correctly; threshold abstention behaves monotonically.
    - **Score:** Expected ordinal level over multi-tier descriptions correctly centers on target distributions.
-4. **Flat Score Detection:** Graphs with missing delimiters return all-zero score vectors. The engine detects identical score vectors and marks them as `flat: true`, preventing false passes on tiebreaks.
+4. **Flat Score Detection:** Graphs with missing delimiters return all-zero score vectors. The engine detects identical score vectors and marks them as `flat: true`, exposing uniform ties for UI warning rather than presenting them as confident decisions.
 
 ---
 
