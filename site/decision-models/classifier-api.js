@@ -46,11 +46,12 @@ async function getLaya(onProgress, urls) {
  * Map Classifier questions (the caller's schema) into Laya's {t, ins, crit} contract.
  *
  * A null-prototype map, because the id is caller-supplied and `Classifier.create()` validates
- * only that it is a non-empty string. On a normal object, `map['__proto__'] = {...}` hits the
- * inherited accessor and reassigns the prototype instead of adding a key, so the question the
- * caller asked is dropped before `classify()`'s Object.entries() ever runs it. JSON.parse (the
- * playground hands the schema textarea's text straight here) yields `__proto__` as an ordinary
- * own key, so the id does reach this loop.
+ * only that it is a non-empty string. The caller-supplied question id is a value — for
+ * `{"id":"__proto__"}` JSON.parse yields `id` as an ordinary own key and `"__proto__"` as its
+ * string value, reaching this loop as `q.id`. The trap is a plain `{}` map written by assignment
+ * with an untrusted id or label: assignment to `map['__proto__'] = {...}` hits the inherited
+ * accessor and reassigns the prototype instead of adding a key, dropping the question before
+ * `classify()`'s Object.entries() ever runs it.
  */
 export function toLayaQuestions(questions, context) {
   const layaQuestions = Object.create(null);
