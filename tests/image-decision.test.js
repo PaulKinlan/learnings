@@ -1091,3 +1091,110 @@ test('simulated demo path: preset -> fixture invariant holds regardless of key o
     'Negative control choice must come from its own options'
   );
 });
+
+// learnings-9k2: the questions textarea is JSON.parse'd straight into decideImage() -> validateImageSpec(),
+// so a prototype-named question id arrives as an ordinary own key (the object-literal `__proto__: {}`
+// form would set the prototype and never reach the question loop at all). core.js:validateSpec refuses
+// 'constructor', 'prototype' and '__proto__' by name; 'constructor' and 'prototype' still satisfy the
+// character regex, so without the same list here the image lab accepts a schema the sibling lab refuses.
+test('Image lab schema: prototype-named question ids are refused like core.js:validateSpec (learnings-9k2)', () => {
+  const protoIdSpec = JSON.parse(
+    '{"title":"Proto key triage","questions":{"__proto__":{"type":"noul","instructions":"Is the path clear?"}}}',
+  );
+  assert.ok(
+    Object.hasOwn(protoIdSpec.questions, '__proto__'),
+    'probe: JSON.parse keys __proto__ as an own question, which is how it reaches this loop',
+  );
+  assert.throws(
+    () => validateImageSpec(protoIdSpec, DUMMY_IMAGE),
+    /invalid question id/i,
+    'a __proto__ question id is refused instead of being handed to every id-keyed map downstream',
+  );
+
+  for (const id of ['constructor', 'prototype']) {
+    assert.throws(
+      () =>
+        validateImageSpec(
+          { title: 'Proto key triage', questions: { [id]: { type: 'noul', instructions: 'Is the path clear?' } } },
+          DUMMY_IMAGE,
+        ),
+      /invalid question id/i,
+      `'${id}' is refused by core.js:validateSpec and must be refused here too`,
+    );
+  }
+
+  // Positive control: an ordinary id in the same shape still validates, so the list cannot grow into
+  // an over-broad refusal that breaks the lab's own presets.
+  assert.doesNotThrow(() =>
+    validateImageSpec(
+      { title: 'Proto key triage', questions: { is_blocked: { type: 'noul', instructions: 'Is the path clear?' } } },
+      DUMMY_IMAGE,
+    ),
+  );
+});
+
+// learnings-9k2: choice option labels are caller-supplied keys, and core.js asks only that a label be
+// non-empty text (text(k,'Option')), so a prototype-named label is a legal option that has to be held
+// safely rather than reserved. On a plain {} accumulator the canonicalizer's `acc['__proto__'] = ...`
+// hits the inherited accessor, which ignores a string value: the option vanishes from the lookup key,
+// a spec with one extra option canonicalizes into the four-option ui preset's exact shape, and
+// decideImage() returns that preset's curated fixture answers for a spec the caller never described.
+test('simulated demo path: a __proto__ option label survives canonicalization and cannot collapse a spec into a preset fixture (learnings-9k2)', async () => {
+  // JSON round-trip is the textarea path: JSON.parse defines `__proto__` as an ordinary own key.
+  const criteria = JSON.parse(
+    JSON.stringify({ ...PRESETS.ui.spec.questions.action.criteria, ['__proto__']: 'Escalate to a human' }),
+  );
+  assert.ok(Object.hasOwn(criteria, '__proto__'), 'probe: the fifth option is an own key, as the textarea JSON yields it');
+
+  const spec = structuredClone(PRESETS.ui.spec);
+  spec.questions.action.criteria = criteria;
+
+  assert.doesNotThrow(() => validateImageSpec(spec, DUMMY_IMAGE), 'a prototype-named option label is a valid option label');
+
+  const res = await decideImage({ spec, imagePayload: DUMMY_IMAGE, engine: 'client' });
+
+  for (const [key, preset] of Object.entries(PRESETS)) {
+    assert.notEqual(
+      JSON.stringify(res.data.answers),
+      JSON.stringify(preset.answers),
+      `a spec with an extra __proto__ option is not the ${key} preset: the label must stay in the lookup key`,
+    );
+  }
+
+  const probabilities = res.data.answers.action.probabilities;
+  assert.deepEqual(
+    Object.keys(probabilities).sort(),
+    ['__proto__', 'cancel', 'dismiss', 'retry', 'unclear'],
+    'the synthesised answers describe all five options the caller named',
+  );
+  assert.ok(Object.hasOwn(probabilities, '__proto__'), 'the __proto__ option is answered like any other option');
+  const total = Object.values(probabilities).reduce((sum, p) => sum + p, 0);
+  assert.ok(Math.abs(total - 1) < 1e-9, `the distribution still sums to one over all five options (got ${total})`);
+});
+
+// learnings-9k2: core.js:validateSpec runs text(k,'Option') over every choice criteria key, so an empty
+// label is refused there. The image lab only counted the keys, which accepted a spec the sibling lab
+// rejects, so the label check mirrors core.js and leaves ordinary labels untouched.
+test('Image lab schema: choice option labels must be non-empty text, as core.js requires (learnings-9k2)', () => {
+  assert.throws(
+    () =>
+      validateImageSpec(
+        {
+          title: 'Proto key triage',
+          questions: { pick: { type: 'choice', instructions: 'Choose', criteria: { '': 'unlabelled option', go: 'Proceed' } } },
+        },
+        DUMMY_IMAGE,
+      ),
+    /empty criteria option label/i,
+  );
+
+  assert.doesNotThrow(() =>
+    validateImageSpec(
+      {
+        title: 'Proto key triage',
+        questions: { pick: { type: 'choice', instructions: 'Choose', criteria: { go: 'Proceed', stop: 'Halt' } } },
+      },
+      DUMMY_IMAGE,
+    ),
+  );
+});

@@ -655,7 +655,11 @@ export function validateImageSpec(spec, imagePayload) {
     throw new Error('A valid image (data URL or blob) must be loaded.');
   }
   for (const [id, q] of Object.entries(spec.questions)) {
-    if (!/^[a-z][a-z0-9_]*$/.test(id)) {
+    // The same three ids core.js:validateSpec refuses explicitly. The character regex still admits
+    // 'constructor' and 'prototype', so without this list the image lab runs a schema the sibling
+    // lab rejects, and every downstream map keyed by the id collides with Object.prototype
+    // instead of holding the caller's own entry.
+    if (!/^[a-z][a-z0-9_]*$/.test(id) || ['constructor', 'prototype', '__proto__'].includes(id)) {
       throw new Error(`Invalid question ID "${id}": use simple lowercase letters and underscores.`);
     }
     if (!['choice', 'score', 'noul'].includes(q.type)) {
@@ -667,6 +671,14 @@ export function validateImageSpec(spec, imagePayload) {
     if (q.type === 'choice') {
       if (!q.criteria || typeof q.criteria !== 'object' || Object.keys(q.criteria).length < 2) {
         throw new Error(`Choice question "${id}" requires at least 2 named criteria options.`);
+      }
+      // Option labels are caller-supplied keys. core.js keeps them rather than reserving names — a
+      // label only has to be non-empty text — so prototype-named labels are valid options and
+      // canonicalize() below must hold them without touching Object.prototype.
+      for (const label of Object.keys(q.criteria)) {
+        if (!label.trim()) {
+          throw new Error(`Choice question "${id}" has an empty criteria option label.`);
+        }
       }
     }
     if (q.type === 'score') {
@@ -713,10 +725,16 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
     const canonicalize = (obj) => {
       if (Array.isArray(obj)) return obj.map(canonicalize);
       if (obj !== null && typeof obj === 'object') {
+        // Null-prototype accumulator: the keys include the caller's choice option labels, which
+        // validateImageSpec() only requires to be non-empty text. On a plain {} an option labelled
+        // `__proto__` hits the inherited accessor, so the option vanishes from the lookup key and
+        // the spec silently canonicalizes into some other spec's shape (the preset lookup then
+        // returns a fixture the caller never described). Same accumulators, same reason as
+        // learnings-e7p (classifier criteria) and learnings-5tf (laya answer map).
         return Object.keys(obj).sort().reduce((acc, k) => {
           acc[k] = canonicalize(obj[k]);
           return acc;
-        }, {});
+        }, Object.create(null));
       }
       return obj;
     };
