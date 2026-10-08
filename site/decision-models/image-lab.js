@@ -818,15 +818,15 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
     };
   }
 
-  // Engine 3: Multimodal API Adapter (Wity-1 / Gemini / OpenAI)
+  // Engine 3: TypeSafe-hosted multimodal adapter (api.typesafe.ai)
   if (engine === 'api') {
     if (!key.trim()) {
-      throw new Error('Enter an API key for the multimodal adapter.');
+      throw new Error('Enter a TypeSafe API key for the hosted adapter.');
     }
     const payload = {
       image: imagePayload,
       questions: spec.questions,
-      model: model || 'wity-1'
+      model: model || 'Imajev-4B'
     };
     const res = await fetchVision('https://api.typesafe.ai/v1/systemone', {
       method: 'POST',
@@ -838,14 +838,14 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
       signal
     }, signal);
     if (!res.ok) {
-      throw new Error(`Multimodal API returned HTTP ${res.status}. Note: direct browser calls may require CORS configuration or local proxy relay.`);
+      throw new Error(`TypeSafe API returned HTTP ${res.status}. Note: direct browser calls may require CORS configuration or local proxy relay.`);
     }
     // Same boundary as the local engine: the hosted provider's JSON is validated before render.
     const data = validateAnswers(await res.json(), spec.questions);
     return {
       data,
       elapsed: performance.now() - start,
-      source: `Multimodal API (${model})`,
+      source: `TypeSafe API (${model})`,
       requestedModel: model
     };
   }
@@ -1139,7 +1139,7 @@ export function setupImageLab() {
           notice.innerHTML = '<strong>Local Vision Server mode:</strong> Connects to your local inference server (e.g. llama.cpp, vLLM, or Kev serve) on loopback for actual model execution.';
         } else if (val === 'api') {
           notice.hidden = false;
-          notice.innerHTML = '<strong>Multimodal API mode:</strong> Connects to external vision provider API. Direct browser requests may require CORS headers or local relay.';
+          notice.innerHTML = '<strong>TypeSafe-hosted adapter:</strong> Sends your API key and image to api.typesafe.ai/v1/systemone (hosted Jev-class vision models). Direct browser requests may require CORS headers or a local relay.';
         }
       }
     });

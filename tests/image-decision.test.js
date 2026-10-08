@@ -928,7 +928,7 @@ test('local and api engines still render a valid provider response (learnings-yt
       assert.equal(calls[0].url, expected[engine]);
       assert.deepEqual(res.data, payload, 'a valid response passes through unchanged');
       assert.notEqual(res.isSimulation, true, 'a provider run must not claim to be a simulation');
-      assert.equal(res.source, engine === 'local' ? 'Local Vision Decision Server' : 'Multimodal API (wity-1)');
+      assert.equal(res.source, engine === 'local' ? 'Local Vision Decision Server' : 'TypeSafe API (wity-1)');
 
       const target = answerTarget();
       renderImageAnswers(target, res, 0.8);
