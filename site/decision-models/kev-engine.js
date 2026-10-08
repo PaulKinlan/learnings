@@ -24,7 +24,7 @@ import {
   packDecision,
   readAnswers,
 } from "./kev-pack.js";
-import { KEV_REVISION, KEV_SHA256 } from "./kev-manifest.js";
+import { KEV_REVISION, KEV_SHA256, KEV_MAX_BYTES, KEV_DEFAULT_MAX_BYTES } from "./kev-manifest.js";
 
 const REPO = "onnx-community/kev-0.6b-ONNX";
 // The pin: a commit sha, not a branch, so the bytes behind every URL are immutable.
@@ -45,32 +45,92 @@ ort.env.logLevel = "warning";
 const SPECIAL_TOKEN_FILES = ["special_tokens_map.json", "added_tokens.json"];
 
 /**
- * Fetch one artifact into bytes, reporting progress, and refuse bytes whose SHA-256 does not
- * match the pinned digest. There is deliberately no path that skips the check: the trust
- * decision never depends on the caller, so a substituted or corrupted artifact fails here
- * rather than executing. The digest is required — an absent one throws instead of passing.
+ * Prototype-safe own-property lookup for a manifest size cap. The frozen MAX_BYTES maps inherit
+ * Object.prototype, so a plain `map[filename]` resolves `constructor`, `__proto__`, `toString` and
+ * friends to Object members — non-number values that make `total > limit` / `received > limit`
+ * compare NaN (always false) and silently disable the bounded fallback. Only an own key whose
+ * value is a finite positive number is trusted; anything else falls through the cap chain to
+ * KEV_DEFAULT_MAX_BYTES, so every artifact gets a bounded cap (tm-unbounded-download-buffer).
  */
-export async function fetchVerified(url, { onProgress = null, sha256, label = url } = {}) {
+function ownCap(caps, key) {
+  const value = Object.hasOwn(caps, key) ? caps[key] : undefined;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+/**
+ * Resolve an explicit maxBytes override at the helper's API boundary. Unlike a manifest lookup
+ * (ownCap, which falls through to CAP_DEFAULT), an explicit override is a caller-supplied value,
+ * so an invalid one is a bug that must fail loudly instead of silently unbinding the download:
+ * NaN, ±Infinity, 0, negatives and non-numeric strings would otherwise make `total > limit` /
+ * `received > limit` compare false (or always true) and either accept an oversized body or
+ * reject every byte. A missing override (null/undefined) returns undefined so the cap chain
+ * continues into the manifest lookup and CAP_DEFAULT (tm-unbounded-download-buffer).
+ */
+function explicitCap(value, label) {
+  if (value == null) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new Error(
+      `invalid maxBytes for ${label}: expected a finite positive number of bytes, got ${String(value)}`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Fetch one artifact into bytes, reporting progress, and refuse bytes whose SHA-256 does not
+ * match the pinned digest. Downloads are strictly bounded by a maximum byte cap enforced
+ * via AbortController while streaming (and checked against Content-Length before streaming begins)
+ * to prevent memory exhaustion from unbounded responses (tm-unbounded-download-buffer).
+ * There is deliberately no path that skips the check: the trust decision never depends on
+ * the caller, so a substituted or corrupted artifact fails here rather than executing.
+ * The digest is required — an absent one throws instead of passing.
+ */
+export async function fetchVerified(url, { onProgress = null, sha256, label = url, maxBytes = null } = {}) {
   if (!sha256) throw new Error(`no pinned sha256 for ${label}`);
-  const res = await fetch(url);
+  const basename = String(url).split("/").pop()?.split("?")[0] ?? "";
+  const labelBasename = String(label).split("/").pop()?.split("?")[0] ?? "";
+  const limit =
+    explicitCap(maxBytes, label) ??
+    ownCap(KEV_MAX_BYTES, labelBasename) ??
+    ownCap(KEV_MAX_BYTES, basename) ??
+    KEV_DEFAULT_MAX_BYTES;
+
+  const controller = new AbortController();
+  const res = await fetch(url, { signal: controller.signal });
   if (!res.ok) throw new Error(`download failed for ${label}: HTTP ${res.status}`);
   const total = Number(res.headers.get("content-length")) || 0;
+  if (limit != null && total > limit) {
+    controller.abort();
+    throw new Error(
+      `download failed for ${label}: Content-Length ${total} exceeds maximum allowed size ${limit} bytes`,
+    );
+  }
   const reader = res.body.getReader();
   const chunks = [];
   let received = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    chunks.push(value);
     received += value.length;
+    if (limit != null && received > limit) {
+      controller.abort();
+      try { await reader.cancel(); } catch {}
+      throw new Error(
+        `download failed for ${label}: stream exceeded maximum allowed size ${limit} bytes (received ${received} bytes)`,
+      );
+    }
+    chunks.push(value);
     onProgress?.(received, total);
   }
-  const bytes = new Uint8Array(received);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
+  const bytes = chunks.length === 1 ? chunks[0] : (() => {
+    const b = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      b.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return b;
+  })();
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
   if (hex !== sha256.toLowerCase()) {
@@ -95,8 +155,16 @@ export async function loadKev({ onProgress = null, urls = {} } = {}) {
 
   notify("tokenizer", 0, 0, "tokenizer.json");
   const [tokenizerBytes, configBytes] = await Promise.all([
-    fetchVerified(urlFor("tokenizer.json"), { sha256: KEV_SHA256["tokenizer.json"], label: `${REPO}/tokenizer.json` }),
-    fetchVerified(urlFor("config.json"), { sha256: KEV_SHA256["config.json"], label: `${REPO}/config.json` }),
+    fetchVerified(urlFor("tokenizer.json"), {
+      sha256: KEV_SHA256["tokenizer.json"],
+      label: `${REPO}/tokenizer.json`,
+      maxBytes: KEV_MAX_BYTES["tokenizer.json"],
+    }),
+    fetchVerified(urlFor("config.json"), {
+      sha256: KEV_SHA256["config.json"],
+      label: `${REPO}/config.json`,
+      maxBytes: KEV_MAX_BYTES["config.json"],
+    }),
   ]);
   const tokenizer = new Tokenizer(JSON.parse(new TextDecoder().decode(tokenizerBytes)), {});
   const config = JSON.parse(new TextDecoder().decode(configBytes));
@@ -105,10 +173,15 @@ export async function loadKev({ onProgress = null, urls = {} } = {}) {
   notify("weights", 0, 0, "onnx/model_q4.onnx_data");
   const t0 = performance.now();
   const [onnxBytes, onnxDataBytes] = await Promise.all([
-    fetchVerified(urlFor("onnx/model_q4.onnx"), { sha256: KEV_SHA256["onnx/model_q4.onnx"], label: `${REPO}/onnx/model_q4.onnx` }),
+    fetchVerified(urlFor("onnx/model_q4.onnx"), {
+      sha256: KEV_SHA256["onnx/model_q4.onnx"],
+      label: `${REPO}/onnx/model_q4.onnx`,
+      maxBytes: KEV_MAX_BYTES["onnx/model_q4.onnx"],
+    }),
     fetchVerified(urlFor("onnx/model_q4.onnx_data"), {
       sha256: KEV_SHA256["onnx/model_q4.onnx_data"],
       label: `${REPO}/onnx/model_q4.onnx_data`,
+      maxBytes: KEV_MAX_BYTES["onnx/model_q4.onnx_data"],
       onProgress: (received, total) => notify("weights", received, total, "onnx/model_q4.onnx_data"),
     }),
   ]);
