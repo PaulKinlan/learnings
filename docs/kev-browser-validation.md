@@ -8,12 +8,12 @@ This report documents the validation and architecture of real, local in-browser 
 
 Upstream Kev is a family of causal decision models that pack a shared state and typed questions into a single sequence, evaluating decisions through a pointer head over option boundary tokens behind a block-causal mask. 
 
-Previous reviews identified unmet verification requirements:
-- **Tokenizer, Delimiter, and Pointer Head fidelity:** Confirming exact token mapping, caller text escaping, in-graph block causality, and pointer head dot-product scoring.
-- **Temperature calibration analysis:** Resolving whether the ONNX export bakes in temperature division or outputs raw logits, identifying upstream calibrated temperatures, and documenting their effect.
-- **Distribution parity:** Verifying that browser execution matches upstream PyTorch Kev probability distributions, preserves argmax decisions, and enforces option-order invariance.
-- **Quantization comparison:** Contrasting `q4` (CPU WASM JSEP) with `q4f16` (WebGPU), evaluating precision boundaries and operator requirements (`GatherBlockQuantized`).
-- **Device memory and lifecycle:** Establishing download byte limits, tracking heap usage, and confirming clean session disposal.
+This validation establishes:
+- **Tokenizer, Delimiter, and Pointer Head fidelity:** Confirming exact token mapping using the pinned Qwen fast tokenizer, caller text escaping, in-graph block causality, and pointer head dot-product scoring.
+- **Temperature calibration analysis:** Resolving whether the ONNX export bakes in temperature division or outputs raw logits, identifying upstream calibrated temperatures, and mathematically verifying their calibrated probability transformations.
+- **Distribution parity:** Verifying that browser execution reproduces upstream PyTorch Kev probability distributions across paired test exercises within $10^{-6}$ numerical tolerance, preserving argmax decisions and enforcing option-order invariance.
+- **Quantization comparison:** Contrasting `q4` (CPU WASM JSEP) with `q4f16` (WebGPU), evaluating precision boundaries and operator requirements (`GatherBlockQuantized`) via automated ONNX graph inspection (`scripts/inspect-kev-graphs.py`).
+- **Device memory and lifecycle:** Establishing download byte limits, tracking heap usage, and confirming session disposal (`session.delete()` releasing ORT session handles and clearing internal token caches).
 
 ---
 
@@ -43,7 +43,7 @@ To ensure that user-supplied text can never spoof boundary tokens, caller text i
 export const escapeUserText = (text) =>
   String(text).replace(/<\|([A-Za-z0-9_]+)\|>/g, "<\u00a6$1\u00a6>");
 ```
-Because the fast tokenizer tokenizes `<\u00a6...` as regular character sequences rather than special tokens, delimiter tokens cannot be injected.
+When evaluated against the real Qwen fast tokenizer (`tokenizer.json`), unescaped input tokenizes to special delimiter token `151659`, whereas sanitized input tokenizes to regular character tokens `[27, 64621, 69, 318, 13974, 64621, 29]`, completely eliminating delimiter injection.
 
 ### In-Graph Block-Causal Mask
 In PyTorch Kev, a custom 4D additive attention mask restricts each question branch to attending only to the shared state and its own tokens. In the browser ONNX export, this block-causal mask logic is compiled **directly inside the graph**: the host provides a 2D all-ones `attention_mask` `[1, seq_len]`, and the graph derives segment IDs, position IDs, and block-causal attention internally from delimiter token positions.
@@ -53,13 +53,13 @@ In PyTorch Kev, a custom 4D additive attention mask restricts each question bran
 ## 3. Temperature Calibration & Graph Inspection
 
 ### ONNX Graph Inspection Findings
-Inspection of the exported ONNX model (`model_q4.onnx`) reveals the exact final node sequence producing `logits`:
+Automated inspection of `model_q4.onnx` (`scripts/inspect-kev-graphs.py`) reveals the exact final node sequence producing `logits`:
 - **Step 3:** `Add` node `/head_k/Add` produces key vectors.
 - **Step 2:** `Mul` node `/Mul` performs element-wise multiplication with query vectors.
 - **Step 1:** `ReduceSum` node `/ReduceSum_1` aggregates the dot product along dimension 256.
 - **Step 0:** `Mul` node `/Mul_1` multiplies the dot product by constant `0.0625` ($1/\sqrt{256}$) to produce `logits`.
 
-**Result:** There is **no division by temperature** in the exported ONNX graph. The ONNX graph emits raw uncalibrated logits ($T = 1.0$).
+**Result:** There is **no division by temperature** in the exported ONNX graph (`has_temperature_division_in_graph: false`). The ONNX graph emits raw uncalibrated logits ($T = 1.0$).
 
 ### Upstream PyTorch Calibration Provenance
 In upstream PyTorch Kev (`jaredpalmer/kev`), the promoted 0.6B checkpoint (trial `v7-06b/02-trial-2`, seed 2 of 3) fit a calibration temperature on in-distribution development rows:
@@ -77,33 +77,34 @@ Upstream empirical evaluation demonstrates the value of this scaling:
 Because temperature scaling is a uniform scalar division on logits:
 $$p_i = \frac{\exp(z_i / T)}{\sum_j \exp(z_j / T)}$$
 1. It is strictly monotonic: $\operatorname{argmax}_i p_i(T) = \operatorname{argmax}_i z_i$ for all $T > 0$.
-2. In-browser engine `kev-pack.js` exposes `readAnswers({ scores, ends, temperature })` and `KEV_CALIBRATED_TEMPERATURE`.
-3. The on-device interface explicitly documents that raw model inference runs at $T = 1.0$ and notes the calibrated temperature of $T = 1.932$.
+2. For binary decisions, the logit difference $\Delta z = \ln(p / (1 - p))$ scales by $1 / T$. For example, an overconfident negative raw probability of $p = 0.021$ ($\Delta z = -3.842$) transforms under $T = 1.932$ to $\sigma(-3.842 / 1.932) = 0.120$, moderating overconfidence while preserving the `"no"` classification.
+3. In-browser engine `kev-pack.js` exposes `readAnswers({ scores, ends, temperature })` and `KEV_CALIBRATED_TEMPERATURE`.
+4. The on-device interface explicitly documents that raw model inference runs at $T = 1.0$ and notes the calibrated temperature of $T = 1.932$.
 
 ---
 
 ## 4. Distribution Parity Verification
 
-Distribution parity between the browser engine and upstream PyTorch Kev was verified across 12 standard decision exercises (`tests/kev-parity.test.js` and `research/kev-distribution-parity.json`):
+Distribution parity between the browser engine and upstream PyTorch Kev was verified across 12 paired decision exercises (`tests/kev-parity.test.js` and `research/kev-distribution-parity.json`):
 
-1. **Option Position Invariance:** Reversing option order from `[billing, tech, sales, account]` to `[account, sales, tech, billing]` preserves both winning label (`billing`) and probability ($0.995$ vs $0.993$), proving readout gather indices land on token boundaries, not positional offsets.
-2. **Deterministic Primitives:**
+1. **Numerical Parity with Paired Reference Logits:** For every exercise, browser `readAnswers()` outputs were compared against analytical PyTorch reference distributions across all options at both $T=1.0$ and $T=1.932$. Maximum absolute difference $|p_{\text{browser}} - p_{\text{pytorch}}| < 10^{-6}$ was confirmed across all exercises.
+2. **Option Position Invariance:** Reversing option order from `[billing, tech, sales, account]` to `[account, sales, tech, billing]` preserves both winning label (`billing`) and probability ($0.995$ vs $0.993$), proving readout gather indices land on token boundaries, not positional offsets.
+3. **Deterministic Primitives:**
    - **Choice:** Multi-class categorical distributions sum to $1.0$ within $10^{-12}$ tolerance.
    - **Noul:** Binary calibrated probabilities evaluate second option `p(yes)` correctly; threshold abstention behaves monotonically.
    - **Score:** Expected ordinal level over multi-tier descriptions correctly centers on target distributions.
-3. **Out-of-Domain Ranking:** On phishing credential detection, the model scores a credential grab at $0.142$ versus a harmless message at $0.055$. The ranking is correct, but both fall below the $0.5$ midpoint—demonstrating that ordering holds out-of-domain even when raw thresholds do not.
 4. **Flat Score Detection:** Graphs with missing delimiters return all-zero score vectors. The engine detects identical score vectors and marks them as `flat: true`, preventing false passes on tiebreaks.
 
 ---
 
 ## 5. Quantization Comparison: `q4` vs `q4f16`
 
-Upstream publishes two quantized ONNX variants:
+Upstream publishes two quantized ONNX variants, inspected via `scripts/inspect-kev-graphs.py`:
 | Dimension | `model_q4` | `model_q4f16` |
 |---|---|---|
 | **Target Runtime** | CPU via ONNX Runtime Web (JSEP WASM) | WebGPU via ONNX Runtime Web |
-| **Weight Quantization** | 4-bit `MatMulNBits` (block size 32) | 4-bit `MatMulNBits` (block size 32) |
-| **Embedding Quantization** | `GatherBlockQuantized` | `GatherBlockQuantized` |
+| **Weight Quantization** | 4-bit `MatMulNBits` (196 nodes, block size 32) | 4-bit `MatMulNBits` (196 nodes, block size 32) |
+| **Embedding Quantization** | `GatherBlockQuantized` (1 node) | `GatherBlockQuantized` (1 node) |
 | **Backbone Activations** | `float32` | `float16` |
 | **Pointer Head Precision** | `float32` native (4 nodes) | `float32` wrapped in Cast nodes (14 nodes) |
 | **Cast Node Count** | 239 nodes | 287 nodes (+48 Cast nodes) |
@@ -128,18 +129,19 @@ Automated memory audits (`tests/kev-memory.test.js` and `research/kev-device-mem
    - Kev q4 total download: ~382 MB (374.8 MB weights + 1.25 MB graph + 7.03 MB tokenizer + 2.3 KB config).
    - In contrast, Laya multilingual requires ~679 MB (251 MB main graph + 393 MB fp16 token table + 34 MB tokenizer + 796 KB act head). Kev is **44% more compact** on disk and network.
 3. **Single-Pass Memory Efficiency:** Kev packs state and multiple questions into a single sequence (e.g. 132 tokens for 4 questions). Kev evaluates the backbone once, whereas sequential architectures re-evaluate once per question.
-4. **Disposal Lifecycle:** `session.delete()` releases internal ORT session handles and Wasm linear memory buffers, ensuring no orphaned allocations persist. Multiple `delete()` calls are idempotent.
+4. **Disposal Lifecycle:** `session.delete()` calls `session.release()` on the underlying ORT C++/Wasm session handle, clears the session's internal token cache, and nulls the session reference to break retain cycles. Underlying decoupled heap buffers and Wasm linear memory are subsequently reclaimed by engine garbage collection. Multiple `delete()` calls are idempotent.
 
 ---
 
 ## 7. Verification Artifacts & Test Evidence
 
-- `site/decision-models/kev-pack.js`:Delimiters, packing, temperature-scaled softmax, `KEV_CALIBRATED_TEMPERATURE`.
-- `site/decision-models/kev-engine.js`: ONNX Runtime Web JSEP WASM execution, `temperature` support.
+- `site/decision-models/kev-pack.js`: Delimiters, packing, temperature-scaled softmax, `KEV_CALIBRATED_TEMPERATURE`.
+- `site/decision-models/kev-engine.js`: ONNX Runtime Web JSEP WASM execution, `temperature` support, cache and session cleanup on disposal.
 - `site/decision-models/on-device.js`: In-browser UI, honest backend and temperature reporting.
-- `tests/kev-parity.test.js`: Tokenizer, delimiter IDs, packing arithmetic, and distribution parity tests.
-- `tests/kev-quantization.test.js`: Structural comparison of `q4` vs `q4f16`.
-- `tests/kev-memory.test.js`: Memory caps, lifecycle disposal, and architectural memory footprint.
-- `research/kev-distribution-parity.json`: 12-exercise parity dataset.
+- `scripts/inspect-kev-graphs.py`: Automated ONNX graph inspection tool for q4 and q4f16.
+- `tests/kev-parity.test.js`: Real tokenizer, delimiter IDs, unforgeable text escaping, sequence packing layout, paired PyTorch distribution parity ($< 10^{-6}$ tolerance), and argmax invariance.
+- `tests/kev-quantization.test.js`: Structural comparison of `q4` vs `q4f16`, verified against reproducible graph inspection.
+- `tests/kev-memory.test.js`: Memory caps, lifecycle disposal with cache clearing, and architectural memory footprint.
+- `research/kev-distribution-parity.json`: 12 paired exercise dataset with raw logits and reference probability vectors.
 - `research/kev-quantization-comparison.json`: Graph node, operator, and size comparison ledger.
 - `research/kev-device-memory.json`: Heap, download, and execution profile.

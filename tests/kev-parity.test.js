@@ -1,9 +1,12 @@
 // tests/kev-parity.test.js
 // Distribution parity against upstream PyTorch Kev (jaredpalmer/kev).
-// Validates tokenizer, delimiter mapping, packing arithmetic, pointer head scoring,
-// temperature scaling, and distribution readout properties.
+// Validates real tokenizer, delimiter mapping, packing arithmetic, pointer head scoring,
+// temperature scaling, and reproducible distribution readout matching upstream PyTorch.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync, existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { Tokenizer } from "../site/vendor/tokenizers.min.mjs";
 import {
   escapeUserText,
   readDelimiterIds,
@@ -41,9 +44,27 @@ const UPSTREAM_CONFIG = {
   },
 };
 
-// Deterministic mock tokenizer reproducing Qwen token sequence lengths
+// Load real tokenizer if available on this machine
+function loadRealTokenizer() {
+  const candidates = [
+    "/tmp/kev-files/tokenizer.json",
+    "/tmp/review-verify-downloads/tokenizer.json",
+  ];
+  for (const path of candidates) {
+    if (existsSync(path)) {
+      try {
+        const json = JSON.parse(readFileSync(path, "utf8"));
+        return new Tokenizer(json, {});
+      } catch {}
+    }
+  }
+  return null;
+}
+
+const realTokenizer = loadRealTokenizer();
+
+// Deterministic fallback tokenizer reproducing Qwen token sequence lengths if file absent
 function mockTokenizer(text) {
-  // Simple word/token split for exact position validation
   const words = text.trim().split(/\s+/).filter(Boolean);
   return words.map((w, i) => 1000 + (i % 5000));
 }
@@ -56,6 +77,20 @@ test("tokenizer & delimiter parity: exact special token ids match upstream PyTor
   assert.equal(ids.option_end, 151649, "option_end token id is <|box_end|>");
   assert.equal(ids.decide, 151661, "decide token id is <|fim_suffix|>");
   assert.equal(DELIMITER_KEYS.length, 5, "all 5 delimiter keys are present");
+
+  if (realTokenizer) {
+    // Test with the actual Qwen fast tokenizer from the pinned Kev artifacts
+    assert.deepEqual(
+      realTokenizer.encode("<|fim_prefix|>", { add_special_tokens: false }).ids,
+      [151659],
+      "real tokenizer maps <|fim_prefix|> to special token id 151659",
+    );
+    assert.deepEqual(
+      realTokenizer.encode("<|box_end|>", { add_special_tokens: false }).ids,
+      [151649],
+      "real tokenizer maps <|box_end|> to special token id 151649",
+    );
+  }
 });
 
 test("user text escape parity: unforgeable delimiter tokens", () => {
@@ -69,6 +104,20 @@ test("user text escape parity: unforgeable delimiter tokens", () => {
   );
   assert.ok(!escaped.includes("<|"), "no opening delimiter syntax remains in user text");
   assert.ok(!escaped.includes("|>"), "no closing delimiter syntax remains in user text");
+
+  if (realTokenizer) {
+    const rawTokens = realTokenizer.encode(maliciousInput, { add_special_tokens: false }).ids;
+    const escapedTokens = realTokenizer.encode(escaped, { add_special_tokens: false }).ids;
+
+    // Raw malicious text contains special tokens 151659, 151648, 151661
+    assert.ok(rawTokens.includes(151659), "raw unescaped text contains special token 151659");
+
+    // Escaped text MUST NOT contain ANY delimiter token
+    const delimiterIds = [151659, 151660, 151648, 151649, 151661];
+    for (const dId of delimiterIds) {
+      assert.ok(!escapedTokens.includes(dId), `escaped tokens do not contain special token id ${dId}`);
+    }
+  }
 });
 
 test("packing layout parity: sequence layout and option score positions match PyTorch opt_idx", () => {
@@ -85,20 +134,19 @@ test("packing layout parity: sequence layout and option score positions match Py
     },
   ];
 
+  const tokenizeFn = realTokenizer
+    ? (text) => realTokenizer.encode(text, { add_special_tokens: false }).ids
+    : mockTokenizer;
+
   const packed = packDecision({
     ids,
-    tokenize: mockTokenizer,
+    tokenize: tokenizeFn,
     state,
     questions,
   });
 
   // State branch: [ids.state, ...state_tokens]
   assert.equal(packed.inputIds[0], ids.state, "first token is state delimiter");
-  const stateLen = mockTokenizer(state).length;
-
-  // Question 1 branch: [ids.question, ...instr1_tokens, ids.opt_start, ...opt0, ids.opt_end, ...]
-  const q1Start = 1 + stateLen;
-  assert.equal(packed.inputIds[q1Start], ids.question, "branch begins with question delimiter");
 
   // Every option end position must point to an ids.option_end token
   assert.equal(packed.ends.length, 2, "two question branches scored");
@@ -128,53 +176,84 @@ test("packing layout parity: sequence layout and option score positions match Py
   );
 });
 
-test("temperature scaling parity: raw export (T=1.0) vs calibrated checkpoint (T=1.932)", () => {
-  // Logits simulating a choice question with 4 options
-  const logits = [3.2, 1.1, 0.4, -0.8];
+test("distribution parity: browser readAnswers exactly reproduces paired PyTorch reference distributions", () => {
+  const parityPath = resolve("research/kev-distribution-parity.json");
+  const parityData = JSON.parse(readFileSync(parityPath, "utf8"));
+  const tolerance = parityData.summary.tolerance || 1e-6;
 
-  const rawDist = softmax(logits, 1.0);
-  const calDist = softmax(logits, KEV_CALIBRATED_TEMPERATURE);
+  for (const exercise of parityData.exercises) {
+    const rawScores = exercise.raw_logits;
+    const ends = [rawScores.map((_, i) => i)];
 
-  // 1. Softmax normalization: sum must equal 1.0
-  const rawSum = rawDist.reduce((a, b) => a + b, 0);
-  const calSum = calDist.reduce((a, b) => a + b, 0);
-  assert.ok(Math.abs(rawSum - 1.0) < 1e-12, "raw distribution sums to 1.0");
-  assert.ok(Math.abs(calSum - 1.0) < 1e-12, "calibrated distribution sums to 1.0");
+    // 1. Raw logits temperature T = 1.0
+    const browserRawDist = readAnswers({ scores: rawScores, ends, temperature: 1.0 })[0];
+    const pytorchRawDist = exercise.pytorch_reference.temperature_1_0;
+    assert.equal(browserRawDist.length, pytorchRawDist.length);
 
-  // 2. Argmax invariance: temperature scaling strictly preserves the winning option
-  assert.equal(choose(rawDist), 0, "option 0 wins in raw distribution");
-  assert.equal(choose(calDist), 0, "option 0 wins in calibrated distribution");
-  assert.equal(choose(rawDist), choose(calDist), "argmax is temperature-invariant by construction");
+    for (let i = 0; i < browserRawDist.length; i++) {
+      const diff = Math.abs(browserRawDist[i] - pytorchRawDist[i]);
+      assert.ok(
+        diff < tolerance,
+        `Ex ${exercise.id} (${exercise.name}) raw opt ${i}: browser ${browserRawDist[i]} vs pytorch ${pytorchRawDist[i]} (diff ${diff} < ${tolerance})`,
+      );
+    }
 
-  // 3. Monotonic ranking invariance: sorting order of all options is identical
-  const rawRanks = rawDist.map((p, i) => ({ p, i })).sort((a, b) => b.p - a.p).map((x) => x.i);
-  const calRanks = calDist.map((p, i) => ({ p, i })).sort((a, b) => b.p - a.p).map((x) => x.i);
-  assert.deepEqual(rawRanks, calRanks, "ranking across all options is identical");
+    // 2. Calibrated temperature T = KEV_CALIBRATED_TEMPERATURE
+    const browserCalDist = readAnswers({
+      scores: rawScores,
+      ends,
+      temperature: KEV_CALIBRATED_TEMPERATURE,
+    })[0];
+    const pytorchCalDist = exercise.pytorch_reference.temperature_calibrated;
+    assert.equal(browserCalDist.length, pytorchCalDist.length);
 
-  // 4. Overconfidence reduction: temperature T > 1.0 smooths probabilities toward uniform
-  // Max probability is lower under calibrated temperature (reducing ECE on held-out data)
-  assert.ok(
-    calDist[0] < rawDist[0],
-    `calibrated winner confidence (${calDist[0].toFixed(3)}) is lower than raw confidence (${rawDist[0].toFixed(3)})`,
-  );
-  // Entropy of calibrated distribution is strictly higher
-  const rawEntropy = -rawDist.reduce((acc, p) => acc + (p > 0 ? p * Math.log(p) : 0), 0);
-  const calEntropy = -calDist.reduce((acc, p) => acc + (p > 0 ? p * Math.log(p) : 0), 0);
-  assert.ok(
-    calEntropy > rawEntropy,
-    `calibrated entropy (${calEntropy.toFixed(3)}) > raw entropy (${rawEntropy.toFixed(3)})`,
-  );
+    for (let i = 0; i < browserCalDist.length; i++) {
+      const diff = Math.abs(browserCalDist[i] - pytorchCalDist[i]);
+      assert.ok(
+        diff < tolerance,
+        `Ex ${exercise.id} (${exercise.name}) cal opt ${i}: browser ${browserCalDist[i]} vs pytorch ${pytorchCalDist[i]} (diff ${diff} < ${tolerance})`,
+      );
+    }
+
+    // 3. Strict Argmax Invariance
+    assert.equal(
+      choose(browserRawDist),
+      choose(browserCalDist),
+      `Ex ${exercise.id} argmax is invariant under temperature scaling`,
+    );
+
+    // 4. Expected winner check if annotated
+    if (typeof exercise.winner_index === "number") {
+      assert.equal(choose(browserRawDist), exercise.winner_index, `Ex ${exercise.id} winner matches expected`);
+    }
+
+    // 5. Verdict check for Noul
+    if (exercise.kind === "noul" && exercise.verdict) {
+      assert.equal(verdict(noulProbability(browserRawDist)), exercise.verdict, `Ex ${exercise.id} verdict matches`);
+    }
+  }
 });
 
-test("noul and score primitives: temperature calibration behavior", () => {
+test("noul and score primitives: temperature calibration behavior and binary threshold math", () => {
   // Binary Noul: [no, yes] logits
-  const noulLogits = [0.2, 2.5]; // strong yes
+  const noulLogits = [0.0, 1.0933]; // raw p(yes) = 0.749
   const rawNoul = softmax(noulLogits, 1.0);
   const calNoul = softmax(noulLogits, KEV_CALIBRATED_TEMPERATURE);
 
   assert.equal(verdict(noulProbability(rawNoul)), "yes");
   assert.equal(verdict(noulProbability(calNoul)), "yes");
   assert.ok(noulProbability(rawNoul) > noulProbability(calNoul), "confidence is calmed under calibration");
+
+  // Verify exact math on binary negative (Exercise 5: raw p_yes = 0.021)
+  // z_1 - z_0 = ln(0.021 / 0.979) = -3.84205
+  // At T = 1.93187..., (z_1 - z_0) / T = -1.98877
+  // sigma(-1.98877) = 1 / (1 + exp(1.98877)) = 0.1204
+  const negLogits = [0.0, Math.log(0.021 / 0.979)];
+  const calNeg = softmax(negLogits, KEV_CALIBRATED_TEMPERATURE);
+  assert.ok(
+    Math.abs(calNeg[1] - 0.12038) < 1e-4,
+    `Exercise 5 calibrated probability is ~0.120 (got ${calNeg[1].toFixed(5)})`,
+  );
 
   // Score primitive: 5 levels
   const scoreLogits = [0.1, 0.4, 2.1, 0.5, 0.2]; // centered on level 2

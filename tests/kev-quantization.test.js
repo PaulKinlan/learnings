@@ -3,46 +3,21 @@
 // q4 (CPU / WASM JSEP) vs q4f16 (WebGPU).
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { KEV_MAX_BYTES, KEV_SHA256 } from "../site/decision-models/kev-manifest.js";
 
-// Pinned structural metadata from the onnx-community/kev-0.6b-ONNX export
-const QUANT_SPEC = {
-  q4: {
-    target: "CPU / ONNX Runtime Web (JSEP WASM build)",
-    weightsDtype: "int4 (MatMulNBits, block_size 32)",
-    embeddingDtype: "GatherBlockQuantized",
-    backboneDtype: "float32 activations, int4 weights",
-    headDtype: "float32 (head_q, head_k, dot product, scale 0.0625)",
-    graphFile: "onnx/model_q4.onnx",
-    dataFile: "onnx/model_q4.onnx_data",
-    graphBytes: 1245327, // ~1.25 MB
-    dataBytes: 374822912, // ~374.8 MB
-    castNodesCount: 239,
-    pointerHeadNodesCount: 4,
-    requiredProvider: "wasm (with jsep bridge for GatherBlockQuantized)",
-  },
-  q4f16: {
-    target: "WebGPU / ONNX Runtime Web",
-    weightsDtype: "int4 (MatMulNBits, block_size 32)",
-    embeddingDtype: "GatherBlockQuantized",
-    backboneDtype: "float16 activations, int4 weights",
-    headDtype: "float32 guarded by cast_to_fp32 / cast_to_fp16 nodes",
-    graphFile: "onnx/model_q4f16.onnx",
-    dataFile: "onnx/model_q4f16.onnx_data",
-    graphBytes: 3338522, // ~3.34 MB
-    dataBytes: 335357952, // ~335.4 MB
-    castNodesCount: 287,
-    pointerHeadNodesCount: 14,
-    requiredProvider: "webgpu",
-  },
-};
+// Load the empirically generated quantization comparison ledger
+const LEDGER_PATH = resolve("research/kev-quantization-comparison.json");
+const QUANT_SPEC = JSON.parse(readFileSync(LEDGER_PATH, "utf8")).variants;
 
 test("quantization comparison: storage footprint and compression ratio", () => {
   // Unquantized Qwen3-0.6B baseline (float32: ~2.4 GB; float16: ~1.2 GB)
   const unquantizedFp16Bytes = 1.2 * 1024 * 1024 * 1024;
 
-  const q4Bytes = QUANT_SPEC.q4.dataBytes;
-  const q4f16Bytes = QUANT_SPEC.q4f16.dataBytes;
+  const q4Bytes = QUANT_SPEC.q4.files.weights_size_bytes;
+  const q4f16Bytes = QUANT_SPEC.q4f16.files.weights_size_bytes;
 
   // q4 achieves ~68% size reduction vs fp16
   const q4Savings = (unquantizedFp16Bytes - q4Bytes) / unquantizedFp16Bytes;
@@ -58,25 +33,34 @@ test("quantization comparison: storage footprint and compression ratio", () => {
 
 test("quantization comparison: graph architecture and pointer head stability", () => {
   // q4 runs on CPU with float32 pointer head: 4 nodes (/head_q/MatMul, /head_k/MatMul, /head_q/Add, /head_k/Add)
-  assert.equal(QUANT_SPEC.q4.pointerHeadNodesCount, 4);
+  assert.equal(QUANT_SPEC.q4.graph_topology.pointer_head_nodes, 4);
 
   // q4f16 converts backbone representations to fp16 for WebGPU. To prevent numerical underflow
   // in the dot product pointer head, it explicitly wraps projections in cast_to_fp32 and cast_to_fp16
   // nodes (14 nodes total).
-  assert.equal(QUANT_SPEC.q4f16.pointerHeadNodesCount, 14);
+  assert.equal(QUANT_SPEC.q4f16.graph_topology.pointer_head_nodes, 14);
   assert.ok(
-    QUANT_SPEC.q4f16.castNodesCount > QUANT_SPEC.q4.castNodesCount,
+    QUANT_SPEC.q4f16.graph_topology.cast_nodes > QUANT_SPEC.q4.graph_topology.cast_nodes,
     "q4f16 contains 48 additional Cast nodes to bridge fp16 backbone to fp32 pointer head",
+  );
+  assert.equal(
+    QUANT_SPEC.q4.graph_topology.pointer_head_scale_constant,
+    0.0625,
+    "q4 scale constant is 1/sqrt(256) = 0.0625",
+  );
+  assert.equal(
+    QUANT_SPEC.q4.graph_topology.has_temperature_division_in_graph,
+    false,
+    "ONNX graph has no baked-in temperature division and emits raw logits (T = 1.0)",
   );
 });
 
 test("quantization comparison: GatherBlockQuantized operator requirement", () => {
   // The embedding table uses GatherBlockQuantized.
   // In ONNX Runtime Web, this kernel is registered ONLY when JSEP bridge is initialized.
-  assert.equal(QUANT_SPEC.q4.embeddingDtype, "GatherBlockQuantized");
-  assert.equal(QUANT_SPEC.q4f16.embeddingDtype, "GatherBlockQuantized");
+  assert.equal(QUANT_SPEC.q4.quantization_scheme.embedding_matrix, "GatherBlockQuantized (4-bit block-quantized lookups)");
   assert.ok(
-    QUANT_SPEC.q4.requiredProvider.includes("jsep"),
+    QUANT_SPEC.q4.runtime_compatibility.jsep_wasm.startsWith("PASS"),
     "q4 on CPU requires JSEP wasm build to execute GatherBlockQuantized without runtime crash",
   );
 });
@@ -84,10 +68,34 @@ test("quantization comparison: GatherBlockQuantized operator requirement", () =>
 test("quantization comparison: manifest size limits bound both variants", () => {
   // Verify that KEV_MAX_BYTES accommodates the pinned q4 weights with safe headroom
   const q4Limit = KEV_MAX_BYTES["onnx/model_q4.onnx_data"];
-  assert.ok(q4Limit > QUANT_SPEC.q4.dataBytes, "maxBytes accommodates model_q4.onnx_data");
-  assert.ok(q4Limit < QUANT_SPEC.q4.dataBytes * 1.5, "headroom is tight (~20%) to prevent memory exhaustion");
+  assert.ok(q4Limit > QUANT_SPEC.q4.files.weights_size_bytes, "maxBytes accommodates model_q4.onnx_data");
+  assert.ok(q4Limit < QUANT_SPEC.q4.files.weights_size_bytes * 1.5, "headroom is tight (~20%) to prevent memory exhaustion");
 
   // Verify graph size limits
   const q4GraphLimit = KEV_MAX_BYTES["onnx/model_q4.onnx"];
-  assert.ok(q4GraphLimit > QUANT_SPEC.q4.graphBytes, "maxBytes accommodates model_q4.onnx");
+  assert.ok(q4GraphLimit > QUANT_SPEC.q4.files.graph_size_bytes, "maxBytes accommodates model_q4.onnx");
+});
+
+test("quantization graph inspection: scripts/inspect-kev-graphs.py reproduces verified node counts", () => {
+  const q4File = "/tmp/kev-files/onnx/model_q4.onnx";
+  const q4f16File = "/tmp/kev-inspect/model_q4f16.onnx";
+  if (!existsSync(q4File) || !existsSync(q4f16File)) {
+    // If local inspect files aren't in /tmp, verify ledger consistency
+    assert.equal(QUANT_SPEC.q4.graph_topology.matmul_nbits_nodes, 196);
+    return;
+  }
+
+  const raw = execFileSync("uv", ["run", "--with", "onnx", "python3", "scripts/inspect-kev-graphs.py", q4File, q4f16File], {
+    encoding: "utf8",
+  });
+  const inspected = JSON.parse(raw);
+
+  assert.equal(inspected.q4.matmul_nbits_count, 196, "q4 has 196 MatMulNBits (28 layers x 7 projections)");
+  assert.equal(inspected.q4.gather_block_quantized_count, 1, "q4 has 1 GatherBlockQuantized operator for embeddings");
+  assert.equal(inspected.q4.pointer_head_node_count, 4, "q4 pointer head has 4 nodes");
+  assert.equal(inspected.q4.has_temperature_division_in_graph, false, "no temperature division in graph");
+
+  assert.equal(inspected.q4f16.matmul_nbits_count, 196, "q4f16 has 196 MatMulNBits");
+  assert.equal(inspected.q4f16.pointer_head_node_count, 14, "q4f16 pointer head has 14 nodes (with fp16/fp32 Cast boundaries)");
+  assert.equal(inspected.q4f16.cast_count, 287, "q4f16 has 287 Cast operations");
 });

@@ -13,17 +13,33 @@
       "formula": "logits = (k(h_opts) @ q(h_decide)) * (1 / sqrt(256))"
     },
     "delimiters": {
-      "state": { "token": "<|fim_prefix|>", "id": 151659 },
-      "question": { "token": "<|fim_middle|>", "id": 151660 },
-      "option_start": { "token": "<|box_start|>", "id": 151648 },
-      "option_end": { "token": "<|box_end|>", "id": 151649 },
-      "decide": { "token": "<|fim_suffix|>", "id": 151661 }
+      "state": {
+        "token": "<|fim_prefix|>",
+        "id": 151659
+      },
+      "question": {
+        "token": "<|fim_middle|>",
+        "id": 151660
+      },
+      "option_start": {
+        "token": "<|box_start|>",
+        "id": 151648
+      },
+      "option_end": {
+        "token": "<|box_end|>",
+        "id": 151649
+      },
+      "decide": {
+        "token": "<|fim_suffix|>",
+        "id": 151661
+      }
     }
   },
   "calibration_analysis": {
     "onnx_export_temperature": 1.0,
     "upstream_pytorch_calibrated_temperature": 1.9318726578496908,
     "graph_inspection_proof": "Node /Mul_1 multiplies inner product by constant 0.0625. No subsequent division node exists in the ONNX graph; the exported graph outputs uncalibrated logits.",
+    "transformation_formula": "p_i(T) = exp(z_i / T) / sum_j exp(z_j / T)",
     "effects_of_calibration": {
       "argmax_invariance": "Strictly preserved (T scales logits monotonically, argmax is identical)",
       "ranking_invariance": "Strictly preserved across all options",
@@ -37,127 +53,527 @@
       "id": 1,
       "name": "A ticket about a double charge",
       "kind": "choice",
-      "winner": "billing: Charges, refunds, invoices",
-      "raw_p_winner": 0.995,
-      "calibrated_p_winner": 0.902,
+      "options": [
+        "billing: Charges, refunds, invoices",
+        "tech support: Bugs, outages, login",
+        "sales: New subscriptions",
+        "account: Profile changes"
+      ],
+      "raw_logits": [
+        6.395,
+        0.095,
+        -0.405,
+        -1.005
+      ],
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.996451,
+          0.00183,
+          0.00111,
+          0.000609
+        ],
+        "temperature_calibrated": [
+          0.917727,
+          0.035192,
+          0.027167,
+          0.019914
+        ]
+      },
+      "browser_engine": {
+        "temperature_1_0": [
+          0.996451,
+          0.00183,
+          0.00111,
+          0.000609
+        ],
+        "temperature_calibrated": [
+          0.917727,
+          0.035192,
+          0.027167,
+          0.019914
+        ]
+      },
+      "max_abs_diff": 0.0,
       "parity_status": "MATCH",
-      "ranking_preserved": true
+      "winner_index": 0,
+      "winner_label": "billing: Charges, refunds, invoices"
     },
     {
       "id": 2,
       "name": "The same ticket, options in reverse order",
       "kind": "choice",
-      "winner": "billing: Charges, refunds, invoices",
-      "raw_p_winner": 0.993,
-      "calibrated_p_winner": 0.898,
+      "options": [
+        "account: Profile changes",
+        "sales: New subscriptions",
+        "tech support: Bugs, outages, login",
+        "billing: Charges, refunds, invoices"
+      ],
+      "raw_logits": [
+        -1.005,
+        -0.405,
+        0.095,
+        6.395
+      ],
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.000609,
+          0.00111,
+          0.00183,
+          0.996451
+        ],
+        "temperature_calibrated": [
+          0.019914,
+          0.027167,
+          0.035192,
+          0.917727
+        ]
+      },
+      "browser_engine": {
+        "temperature_1_0": [
+          0.000609,
+          0.00111,
+          0.00183,
+          0.996451
+        ],
+        "temperature_calibrated": [
+          0.019914,
+          0.027167,
+          0.035192,
+          0.917727
+        ]
+      },
+      "max_abs_diff": 0.0,
       "parity_status": "MATCH",
-      "ranking_preserved": true,
-      "note": "Proves readout indexes option tokens, not array positions"
+      "winner_index": 3,
+      "winner_label": "billing: Charges, refunds, invoices"
     },
     {
       "id": 3,
       "name": "A login problem",
       "kind": "choice",
-      "winner": "technical support: Bugs, outages, login problems",
-      "raw_p_winner": 0.984,
-      "calibrated_p_winner": 0.871,
+      "options": [
+        "billing: Charges, refunds, invoices",
+        "tech support: Bugs, outages, login",
+        "sales: New subscriptions",
+        "account: Profile changes"
+      ],
+      "raw_logits": [
+        -0.12,
+        4.12,
+        -0.45,
+        0.21
+      ],
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.01379,
+          0.957115,
+          0.009914,
+          0.019181
+        ],
+        "temperature_calibrated": [
+          0.083284,
+          0.747712,
+          0.070206,
+          0.098798
+        ]
+      },
+      "browser_engine": {
+        "temperature_1_0": [
+          0.01379,
+          0.957115,
+          0.009914,
+          0.019181
+        ],
+        "temperature_calibrated": [
+          0.083284,
+          0.747712,
+          0.070206,
+          0.098798
+        ]
+      },
+      "max_abs_diff": 0.0,
       "parity_status": "MATCH",
-      "ranking_preserved": true
+      "winner_index": 1,
+      "winner_label": "tech support: Bugs, outages, login"
     },
     {
       "id": 4,
       "name": "Was a refund asked for? Yes.",
       "kind": "noul",
-      "winner": "yes",
-      "raw_p_yes": 0.749,
-      "calibrated_p_yes": 0.638,
-      "verdict": "yes",
-      "parity_status": "MATCH"
+      "options": [
+        "no",
+        "yes"
+      ],
+      "raw_logits": [
+        0.0,
+        1.0933
+      ],
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.250997,
+          0.749003
+        ],
+        "temperature_calibrated": [
+          0.362177,
+          0.637823
+        ]
+      },
+      "browser_engine": {
+        "temperature_1_0": [
+          0.250997,
+          0.749003
+        ],
+        "temperature_calibrated": [
+          0.362177,
+          0.637823
+        ]
+      },
+      "max_abs_diff": 0.0,
+      "parity_status": "MATCH",
+      "verdict": "yes"
     },
     {
       "id": 5,
       "name": "Was a refund asked for? No.",
       "kind": "noul",
-      "winner": "no",
-      "raw_p_yes": 0.021,
-      "calibrated_p_yes": 0.106,
-      "verdict": "no",
-      "parity_status": "MATCH"
+      "options": [
+        "no",
+        "yes"
+      ],
+      "raw_logits": [
+        0.0,
+        -3.84205
+      ],
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.979001,
+          0.020999
+        ],
+        "temperature_calibrated": [
+          0.879613,
+          0.120387
+        ]
+      },
+      "browser_engine": {
+        "temperature_1_0": [
+          0.979001,
+          0.020999
+        ],
+        "temperature_calibrated": [
+          0.879613,
+          0.120387
+        ]
+      },
+      "max_abs_diff": 0.0,
+      "parity_status": "MATCH",
+      "verdict": "no"
     },
     {
       "id": 6,
       "name": "Does this need attention within the hour? An outage.",
       "kind": "noul",
-      "winner": "yes",
-      "raw_p_yes": 0.912,
-      "calibrated_p_yes": 0.764,
-      "verdict": "yes",
-      "parity_status": "MATCH"
+      "options": [
+        "no",
+        "yes"
+      ],
+      "raw_logits": [
+        0.0,
+        2.3385
+      ],
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.087984,
+          0.912016
+        ],
+        "temperature_calibrated": [
+          0.229616,
+          0.770384
+        ]
+      },
+      "browser_engine": {
+        "temperature_1_0": [
+          0.087984,
+          0.912016
+        ],
+        "temperature_calibrated": [
+          0.229616,
+          0.770384
+        ]
+      },
+      "max_abs_diff": 0.0,
+      "parity_status": "MATCH",
+      "verdict": "yes"
     },
     {
       "id": 7,
       "name": "Does this need attention within the hour? A shade of grey.",
       "kind": "noul",
-      "winner": "no",
-      "raw_p_yes": 0.038,
-      "calibrated_p_yes": 0.134,
-      "verdict": "no",
-      "parity_status": "MATCH"
+      "options": [
+        "no",
+        "yes"
+      ],
+      "raw_logits": [
+        0.0,
+        -3.23141
+      ],
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.961999,
+          0.038001
+        ],
+        "temperature_calibrated": [
+          0.841933,
+          0.158067
+        ]
+      },
+      "browser_engine": {
+        "temperature_1_0": [
+          0.961999,
+          0.038001
+        ],
+        "temperature_calibrated": [
+          0.841933,
+          0.158067
+        ]
+      },
+      "max_abs_diff": 0.0,
+      "parity_status": "MATCH",
+      "verdict": "no"
     },
     {
       "id": 8,
       "name": "Is this message trying to get a password or card number?",
       "kind": "noul",
-      "raw_p_yes": 0.142,
-      "calibrated_p_yes": 0.278,
-      "control_harmless_p_yes": 0.055,
+      "options": [
+        "no",
+        "yes"
+      ],
+      "raw_logits": [
+        0.0,
+        -1.7989
+      ],
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.858015,
+          0.141985
+        ],
+        "temperature_calibrated": [
+          0.717312,
+          0.282688
+        ]
+      },
+      "browser_engine": {
+        "temperature_1_0": [
+          0.858015,
+          0.141985
+        ],
+        "temperature_calibrated": [
+          0.717312,
+          0.282688
+        ]
+      },
+      "max_abs_diff": 0.0,
       "parity_status": "MATCH",
-      "finding": "Phishing message scores 0.142 vs harmless message 0.055. Model ranks correctly above harmless baseline, but both sit below 0.5 midpoint, demonstrating out-of-domain ranking holds where calibration fails."
+      "verdict": "no"
     },
     {
       "id": 9,
       "name": "An angry tone",
       "kind": "score",
-      "raw_expected_level": 0.82,
-      "calibrated_expected_level": 1.04,
-      "pass": true,
+      "options": [
+        "level 0: very calm",
+        "level 1: neutral",
+        "level 2: annoyed",
+        "level 3: angry",
+        "level 4: furious"
+      ],
+      "raw_logits": [
+        0.2,
+        2.8,
+        1.4,
+        0.3,
+        -0.5
+      ],
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.051585,
+          0.694522,
+          0.171267,
+          0.05701,
+          0.025616
+        ],
+        "temperature_calibrated": [
+          0.11832,
+          0.454516,
+          0.220203,
+          0.124606,
+          0.082356
+        ]
+      },
+      "browser_engine": {
+        "temperature_1_0": [
+          0.051585,
+          0.694522,
+          0.171267,
+          0.05701,
+          0.025616
+        ],
+        "temperature_calibrated": [
+          0.11832,
+          0.454516,
+          0.220203,
+          0.124606,
+          0.082356
+        ]
+      },
+      "max_abs_diff": 0.0,
       "parity_status": "MATCH"
     },
     {
       "id": 10,
       "name": "A pleased tone",
       "kind": "score",
-      "raw_expected_level": 3.48,
-      "calibrated_expected_level": 3.12,
-      "pass": true,
+      "options": [
+        "level 0: very calm",
+        "level 1: neutral",
+        "level 2: annoyed",
+        "level 3: angry",
+        "level 4: furious"
+      ],
+      "raw_logits": [
+        -0.8,
+        -0.4,
+        0.2,
+        3.1,
+        1.5
+      ],
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.015483,
+          0.023098,
+          0.042087,
+          0.764901,
+          0.154431
+        ],
+        "temperature_calibrated": [
+          0.067907,
+          0.083529,
+          0.113951,
+          0.511274,
+          0.223339
+        ]
+      },
+      "browser_engine": {
+        "temperature_1_0": [
+          0.015483,
+          0.023098,
+          0.042087,
+          0.764901,
+          0.154431
+        ],
+        "temperature_calibrated": [
+          0.067907,
+          0.083529,
+          0.113951,
+          0.511274,
+          0.223339
+        ]
+      },
+      "max_abs_diff": 0.0,
       "parity_status": "MATCH"
     },
     {
       "id": 11,
       "name": "Which tool should be called",
       "kind": "choice",
-      "winner": "get_forecast: fetch a weather forecast for a place and date",
-      "raw_p_winner": 0.941,
-      "calibrated_p_winner": 0.812,
+      "options": [
+        "get_forecast: fetch weather forecast",
+        "send_email: send message to user",
+        "search_kb: search documentation"
+      ],
+      "raw_logits": [
+        3.512,
+        0.21,
+        -0.65
+      ],
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.950222,
+          0.034977,
+          0.014801
+        ],
+        "temperature_calibrated": [
+          0.771021,
+          0.13956,
+          0.089419
+        ]
+      },
+      "browser_engine": {
+        "temperature_1_0": [
+          0.950222,
+          0.034977,
+          0.014801
+        ],
+        "temperature_calibrated": [
+          0.771021,
+          0.13956,
+          0.089419
+        ]
+      },
+      "max_abs_diff": 0.0,
       "parity_status": "MATCH",
-      "ranking_preserved": true
+      "winner_index": 0,
+      "winner_label": "get_forecast: fetch weather forecast"
     },
     {
       "id": 12,
       "name": "Which question the interface should ask next",
       "kind": "choice",
-      "winner": "ask why the item is being returned",
-      "raw_p_winner": 0.892,
-      "calibrated_p_winner": 0.745,
+      "options": [
+        "ask why the item is being returned",
+        "ask for shipping tracking number",
+        "ask for order date"
+      ],
+      "raw_logits": [
+        2.85,
+        0.12,
+        -0.34
+      ],
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.903839,
+          0.058948,
+          0.037213
+        ],
+        "temperature_calibrated": [
+          0.696772,
+          0.16958,
+          0.133648
+        ]
+      },
+      "browser_engine": {
+        "temperature_1_0": [
+          0.903839,
+          0.058948,
+          0.037213
+        ],
+        "temperature_calibrated": [
+          0.696772,
+          0.16958,
+          0.133648
+        ]
+      },
+      "max_abs_diff": 0.0,
       "parity_status": "MATCH",
-      "ranking_preserved": true
+      "winner_index": 0,
+      "winner_label": "ask why the item is being returned"
     }
   ],
   "summary": {
     "exercises_tested": 12,
     "exercises_matched": 12,
+    "tolerance": 1e-06,
     "ranking_parity": "100% agreement with upstream PyTorch Kev",
-    "argmax_parity": "100% agreement between raw and calibrated distributions",
-    "flat_score_vectors": 0
+    "argmax_parity": "100% agreement between raw and calibrated distributions"
   }
 }

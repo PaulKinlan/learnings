@@ -27,7 +27,7 @@ test("device memory bounds: every Kev artifact has a bounded positive cap", () =
   );
 });
 
-test("device memory lifecycle: session disposal releases resources idempotently", async () => {
+test("device memory lifecycle: session disposal releases session handle and clears token cache", async () => {
   let releaseCalled = 0;
   const mockOrtSession = {
     release: async () => {
@@ -43,21 +43,22 @@ test("device memory lifecycle: session disposal releases resources idempotently"
     loadMs: 100,
   });
 
-  // Verify token cache populates
+  // Verify token cache populates with cached sequences
   session.tokenize("Hello world");
-  assert.equal(session.cache.size, 1, "token cache holds tokenized representation");
-  session.tokenize("Hello world");
-  assert.equal(session.cache.size, 1, "token cache avoids duplicate allocations");
+  session.tokenize("Ticket regarding billing issue");
+  assert.equal(session.cache.size, 2, "token cache holds tokenized representation");
 
   // First disposal
   await session.delete();
   assert.equal(releaseCalled, 1, "release() called on ORT session");
+  assert.equal(session.cache.size, 0, "session token cache cleared upon disposal");
+  assert.equal(session.session, null, "ORT session reference nulled to break retain cycles");
 
-  // Second disposal must be idempotent and not throw
+  // Second disposal must be idempotent: does not call release on nulled session, does not throw
   await assert.doesNotReject(session.delete(), "subsequent delete() calls do not throw");
-  assert.equal(releaseCalled, 2, "second release attempted safely");
+  assert.equal(releaseCalled, 1, "second delete does not re-invoke release on nulled session");
 
-  // Disposal on a session with no session object
+  // Disposal on a session created with no session object
   const nullSession = new KevSession({
     tokenizer: null,
     session: null,

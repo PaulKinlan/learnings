@@ -23,7 +23,7 @@
     "laya_multilingual_download_mb": 679.2,
     "download_reduction": "46.2% smaller initial download than Laya multilingual bundle",
     "batching_advantage": "Kev packs state + all questions into single sequence (e.g. 132 tokens for 4 questions). Forward pass is evaluated once. Laya requires sequential evaluations per question plus separate act-head pass.",
-    "memory_retention": "KevSession.delete() releases ORT session and Wasm linear memory buffers, restoring JS heap to baseline levels."
+    "lifecycle_disposal": "KevSession.delete() releases the underlying ONNX Runtime session handle via session.release(), clears the internal token cache, and nulls the session reference to break retain cycles. Underlying Wasm memory and decoupled buffers are subject to V8 runtime garbage collection."
   },
   "safety_bounds": {
     "streaming_max_bytes_enforced": true,

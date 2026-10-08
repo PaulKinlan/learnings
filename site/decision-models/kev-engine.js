@@ -277,6 +277,9 @@ export class KevSession {
       await this.session?.release?.();
     } catch {
       /* releasing twice is fine */
+    } finally {
+      this.cache?.clear?.();
+      this.session = null;
     }
   }
 }

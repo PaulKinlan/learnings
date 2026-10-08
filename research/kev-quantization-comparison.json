@@ -2,6 +2,7 @@
   "comparison": "Kev-0.6B ONNX Quantization Analysis (q4 vs q4f16)",
   "repository": "onnx-community/kev-0.6b-ONNX",
   "base_model": "Qwen/Qwen3-0.6B-Base (1024 hidden, 28 layers, 16 attention heads, 8 kv heads)",
+  "inspection_script": "scripts/inspect-kev-graphs.py",
   "variants": {
     "q4": {
       "target_environment": "CPU via ONNX Runtime Web JSEP WASM build",
@@ -24,7 +25,10 @@
         "matmul_nbits_nodes": 196,
         "gather_block_quantized_nodes": 1,
         "cast_nodes": 239,
-        "pointer_head_nodes": 4
+        "pointer_head_nodes": 4,
+        "pointer_head_scale_constant": 0.0625,
+        "has_temperature_division_in_graph": false,
+        "logits_producer_op": "Mul"
       },
       "runtime_compatibility": {
         "jsep_wasm": "PASS — GatherBlockQuantized registers through the JSEP bridge",
@@ -51,11 +55,14 @@
         "pointer_head": "float32 precision preserved via cast_to_fp32 and cast_to_fp16 boundaries"
       },
       "graph_topology": {
-        "total_nodes": 5957,
+        "total_nodes": 5961,
         "matmul_nbits_nodes": 196,
         "gather_block_quantized_nodes": 1,
         "cast_nodes": 287,
-        "pointer_head_nodes": 14
+        "pointer_head_nodes": 14,
+        "pointer_head_scale_constant": 0.0625,
+        "has_temperature_division_in_graph": false,
+        "logits_producer_op": "Cast"
       },
       "runtime_compatibility": {
         "jsep_wasm": "INCOMPATIBLE — CPU kernels expect float32 activations",
