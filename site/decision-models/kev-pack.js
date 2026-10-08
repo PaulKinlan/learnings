@@ -85,11 +85,26 @@ export function packDecision({ ids, tokenize, state, questions }) {
   return { inputIds, ends, questionSpans };
 }
 
-/** Softmax, subtracting the maximum so large scores cannot overflow to Infinity. */
-export function softmax(values) {
+/**
+ * Calibrated temperature for jaredpalmer/kev-0.6b (trial v7-06b/02-trial-2),
+ * fitted on development rows to minimize NLL and ECE (raw ECE 0.0857 -> calibrated ECE 0.0317).
+ * The ONNX export outputs uncalibrated logits (T = 1.0); applying this temperature rescales logits
+ * to calibrated probabilities while preserving the argmax ranking exactly.
+ */
+export const KEV_CALIBRATED_TEMPERATURE = 1.9318726578496908;
+
+/**
+ * Softmax, subtracting the maximum so large scores cannot overflow to Infinity.
+ * Supports optional temperature scaling (default T = 1.0 for raw logits).
+ */
+export function softmax(values, temperature = 1.0) {
   if (!values.length) throw new Error("softmax needs at least one value.");
-  const max = Math.max(...values);
-  const exps = values.map((v) => Math.exp(v - max));
+  if (typeof temperature !== "number" || !Number.isFinite(temperature) || temperature <= 0) {
+    throw new Error(`temperature must be a finite positive number, got ${String(temperature)}`);
+  }
+  const scaled = temperature === 1.0 ? values : values.map((v) => v / temperature);
+  const max = Math.max(...scaled);
+  const exps = scaled.map((v) => Math.exp(v - max));
   const total = exps.reduce((a, b) => a + b, 0);
   if (!Number.isFinite(total) || total <= 0) throw new Error("softmax produced no usable total.");
   return exps.map((e) => e / total);
@@ -99,10 +114,10 @@ export function softmax(values) {
  * Turn the score at each option's final token into a distribution per question.
  *
  * The graph returns one score per token. Only the positions in `ends` matter; softmax is taken
- * within a question, never across questions.
+ * within a question, never across questions. Optional temperature scaling defaults to 1.0 (raw).
  */
-export function readAnswers({ scores, ends }) {
-  return ends.map((branchEnds) => softmax(branchEnds.map((index) => scores[index])));
+export function readAnswers({ scores, ends, temperature = 1.0 }) {
+  return ends.map((branchEnds) => softmax(branchEnds.map((index) => scores[index]), temperature));
 }
 
 /** Choice: the option with the highest probability. Ties keep the earlier option. */

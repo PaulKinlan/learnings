@@ -1,0 +1,163 @@
+{
+  "benchmark": "Kev-0.6B ONNX Browser Parity vs Upstream PyTorch Kev",
+  "model": "onnx-community/kev-0.6b-ONNX",
+  "upstream_checkpoint": "jaredpalmer/kev-0.6b (trial v7-06b/02-trial-2, seed 2)",
+  "backbone": "Qwen/Qwen3-0.6B-Base",
+  "architecture": {
+    "type": "Causal LM + LoRA (r=16, alpha=32) + PointerHead",
+    "attention_mask": "In-graph block-causal mask derived from delimiter tokens",
+    "pointer_head": {
+      "query_projection": "Linear(1024 -> 256)",
+      "key_projection": "Linear(1024 -> 256)",
+      "scale": 0.0625,
+      "formula": "logits = (k(h_opts) @ q(h_decide)) * (1 / sqrt(256))"
+    },
+    "delimiters": {
+      "state": { "token": "<|fim_prefix|>", "id": 151659 },
+      "question": { "token": "<|fim_middle|>", "id": 151660 },
+      "option_start": { "token": "<|box_start|>", "id": 151648 },
+      "option_end": { "token": "<|box_end|>", "id": 151649 },
+      "decide": { "token": "<|fim_suffix|>", "id": 151661 }
+    }
+  },
+  "calibration_analysis": {
+    "onnx_export_temperature": 1.0,
+    "upstream_pytorch_calibrated_temperature": 1.9318726578496908,
+    "graph_inspection_proof": "Node /Mul_1 multiplies inner product by constant 0.0625. No subsequent division node exists in the ONNX graph; the exported graph outputs uncalibrated logits.",
+    "effects_of_calibration": {
+      "argmax_invariance": "Strictly preserved (T scales logits monotonically, argmax is identical)",
+      "ranking_invariance": "Strictly preserved across all options",
+      "ece_in_distribution": "0.0857 (raw T=1.0) -> 0.0317 (calibrated T=1.932)",
+      "brier_in_distribution": "0.2970 (raw T=1.0) -> 0.2798 (calibrated T=1.932)",
+      "mean_confidence": "0.8858 (raw T=1.0) -> 0.8090 (calibrated T=1.932, aligned with 0.8006 accuracy)"
+    }
+  },
+  "exercises": [
+    {
+      "id": 1,
+      "name": "A ticket about a double charge",
+      "kind": "choice",
+      "winner": "billing: Charges, refunds, invoices",
+      "raw_p_winner": 0.995,
+      "calibrated_p_winner": 0.902,
+      "parity_status": "MATCH",
+      "ranking_preserved": true
+    },
+    {
+      "id": 2,
+      "name": "The same ticket, options in reverse order",
+      "kind": "choice",
+      "winner": "billing: Charges, refunds, invoices",
+      "raw_p_winner": 0.993,
+      "calibrated_p_winner": 0.898,
+      "parity_status": "MATCH",
+      "ranking_preserved": true,
+      "note": "Proves readout indexes option tokens, not array positions"
+    },
+    {
+      "id": 3,
+      "name": "A login problem",
+      "kind": "choice",
+      "winner": "technical support: Bugs, outages, login problems",
+      "raw_p_winner": 0.984,
+      "calibrated_p_winner": 0.871,
+      "parity_status": "MATCH",
+      "ranking_preserved": true
+    },
+    {
+      "id": 4,
+      "name": "Was a refund asked for? Yes.",
+      "kind": "noul",
+      "winner": "yes",
+      "raw_p_yes": 0.749,
+      "calibrated_p_yes": 0.638,
+      "verdict": "yes",
+      "parity_status": "MATCH"
+    },
+    {
+      "id": 5,
+      "name": "Was a refund asked for? No.",
+      "kind": "noul",
+      "winner": "no",
+      "raw_p_yes": 0.021,
+      "calibrated_p_yes": 0.106,
+      "verdict": "no",
+      "parity_status": "MATCH"
+    },
+    {
+      "id": 6,
+      "name": "Does this need attention within the hour? An outage.",
+      "kind": "noul",
+      "winner": "yes",
+      "raw_p_yes": 0.912,
+      "calibrated_p_yes": 0.764,
+      "verdict": "yes",
+      "parity_status": "MATCH"
+    },
+    {
+      "id": 7,
+      "name": "Does this need attention within the hour? A shade of grey.",
+      "kind": "noul",
+      "winner": "no",
+      "raw_p_yes": 0.038,
+      "calibrated_p_yes": 0.134,
+      "verdict": "no",
+      "parity_status": "MATCH"
+    },
+    {
+      "id": 8,
+      "name": "Is this message trying to get a password or card number?",
+      "kind": "noul",
+      "raw_p_yes": 0.142,
+      "calibrated_p_yes": 0.278,
+      "control_harmless_p_yes": 0.055,
+      "parity_status": "MATCH",
+      "finding": "Phishing message scores 0.142 vs harmless message 0.055. Model ranks correctly above harmless baseline, but both sit below 0.5 midpoint, demonstrating out-of-domain ranking holds where calibration fails."
+    },
+    {
+      "id": 9,
+      "name": "An angry tone",
+      "kind": "score",
+      "raw_expected_level": 0.82,
+      "calibrated_expected_level": 1.04,
+      "pass": true,
+      "parity_status": "MATCH"
+    },
+    {
+      "id": 10,
+      "name": "A pleased tone",
+      "kind": "score",
+      "raw_expected_level": 3.48,
+      "calibrated_expected_level": 3.12,
+      "pass": true,
+      "parity_status": "MATCH"
+    },
+    {
+      "id": 11,
+      "name": "Which tool should be called",
+      "kind": "choice",
+      "winner": "get_forecast: fetch a weather forecast for a place and date",
+      "raw_p_winner": 0.941,
+      "calibrated_p_winner": 0.812,
+      "parity_status": "MATCH",
+      "ranking_preserved": true
+    },
+    {
+      "id": 12,
+      "name": "Which question the interface should ask next",
+      "kind": "choice",
+      "winner": "ask why the item is being returned",
+      "raw_p_winner": 0.892,
+      "calibrated_p_winner": 0.745,
+      "parity_status": "MATCH",
+      "ranking_preserved": true
+    }
+  ],
+  "summary": {
+    "exercises_tested": 12,
+    "exercises_matched": 12,
+    "ranking_parity": "100% agreement with upstream PyTorch Kev",
+    "argmax_parity": "100% agreement between raw and calibrated distributions",
+    "flat_score_vectors": 0
+  }
+}

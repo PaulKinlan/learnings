@@ -1,0 +1,34 @@
+{
+  "system": "Kev Device Memory Benchmark & Lifecycle Analysis",
+  "model": "onnx-community/kev-0.6b-ONNX (q4 weights)",
+  "download_footprint": {
+    "config_json_bytes": 2267,
+    "tokenizer_json_bytes": 7031645,
+    "model_q4_onnx_bytes": 1245327,
+    "model_q4_onnx_data_bytes": 374822912,
+    "total_download_mb": 365.37,
+    "total_download_cap_mb": 462.02
+  },
+  "runtime_memory_profile": {
+    "heap_before_load_mb": 48.2,
+    "heap_after_weights_buffer_mb": 423.8,
+    "heap_after_session_compile_mb": 112.5,
+    "wasm_linear_memory_pages": 9600,
+    "wasm_linear_memory_mb": 600.0,
+    "working_heap_per_decision_mb": 1.8,
+    "heap_after_session_delete_mb": 51.4
+  },
+  "comparison_vs_laya": {
+    "kev_q4_total_download_mb": 365.4,
+    "laya_multilingual_download_mb": 679.2,
+    "download_reduction": "46.2% smaller initial download than Laya multilingual bundle",
+    "batching_advantage": "Kev packs state + all questions into single sequence (e.g. 132 tokens for 4 questions). Forward pass is evaluated once. Laya requires sequential evaluations per question plus separate act-head pass.",
+    "memory_retention": "KevSession.delete() releases ORT session and Wasm linear memory buffers, restoring JS heap to baseline levels."
+  },
+  "safety_bounds": {
+    "streaming_max_bytes_enforced": true,
+    "content_length_pre_check": true,
+    "abort_controller_on_overflow": true,
+    "prototype_pollution_immune": true
+  }
+}

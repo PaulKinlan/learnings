@@ -10,6 +10,7 @@ import {
   noulProbability,
   verdict,
   NOUL_OPTIONS,
+  KEV_CALIBRATED_TEMPERATURE,
 } from "./kev-pack.js";
 
 const $ = (id) => document.getElementById(id);
@@ -71,7 +72,8 @@ function describeBackend() {
     `Requested ${report.requested}. ` +
     `Session reports: ${report.providers.join(", ")}. ` +
     `WebGPU is ${gpu ? "present in this browser" : "not present in this browser"} and this site does not vendor the WebGPU binary, so it was not used. ` +
-    `Cross-origin isolation is ${isolated ? "on, so threaded wasm may be available" : "off, so wasm runs without shared-memory threads"}.`;
+    `Cross-origin isolation is ${isolated ? "on, so threaded wasm may be available" : "off, so wasm runs without shared-memory threads"}. ` +
+    `Inference evaluates raw ONNX export logits (T = 1.0; upstream PyTorch checkpoint calibrated temperature is T = ${KEV_CALIBRATED_TEMPERATURE.toFixed(3)}).`;
 }
 
 // ---------------------------------------------------------------------------------------------

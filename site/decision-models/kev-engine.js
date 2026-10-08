@@ -224,9 +224,10 @@ export class KevSession {
 
   /**
    * One packed pass over a state and any number of typed questions.
-   * @returns {{distributions: Array, tokens: number, ms: number, flat: boolean}}
+   * Optional temperature scaling (default T = 1.0 for raw model logits).
+   * @returns {{distributions: Array, tokens: number, ms: number, flat: boolean, temperature: number}}
    */
-  async decidePacked(state, questions) {
+  async decidePacked(state, questions, { temperature = 1.0 } = {}) {
     const texts = [state];
     for (const q of questions) texts.push(q.instruction, ...q.options);
     const tokenize = (text) => this.tokenize(text);
@@ -252,7 +253,13 @@ export class KevSession {
     // distribution is that failure speaking, not a confident tie.
     const flat = new Set(scores.map((v) => v.toFixed(6))).size === 1;
 
-    return { distributions: readAnswers({ scores, ends }), tokens: inputIds.length, ms, flat };
+    return {
+      distributions: readAnswers({ scores, ends, temperature }),
+      tokens: inputIds.length,
+      ms,
+      flat,
+      temperature,
+    };
   }
 
   /** What actually ran, for honest backend reporting. */
