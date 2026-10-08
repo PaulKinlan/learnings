@@ -2,7 +2,8 @@
 """Inspect and compare ONNX graph structures for Kev-0.6B: q4 vs q4f16.
 
 Verifies operator counts, pointer head topologies, scaling factors,
-and lack of baked-in temperature division.
+and absence of baked-in temperature division by tracing the full ancestor
+subgraph from logits back to backbone projections.
 """
 import json
 import sys
@@ -26,16 +27,33 @@ def inspect_graph(onnx_path: str):
 
     op_counts = Counter(n.op_type for n in graph.node)
 
-    # Inspect pointer head
+    # Build producer index for graph traversal
+    producer = {out: n for n in graph.node for out in n.output}
+
+    # Trace complete ancestor subgraph from 'logits' backward to backbone projections
+    visited_head_nodes = {}
+    frontier = ["logits"]
+    while frontier:
+        out = frontier.pop(0)
+        n = producer.get(out)
+        if not n or n.name in visited_head_nodes:
+            continue
+        visited_head_nodes[n.name] = n
+        # Boundary: stop traversing once we cross the backbone projection heads
+        if "/head_k/MatMul" in n.name or "/head_q/MatMul" in n.name:
+            continue
+        for inp in n.input:
+            frontier.append(inp)
+
+    # Audit for any division operation in the ancestor lineage of logits
+    div_nodes_in_head = [n for n in visited_head_nodes.values() if n.op_type == "Div"]
+    has_temperature_division = len(div_nodes_in_head) > 0
+
+    # Inspect pointer head projection nodes
     head_nodes = [n for n in graph.node if "head" in n.name.lower()]
 
-    # Trace final logits output to inspect scale / temperature
-    output_names = {o.name for o in graph.output}
-    logits_producers = [n for n in graph.node if any(o in output_names for o in n.output)]
-
+    # Inspect constant scaling factor
     scale_value = None
-    has_temperature_division = False
-
     for n in graph.node:
         if n.op_type == "Constant":
             for attr in n.attribute:
@@ -44,9 +62,8 @@ def inspect_graph(onnx_path: str):
                     if val.shape == () and abs(float(val) - 0.0625) < 1e-6:
                         scale_value = float(val)
 
-    # Check if logits producer is a division (which would indicate temperature scaling)
-    if logits_producers and logits_producers[0].op_type == "Div":
-        has_temperature_division = True
+    # Immediate producer of logits
+    logits_node = producer.get("logits")
 
     return {
         "file": p.name,
@@ -58,9 +75,11 @@ def inspect_graph(onnx_path: str):
         "gather_block_quantized_count": op_counts.get("GatherBlockQuantized", 0),
         "cast_count": op_counts.get("Cast", 0),
         "pointer_head_node_count": len(head_nodes),
+        "pointer_head_ancestor_node_count": len(visited_head_nodes),
         "pointer_head_scale_constant": scale_value,
         "has_temperature_division_in_graph": has_temperature_division,
-        "logits_producer_op": logits_producers[0].op_type if logits_producers else None,
+        "div_nodes_in_pointer_head_lineage": [n.name for n in div_nodes_in_head],
+        "logits_producer_op": logits_node.op_type if logits_node else None,
     }
 
 

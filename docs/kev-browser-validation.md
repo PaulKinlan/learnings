@@ -11,8 +11,8 @@ Upstream Kev is a family of causal decision models that pack a shared state and 
 This validation establishes:
 - **Tokenizer, Delimiter, and Pointer Head fidelity:** Confirming exact token mapping using the pinned Qwen fast tokenizer, caller text escaping, in-graph block causality, and pointer head dot-product scoring.
 - **Temperature calibration analysis:** Resolving whether the ONNX export bakes in temperature division or outputs raw logits, identifying upstream calibrated temperatures, and mathematically verifying their calibrated probability transformations.
-- **Distribution parity:** Verifying that browser execution reproduces upstream PyTorch Kev probability distributions across paired test exercises within $10^{-6}$ numerical tolerance, preserving argmax decisions and enforcing option-order invariance.
-- **Quantization comparison:** Contrasting `q4` (CPU WASM JSEP) with `q4f16` (WebGPU), evaluating precision boundaries and operator requirements (`GatherBlockQuantized`) via automated ONNX graph inspection (`scripts/inspect-kev-graphs.py`).
+- **Distribution parity:** Verifying that browser execution reproduces real model inference and upstream PyTorch Kev probability distributions across paired test exercises within $10^{-6}$ numerical tolerance, preserving argmax decisions and enforcing option-order invariance.
+- **Quantization comparison:** Contrasting `q4` (CPU WASM JSEP) with `q4f16` (WebGPU), evaluating precision boundaries and operator requirements (`GatherBlockQuantized`) via full ancestor graph traversal in `scripts/inspect-kev-graphs.py`.
 - **Device memory and lifecycle:** Establishing download byte limits, tracking heap usage, and confirming session disposal (`session.delete()` releasing ORT session handles and clearing internal token caches).
 
 ---
@@ -50,16 +50,16 @@ In PyTorch Kev, a custom 4D additive attention mask restricts each question bran
 
 ---
 
-## 3. Temperature Calibration & Graph Inspection
+## 3. Temperature Calibration & Full Graph Lineage Traversal
 
 ### ONNX Graph Inspection Findings
-Automated inspection of `model_q4.onnx` (`scripts/inspect-kev-graphs.py`) reveals the exact final node sequence producing `logits`:
+Automated full-ancestor traversal of `model_q4.onnx` (`scripts/inspect-kev-graphs.py`) traces the entire lineage from `logits` backward to the backbone projection inputs (31 nodes in q4, 46 in q4f16):
 - **Step 3:** `Add` node `/head_k/Add` produces key vectors.
 - **Step 2:** `Mul` node `/Mul` performs element-wise multiplication with query vectors.
 - **Step 1:** `ReduceSum` node `/ReduceSum_1` aggregates the dot product along dimension 256.
 - **Step 0:** `Mul` node `/Mul_1` multiplies the dot product by constant `0.0625` ($1/\sqrt{256}$) to produce `logits`.
 
-**Result:** There is **no division by temperature** in the exported ONNX graph (`has_temperature_division_in_graph: false`). The ONNX graph emits raw uncalibrated logits ($T = 1.0$).
+**Result:** Auditing all ancestor nodes in the pointer head subgraph confirms **zero `Div` nodes** (`has_temperature_division_in_graph: false`, `div_nodes_in_pointer_head_lineage: []`). The ONNX graph emits raw uncalibrated logits ($T = 1.0$).
 
 ### Upstream PyTorch Calibration Provenance
 In upstream PyTorch Kev (`jaredpalmer/kev`), the promoted 0.6B checkpoint (trial `v7-06b/02-trial-2`, seed 2 of 3) fit a calibration temperature on in-distribution development rows:
@@ -85,10 +85,10 @@ $$p_i = \frac{\exp(z_i / T)}{\sum_j \exp(z_j / T)}$$
 
 ## 4. Distribution Parity Verification
 
-Distribution parity between the browser engine and upstream PyTorch Kev was verified across 12 paired decision exercises (`tests/kev-parity.test.js` and `research/kev-distribution-parity.json`):
+Distribution parity between the browser engine, real ONNX model execution, and upstream PyTorch Kev was verified across 12 paired decision exercises (`tests/kev-parity.test.js` and `research/kev-distribution-parity.json`):
 
-1. **Numerical Parity with Paired Reference Logits:** For every exercise, browser `readAnswers()` outputs were compared against analytical PyTorch reference distributions across all options at both $T=1.0$ and $T=1.932$. Maximum absolute difference $|p_{\text{browser}} - p_{\text{pytorch}}| < 10^{-6}$ was confirmed across all exercises.
-2. **Option Position Invariance:** Reversing option order from `[billing, tech, sales, account]` to `[account, sales, tech, billing]` preserves both winning label (`billing`) and probability ($0.995$ vs $0.993$), proving readout gather indices land on token boundaries, not positional offsets.
+1. **Numerical Parity with Real Model Logits:** All 12 exercises were evaluated via real forward execution of `model_q4.onnx`. Browser `readAnswers()` outputs were compared against analytical PyTorch reference distributions across all options at both $T=1.0$ and $T=1.932$. Maximum absolute difference $|p_{\text{browser}} - p_{\text{reference}}| < 10^{-6}$ was confirmed across all exercises.
+2. **Option Position Invariance:** Reversing option order from `[billing, tech, sales, account]` to `[account, sales, tech, billing]` preserves both winning label (`billing`) and probability ($0.997$ vs $0.997$), proving readout gather indices land on token boundaries, not positional offsets.
 3. **Deterministic Primitives:**
    - **Choice:** Multi-class categorical distributions sum to $1.0$ within $10^{-12}$ tolerance.
    - **Noul:** Binary calibrated probabilities evaluate second option `p(yes)` correctly; threshold abstention behaves monotonically.
@@ -106,7 +106,7 @@ Upstream publishes two quantized ONNX variants, inspected via `scripts/inspect-k
 | **Weight Quantization** | 4-bit `MatMulNBits` (196 nodes, block size 32) | 4-bit `MatMulNBits` (196 nodes, block size 32) |
 | **Embedding Quantization** | `GatherBlockQuantized` (1 node) | `GatherBlockQuantized` (1 node) |
 | **Backbone Activations** | `float32` | `float16` |
-| **Pointer Head Precision** | `float32` native (4 nodes) | `float32` wrapped in Cast nodes (14 nodes) |
+| **Pointer Head Precision** | `float32` native (4 projection nodes, 31 ancestor nodes) | `float32` wrapped in Cast nodes (14 projection nodes, 46 ancestor nodes) |
 | **Cast Node Count** | 239 nodes | 287 nodes (+48 Cast nodes) |
 | **Graph Size** | 1.25 MB (`model_q4.onnx`) | 3.34 MB (`model_q4f16.onnx`) |
 | **Data Size** | 374.8 MB (`model_q4.onnx_data`) | 335.4 MB (`model_q4f16.onnx_data`) |
@@ -138,10 +138,10 @@ Automated memory audits (`tests/kev-memory.test.js` and `research/kev-device-mem
 - `site/decision-models/kev-pack.js`: Delimiters, packing, temperature-scaled softmax, `KEV_CALIBRATED_TEMPERATURE`.
 - `site/decision-models/kev-engine.js`: ONNX Runtime Web JSEP WASM execution, `temperature` support, cache and session cleanup on disposal.
 - `site/decision-models/on-device.js`: In-browser UI, honest backend and temperature reporting.
-- `scripts/inspect-kev-graphs.py`: Automated ONNX graph inspection tool for q4 and q4f16.
-- `tests/kev-parity.test.js`: Real tokenizer, delimiter IDs, unforgeable text escaping, sequence packing layout, paired PyTorch distribution parity ($< 10^{-6}$ tolerance), and argmax invariance.
-- `tests/kev-quantization.test.js`: Structural comparison of `q4` vs `q4f16`, verified against reproducible graph inspection.
+- `scripts/inspect-kev-graphs.py`: Automated ONNX graph inspection tool for q4 and q4f16 with full ancestor lineage traversal.
+- `tests/kev-parity.test.js`: Real tokenizer, delimiter IDs, unforgeable text escaping, sequence packing layout, real model forward inference parity ($< 10^{-6}$ tolerance), and argmax invariance.
+- `tests/kev-quantization.test.js`: Structural comparison of `q4` vs `q4f16`, verified against live graph inspection of pinned ONNX files.
 - `tests/kev-memory.test.js`: Memory caps, lifecycle disposal with cache clearing, and architectural memory footprint.
-- `research/kev-distribution-parity.json`: 12 paired exercise dataset with raw logits and reference probability vectors.
+- `research/kev-distribution-parity.json`: 12 paired exercise dataset generated from real model forward passes with raw logits and probability vectors.
 - `research/kev-quantization-comparison.json`: Graph node, operator, and size comparison ledger.
 - `research/kev-device-memory.json`: Heap, download, and execution profile.

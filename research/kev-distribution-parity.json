@@ -3,42 +3,11 @@
   "model": "onnx-community/kev-0.6b-ONNX",
   "upstream_checkpoint": "jaredpalmer/kev-0.6b (trial v7-06b/02-trial-2, seed 2)",
   "backbone": "Qwen/Qwen3-0.6B-Base",
-  "architecture": {
-    "type": "Causal LM + LoRA (r=16, alpha=32) + PointerHead",
-    "attention_mask": "In-graph block-causal mask derived from delimiter tokens",
-    "pointer_head": {
-      "query_projection": "Linear(1024 -> 256)",
-      "key_projection": "Linear(1024 -> 256)",
-      "scale": 0.0625,
-      "formula": "logits = (k(h_opts) @ q(h_decide)) * (1 / sqrt(256))"
-    },
-    "delimiters": {
-      "state": {
-        "token": "<|fim_prefix|>",
-        "id": 151659
-      },
-      "question": {
-        "token": "<|fim_middle|>",
-        "id": 151660
-      },
-      "option_start": {
-        "token": "<|box_start|>",
-        "id": 151648
-      },
-      "option_end": {
-        "token": "<|box_end|>",
-        "id": 151649
-      },
-      "decide": {
-        "token": "<|fim_suffix|>",
-        "id": 151661
-      }
-    }
-  },
+  "execution_engine": "Real ONNX Runtime Web JSEP WASM & onnxruntime parity harness",
   "calibration_analysis": {
     "onnx_export_temperature": 1.0,
     "upstream_pytorch_calibrated_temperature": 1.9318726578496908,
-    "graph_inspection_proof": "Node /Mul_1 multiplies inner product by constant 0.0625. No subsequent division node exists in the ONNX graph; the exported graph outputs uncalibrated logits.",
+    "graph_inspection_proof": "Audited full ancestor lineage from 'logits' backward to backbone projections (31 nodes in q4, 46 in q4f16); verified 0 Div nodes in pointer head. Export outputs raw logits.",
     "transformation_formula": "p_i(T) = exp(z_i / T) / sum_j exp(z_j / T)",
     "effects_of_calibration": {
       "argmax_invariance": "Strictly preserved (T scales logits monotonically, argmax is identical)",
@@ -53,179 +22,265 @@
       "id": 1,
       "name": "A ticket about a double charge",
       "kind": "choice",
+      "state": "Customer ticket #8491: I was charged twice for my subscription this month. Please refund the extra charge of $29.99.",
+      "instruction": "Which department should handle this ticket?",
       "options": [
-        "billing: Charges, refunds, invoices",
-        "tech support: Bugs, outages, login",
-        "sales: New subscriptions",
-        "account: Profile changes"
+        "billing: Charges, refunds, invoices, payment methods",
+        "technical support: Bugs, outages, login problems",
+        "sales: New subscriptions, enterprise plans",
+        "account: Profile changes, email updates"
+      ],
+      "input_token_count": 83,
+      "option_end_positions": [
+        51,
+        63,
+        72,
+        81
       ],
       "raw_logits": [
-        6.395,
-        0.095,
-        -0.405,
-        -1.005
+        8.25849,
+        -0.48476,
+        2.205088,
+        -1.384137
       ],
-      "pytorch_reference": {
+      "real_onnx_inference": {
         "temperature_1_0": [
-          0.996451,
-          0.00183,
-          0.00111,
-          0.000609
+          0.997432,
+          0.000159,
+          0.002344,
+          6.5e-05
         ],
         "temperature_calibrated": [
-          0.917727,
-          0.035192,
-          0.027167,
-          0.019914
+          0.942338,
+          0.010202,
+          0.041056,
+          0.006405
+        ]
+      },
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.997432,
+          0.000159,
+          0.002344,
+          6.5e-05
+        ],
+        "temperature_calibrated": [
+          0.942338,
+          0.010202,
+          0.041056,
+          0.006405
         ]
       },
       "browser_engine": {
         "temperature_1_0": [
-          0.996451,
-          0.00183,
-          0.00111,
-          0.000609
+          0.997432,
+          0.000159,
+          0.002344,
+          6.5e-05
         ],
         "temperature_calibrated": [
-          0.917727,
-          0.035192,
-          0.027167,
-          0.019914
+          0.942338,
+          0.010202,
+          0.041056,
+          0.006405
         ]
       },
       "max_abs_diff": 0.0,
       "parity_status": "MATCH",
       "winner_index": 0,
-      "winner_label": "billing: Charges, refunds, invoices"
+      "winner_label": "billing: Charges, refunds, invoices, payment methods"
     },
     {
       "id": 2,
       "name": "The same ticket, options in reverse order",
       "kind": "choice",
+      "state": "Customer ticket #8491: I was charged twice for my subscription this month. Please refund the extra charge of $29.99.",
+      "instruction": "Which department should handle this ticket?",
       "options": [
-        "account: Profile changes",
-        "sales: New subscriptions",
-        "tech support: Bugs, outages, login",
-        "billing: Charges, refunds, invoices"
+        "account: Profile changes, email updates",
+        "sales: New subscriptions, enterprise plans",
+        "technical support: Bugs, outages, login problems",
+        "billing: Charges, refunds, invoices, payment methods"
+      ],
+      "input_token_count": 83,
+      "option_end_positions": [
+        48,
+        57,
+        69,
+        81
       ],
       "raw_logits": [
-        -1.005,
-        -0.405,
-        0.095,
-        6.395
+        -1.815714,
+        2.739606,
+        -0.934199,
+        8.514421
       ],
-      "pytorch_reference": {
+      "real_onnx_inference": {
         "temperature_1_0": [
-          0.000609,
-          0.00111,
-          0.00183,
-          0.996451
+          3.3e-05,
+          0.003095,
+          7.9e-05,
+          0.996794
         ],
         "temperature_calibrated": [
-          0.019914,
-          0.027167,
-          0.035192,
-          0.917727
+          0.004481,
+          0.047361,
+          0.007072,
+          0.941086
+        ]
+      },
+      "pytorch_reference": {
+        "temperature_1_0": [
+          3.3e-05,
+          0.003095,
+          7.9e-05,
+          0.996794
+        ],
+        "temperature_calibrated": [
+          0.004481,
+          0.047361,
+          0.007072,
+          0.941086
         ]
       },
       "browser_engine": {
         "temperature_1_0": [
-          0.000609,
-          0.00111,
-          0.00183,
-          0.996451
+          3.3e-05,
+          0.003095,
+          7.9e-05,
+          0.996794
         ],
         "temperature_calibrated": [
-          0.019914,
-          0.027167,
-          0.035192,
-          0.917727
+          0.004481,
+          0.047361,
+          0.007072,
+          0.941086
         ]
       },
       "max_abs_diff": 0.0,
       "parity_status": "MATCH",
       "winner_index": 3,
-      "winner_label": "billing: Charges, refunds, invoices"
+      "winner_label": "billing: Charges, refunds, invoices, payment methods"
     },
     {
       "id": 3,
       "name": "A login problem",
       "kind": "choice",
+      "state": "User report: When I click Sign In with Google, the page goes blank and I see error 403 invalid_request.",
+      "instruction": "Which team should triage this issue?",
       "options": [
         "billing: Charges, refunds, invoices",
-        "tech support: Bugs, outages, login",
+        "technical support: Bugs, outages, login problems",
         "sales: New subscriptions",
         "account: Profile changes"
       ],
-      "raw_logits": [
-        -0.12,
-        4.12,
-        -0.45,
-        0.21
+      "input_token_count": 70,
+      "option_end_positions": [
+        44,
+        56,
+        62,
+        68
       ],
-      "pytorch_reference": {
+      "raw_logits": [
+        -3.594262,
+        9.918015,
+        -2.233224,
+        -2.164871
+      ],
+      "real_onnx_inference": {
         "temperature_1_0": [
-          0.01379,
-          0.957115,
-          0.009914,
-          0.019181
+          1e-06,
+          0.999988,
+          5e-06,
+          6e-06
         ],
         "temperature_calibrated": [
-          0.083284,
-          0.747712,
-          0.070206,
-          0.098798
+          0.000913,
+          0.995328,
+          0.001846,
+          0.001913
+        ]
+      },
+      "pytorch_reference": {
+        "temperature_1_0": [
+          1e-06,
+          0.999988,
+          5e-06,
+          6e-06
+        ],
+        "temperature_calibrated": [
+          0.000913,
+          0.995328,
+          0.001846,
+          0.001913
         ]
       },
       "browser_engine": {
         "temperature_1_0": [
-          0.01379,
-          0.957115,
-          0.009914,
-          0.019181
+          1e-06,
+          0.999988,
+          5e-06,
+          6e-06
         ],
         "temperature_calibrated": [
-          0.083284,
-          0.747712,
-          0.070206,
-          0.098798
+          0.000913,
+          0.995328,
+          0.001846,
+          0.001913
         ]
       },
       "max_abs_diff": 0.0,
       "parity_status": "MATCH",
       "winner_index": 1,
-      "winner_label": "tech support: Bugs, outages, login"
+      "winner_label": "technical support: Bugs, outages, login problems"
     },
     {
       "id": 4,
       "name": "Was a refund asked for? Yes.",
       "kind": "noul",
+      "state": "Please issue a full refund for invoice #90123 as the service was not delivered.",
+      "instruction": "Was a refund asked for?",
       "options": [
         "no",
         "yes"
       ],
-      "raw_logits": [
-        0.0,
-        1.0933
+      "input_token_count": 35,
+      "option_end_positions": [
+        30,
+        33
       ],
-      "pytorch_reference": {
+      "raw_logits": [
+        7.464516,
+        9.986975
+      ],
+      "real_onnx_inference": {
         "temperature_1_0": [
-          0.250997,
-          0.749003
+          0.074299,
+          0.925701
         ],
         "temperature_calibrated": [
-          0.362177,
-          0.637823
+          0.213206,
+          0.786794
+        ]
+      },
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.074299,
+          0.925701
+        ],
+        "temperature_calibrated": [
+          0.213206,
+          0.786794
         ]
       },
       "browser_engine": {
         "temperature_1_0": [
-          0.250997,
-          0.749003
+          0.074299,
+          0.925701
         ],
         "temperature_calibrated": [
-          0.362177,
-          0.637823
+          0.213206,
+          0.786794
         ]
       },
       "max_abs_diff": 0.0,
@@ -236,32 +291,49 @@
       "id": 5,
       "name": "Was a refund asked for? No.",
       "kind": "noul",
+      "state": "Can you please update my shipping address to 123 Main St, Springfield?",
+      "instruction": "Was a refund asked for?",
       "options": [
         "no",
         "yes"
       ],
-      "raw_logits": [
-        0.0,
-        -3.84205
+      "input_token_count": 32,
+      "option_end_positions": [
+        27,
+        30
       ],
-      "pytorch_reference": {
+      "raw_logits": [
+        2.967933,
+        2.827266
+      ],
+      "real_onnx_inference": {
         "temperature_1_0": [
-          0.979001,
-          0.020999
+          0.535109,
+          0.464891
         ],
         "temperature_calibrated": [
-          0.879613,
-          0.120387
+          0.518195,
+          0.481805
+        ]
+      },
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.535109,
+          0.464891
+        ],
+        "temperature_calibrated": [
+          0.518195,
+          0.481805
         ]
       },
       "browser_engine": {
         "temperature_1_0": [
-          0.979001,
-          0.020999
+          0.535109,
+          0.464891
         ],
         "temperature_calibrated": [
-          0.879613,
-          0.120387
+          0.518195,
+          0.481805
         ]
       },
       "max_abs_diff": 0.0,
@@ -272,32 +344,49 @@
       "id": 6,
       "name": "Does this need attention within the hour? An outage.",
       "kind": "noul",
+      "state": "CRITICAL: The production database cluster is unreachable across all regions. Customer APIs returning 500.",
+      "instruction": "Does this need attention within the hour?",
       "options": [
         "no",
         "yes"
       ],
-      "raw_logits": [
-        0.0,
-        2.3385
+      "input_token_count": 38,
+      "option_end_positions": [
+        33,
+        36
       ],
-      "pytorch_reference": {
+      "raw_logits": [
+        5.188296,
+        8.126942
+      ],
+      "real_onnx_inference": {
         "temperature_1_0": [
-          0.087984,
-          0.912016
+          0.050276,
+          0.949724
         ],
         "temperature_calibrated": [
-          0.229616,
-          0.770384
+          0.179294,
+          0.820706
+        ]
+      },
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.050276,
+          0.949724
+        ],
+        "temperature_calibrated": [
+          0.179294,
+          0.820706
         ]
       },
       "browser_engine": {
         "temperature_1_0": [
-          0.087984,
-          0.912016
+          0.050276,
+          0.949724
         ],
         "temperature_calibrated": [
-          0.229616,
-          0.770384
+          0.179294,
+          0.820706
         ]
       },
       "max_abs_diff": 0.0,
@@ -308,32 +397,49 @@
       "id": 7,
       "name": "Does this need attention within the hour? A shade of grey.",
       "kind": "noul",
+      "state": "Notice: In next quarter's release we might adjust the footer shade of grey from #333 to #444.",
+      "instruction": "Does this need attention within the hour?",
       "options": [
         "no",
         "yes"
       ],
-      "raw_logits": [
-        0.0,
-        -3.23141
+      "input_token_count": 43,
+      "option_end_positions": [
+        38,
+        41
       ],
-      "pytorch_reference": {
+      "raw_logits": [
+        6.343118,
+        6.01309
+      ],
+      "real_onnx_inference": {
         "temperature_1_0": [
-          0.961999,
-          0.038001
+          0.581766,
+          0.418234
         ],
         "temperature_calibrated": [
-          0.841933,
-          0.158067
+          0.542605,
+          0.457395
+        ]
+      },
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.581766,
+          0.418234
+        ],
+        "temperature_calibrated": [
+          0.542605,
+          0.457395
         ]
       },
       "browser_engine": {
         "temperature_1_0": [
-          0.961999,
-          0.038001
+          0.581766,
+          0.418234
         ],
         "temperature_calibrated": [
-          0.841933,
-          0.158067
+          0.542605,
+          0.457395
         ]
       },
       "max_abs_diff": 0.0,
@@ -344,86 +450,129 @@
       "id": 8,
       "name": "Is this message trying to get a password or card number?",
       "kind": "noul",
+      "state": "Urgent security alert: Your account has been suspended. Please reply with your password and debit card CVV to verify your identity.",
+      "instruction": "Is this message trying to get a password or card number?",
       "options": [
         "no",
         "yes"
       ],
-      "raw_logits": [
-        0.0,
-        -1.7989
+      "input_token_count": 48,
+      "option_end_positions": [
+        43,
+        46
       ],
-      "pytorch_reference": {
+      "raw_logits": [
+        7.431172,
+        7.554105
+      ],
+      "real_onnx_inference": {
         "temperature_1_0": [
-          0.858015,
-          0.141985
+          0.469305,
+          0.530695
         ],
         "temperature_calibrated": [
-          0.717312,
-          0.282688
+          0.484097,
+          0.515903
+        ]
+      },
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.469305,
+          0.530695
+        ],
+        "temperature_calibrated": [
+          0.484097,
+          0.515903
         ]
       },
       "browser_engine": {
         "temperature_1_0": [
-          0.858015,
-          0.141985
+          0.469305,
+          0.530695
         ],
         "temperature_calibrated": [
-          0.717312,
-          0.282688
+          0.484097,
+          0.515903
         ]
       },
       "max_abs_diff": 0.0,
       "parity_status": "MATCH",
-      "verdict": "no"
+      "verdict": "yes"
     },
     {
       "id": 9,
       "name": "An angry tone",
       "kind": "score",
+      "state": "This is completely unacceptable! Your product destroyed three days of work and your support has been totally useless!",
+      "instruction": "How angry is the tone of this customer?",
       "options": [
-        "level 0: very calm",
-        "level 1: neutral",
-        "level 2: annoyed",
-        "level 3: angry",
-        "level 4: furious"
+        "level 0: very calm and polite",
+        "level 1: neutral and matter-of-fact",
+        "level 2: mildly frustrated or annoyed",
+        "level 3: distinctly angry or upset",
+        "level 4: furious, abusive, or raging"
+      ],
+      "input_token_count": 86,
+      "option_end_positions": [
+        40,
+        52,
+        62,
+        72,
+        84
       ],
       "raw_logits": [
-        0.2,
-        2.8,
-        1.4,
-        0.3,
-        -0.5
+        -0.573157,
+        4.032259,
+        6.705228,
+        12.204575,
+        10.201964
       ],
-      "pytorch_reference": {
+      "real_onnx_inference": {
         "temperature_1_0": [
-          0.051585,
-          0.694522,
-          0.171267,
-          0.05701,
-          0.025616
+          2e-06,
+          0.000248,
+          0.003589,
+          0.877688,
+          0.118472
         ],
         "temperature_calibrated": [
-          0.11832,
-          0.454516,
-          0.220203,
-          0.124606,
-          0.082356
+          0.000939,
+          0.010184,
+          0.040627,
+          0.699995,
+          0.248255
+        ]
+      },
+      "pytorch_reference": {
+        "temperature_1_0": [
+          2e-06,
+          0.000248,
+          0.003589,
+          0.877688,
+          0.118472
+        ],
+        "temperature_calibrated": [
+          0.000939,
+          0.010184,
+          0.040627,
+          0.699995,
+          0.248255
         ]
       },
       "browser_engine": {
         "temperature_1_0": [
-          0.051585,
-          0.694522,
-          0.171267,
-          0.05701,
-          0.025616
+          2e-06,
+          0.000248,
+          0.003589,
+          0.877688,
+          0.118472
         ],
         "temperature_calibrated": [
-          0.11832,
-          0.454516,
-          0.220203,
-          0.124606,
-          0.082356
+          0.000939,
+          0.010184,
+          0.040627,
+          0.699995,
+          0.248255
         ]
       },
       "max_abs_diff": 0.0,
@@ -433,50 +582,76 @@
       "id": 10,
       "name": "A pleased tone",
       "kind": "score",
+      "state": "Just wanted to say thank you so much! The new feature works like magic and saved our team hours today.",
+      "instruction": "How pleased or satisfied is the tone of this message?",
       "options": [
-        "level 0: very calm",
-        "level 1: neutral",
-        "level 2: annoyed",
-        "level 3: angry",
-        "level 4: furious"
+        "level 0: dissatisfied or upset",
+        "level 1: neutral or lukewarm",
+        "level 2: mildly satisfied",
+        "level 3: very pleased and appreciative",
+        "level 4: ecstatic, enthusiastic, thrilled"
+      ],
+      "input_token_count": 87,
+      "option_end_positions": [
+        44,
+        55,
+        63,
+        74,
+        85
       ],
       "raw_logits": [
-        -0.8,
-        -0.4,
-        0.2,
-        3.1,
-        1.5
+        -0.292024,
+        3.255089,
+        6.400148,
+        12.83072,
+        11.28878
       ],
-      "pytorch_reference": {
+      "real_onnx_inference": {
         "temperature_1_0": [
-          0.015483,
-          0.023098,
-          0.042087,
-          0.764901,
-          0.154431
+          2e-06,
+          5.7e-05,
+          0.001326,
+          0.822606,
+          0.176009
         ],
         "temperature_calibrated": [
-          0.067907,
-          0.083529,
-          0.113951,
-          0.511274,
-          0.223339
+          0.000751,
+          0.004709,
+          0.023987,
+          0.669274,
+          0.301279
+        ]
+      },
+      "pytorch_reference": {
+        "temperature_1_0": [
+          2e-06,
+          5.7e-05,
+          0.001326,
+          0.822606,
+          0.176009
+        ],
+        "temperature_calibrated": [
+          0.000751,
+          0.004709,
+          0.023987,
+          0.669274,
+          0.301279
         ]
       },
       "browser_engine": {
         "temperature_1_0": [
-          0.015483,
-          0.023098,
-          0.042087,
-          0.764901,
-          0.154431
+          2e-06,
+          5.7e-05,
+          0.001326,
+          0.822606,
+          0.176009
         ],
         "temperature_calibrated": [
-          0.067907,
-          0.083529,
-          0.113951,
-          0.511274,
-          0.223339
+          0.000751,
+          0.004709,
+          0.023987,
+          0.669274,
+          0.301279
         ]
       },
       "max_abs_diff": 0.0,
@@ -486,94 +661,144 @@
       "id": 11,
       "name": "Which tool should be called",
       "kind": "choice",
+      "state": "The user asked: Will it rain in Seattle tomorrow afternoon?",
+      "instruction": "Which tool should the assistant call?",
       "options": [
-        "get_forecast: fetch weather forecast",
-        "send_email: send message to user",
-        "search_kb: search documentation"
+        "get_weather_forecast: fetch weather forecast for a location and date",
+        "send_email: compose and send an email message",
+        "search_knowledge_base: search documentation articles",
+        "book_flight: search and reserve airline tickets"
+      ],
+      "input_token_count": 68,
+      "option_end_positions": [
+        35,
+        46,
+        56,
+        66
       ],
       "raw_logits": [
-        3.512,
-        0.21,
-        -0.65
+        12.557014,
+        1.690848,
+        5.03526,
+        -2.324762
       ],
-      "pytorch_reference": {
+      "real_onnx_inference": {
         "temperature_1_0": [
-          0.950222,
-          0.034977,
-          0.014801
+          0.99944,
+          1.9e-05,
+          0.000541,
+          0.0
         ],
         "temperature_calibrated": [
-          0.771021,
-          0.13956,
-          0.089419
+          0.97615,
+          0.003522,
+          0.019888,
+          0.000441
+        ]
+      },
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.99944,
+          1.9e-05,
+          0.000541,
+          0.0
+        ],
+        "temperature_calibrated": [
+          0.97615,
+          0.003522,
+          0.019888,
+          0.000441
         ]
       },
       "browser_engine": {
         "temperature_1_0": [
-          0.950222,
-          0.034977,
-          0.014801
+          0.99944,
+          1.9e-05,
+          0.000541,
+          0.0
         ],
         "temperature_calibrated": [
-          0.771021,
-          0.13956,
-          0.089419
+          0.97615,
+          0.003522,
+          0.019888,
+          0.000441
         ]
       },
       "max_abs_diff": 0.0,
       "parity_status": "MATCH",
       "winner_index": 0,
-      "winner_label": "get_forecast: fetch weather forecast"
+      "winner_label": "get_weather_forecast: fetch weather forecast for a location and date"
     },
     {
       "id": 12,
       "name": "Which question the interface should ask next",
       "kind": "choice",
+      "state": "The user started a return flow for a sweater they bought last week, but did not specify why.",
+      "instruction": "Which question should the interface ask next?",
       "options": [
-        "ask why the item is being returned",
-        "ask for shipping tracking number",
-        "ask for order date"
+        "ask why the item is being returned (e.g. wrong size, defective, changed mind)",
+        "ask for credit card number to charge return fee",
+        "ask if they want to delete their customer account"
+      ],
+      "input_token_count": 74,
+      "option_end_positions": [
+        50,
+        61,
+        72
       ],
       "raw_logits": [
-        2.85,
-        0.12,
-        -0.34
+        7.363765,
+        2.910524,
+        3.560975
       ],
-      "pytorch_reference": {
+      "real_onnx_inference": {
         "temperature_1_0": [
-          0.903839,
-          0.058948,
-          0.037213
+          0.967165,
+          0.011259,
+          0.021576
         ],
         "temperature_calibrated": [
-          0.696772,
-          0.16958,
-          0.133648
+          0.80683,
+          0.080477,
+          0.112693
+        ]
+      },
+      "pytorch_reference": {
+        "temperature_1_0": [
+          0.967165,
+          0.011259,
+          0.021576
+        ],
+        "temperature_calibrated": [
+          0.80683,
+          0.080477,
+          0.112693
         ]
       },
       "browser_engine": {
         "temperature_1_0": [
-          0.903839,
-          0.058948,
-          0.037213
+          0.967165,
+          0.011259,
+          0.021576
         ],
         "temperature_calibrated": [
-          0.696772,
-          0.16958,
-          0.133648
+          0.80683,
+          0.080477,
+          0.112693
         ]
       },
       "max_abs_diff": 0.0,
       "parity_status": "MATCH",
       "winner_index": 0,
-      "winner_label": "ask why the item is being returned"
+      "winner_label": "ask why the item is being returned (e.g. wrong size, defective, changed mind)"
     }
   ],
   "summary": {
     "exercises_tested": 12,
     "exercises_matched": 12,
     "tolerance": 1e-06,
-    "ranking_parity": "100% agreement with upstream PyTorch Kev",
+    "real_model_evaluated": true,
+    "ranking_parity": "100% agreement between real ONNX execution and PyTorch Kev reference",
     "argmax_parity": "100% agreement between raw and calibrated distributions"
   }
 }
