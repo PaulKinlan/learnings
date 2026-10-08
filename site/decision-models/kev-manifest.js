@@ -14,3 +14,17 @@ export const KEV_SHA256 = Object.freeze({
   "onnx/model_q4.onnx": "db4657bb2f14f073cb4d289260dfc50af31adc1260a04cb2fe17c4f03da0881a",
   "onnx/model_q4.onnx_data": "20668ed757f5de294c254cab111910fbc37fb11addca8189e3f58b3c695f90f1",
 });
+
+// Maximum expected download size in bytes per artifact (derived from known pinned artifact sizes
+// with reasonable tolerance, ~20%-50% headroom). Enforced during streaming by fetchVerified
+// using AbortController to defend against unbounded download buffering / memory exhaustion
+// (threat model tm-unbounded-download-buffer).
+export const KEV_MAX_BYTES = Object.freeze({
+  "config.json": 16 * 1024, // actual: 2,267 bytes (~2.3 KB) -> 16 KB cap
+  "onnx/model_q4.onnx": 2 * 1024 * 1024, // actual: 1,245,327 bytes (~1.25 MB) -> 2 MB cap
+  "tokenizer.json": 10 * 1024 * 1024, // actual: 7,031,645 bytes (~7.03 MB) -> 10 MB cap
+  "onnx/model_q4.onnx_data": 450 * 1024 * 1024, // actual: 374,822,912 bytes (~375 MB) -> 450 MB cap
+});
+
+export const KEV_DEFAULT_MAX_BYTES = 500 * 1024 * 1024; // 500 MB fallback cap
+

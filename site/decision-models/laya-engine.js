@@ -32,7 +32,12 @@ import {
   decodeQuestion,
   softmax,
 } from "./laya-pack.js";
-import { LAYA_REVISION, LAYA_SHA256SUMS_SHA256 } from "./laya-manifest.js";
+import {
+  LAYA_REVISION,
+  LAYA_SHA256SUMS_SHA256,
+  LAYA_MAX_BYTES,
+  LAYA_DEFAULT_MAX_BYTES,
+} from "./laya-manifest.js";
 
 export const MULTILINGUAL_SPECIAL_IDS = Object.freeze({ cls: 2, sep: 1, pad: 0, unk: 3, mask: 4 });
 export const MULTILINGUAL_MASK_STRING = "<mask>";
@@ -122,28 +127,54 @@ async function verifySha256(bytes, sha256, label) {
   }
 }
 
-/** Fetch a URL into a Uint8Array with progress callbacks and a required sha256 check. */
-async function fetchBytes(url, { onProgress = null, sha256, label = url } = {}) {
+/**
+ * Fetch a URL into a Uint8Array with progress callbacks, bounded streaming via AbortController,
+ * and a required sha256 check. Rejects early if Content-Length exceeds maxBytes, and aborts
+ * streaming immediately if accumulated chunks exceed maxBytes before SHA-256 verification
+ * (threat model tm-unbounded-download-buffer).
+ */
+export async function fetchBytes(url, { onProgress = null, sha256, label = url, maxBytes = null } = {}) {
   if (!sha256) throw new Error(`no pinned sha256 for ${label}`);
-  const res = await fetch(url);
+  const basename = String(url).split("/").pop()?.split("?")[0] ?? "";
+  const labelBasename = String(label).split("/").pop()?.split("?")[0] ?? "";
+  const limit = maxBytes ?? LAYA_MAX_BYTES[labelBasename] ?? LAYA_MAX_BYTES[basename] ?? LAYA_DEFAULT_MAX_BYTES;
+
+  const controller = new AbortController();
+  const res = await fetch(url, { signal: controller.signal });
   if (!res.ok) throw new Error(`download failed for ${label}: HTTP ${res.status}`);
   const total = Number(res.headers.get("content-length")) || 0;
+  if (limit != null && total > limit) {
+    controller.abort();
+    throw new Error(
+      `download failed for ${label}: Content-Length ${total} exceeds maximum allowed size ${limit} bytes`,
+    );
+  }
   const reader = res.body.getReader();
   const chunks = [];
   let received = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    chunks.push(value);
     received += value.length;
+    if (limit != null && received > limit) {
+      controller.abort();
+      try { await reader.cancel(); } catch {}
+      throw new Error(
+        `download failed for ${label}: stream exceeded maximum allowed size ${limit} bytes (received ${received} bytes)`,
+      );
+    }
+    chunks.push(value);
     onProgress?.(received, total);
   }
-  const bytes = new Uint8Array(received);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
+  const bytes = chunks.length === 1 ? chunks[0] : (() => {
+    const b = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      b.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return b;
+  })();
   await verifySha256(bytes, sha256, label);
   return bytes;
 }
@@ -213,13 +244,27 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
   // A sums file that does not arrive is a hard failure, on purpose: an empty digest table would
   // turn every check below into no check at all, which is the silent fallback this refuses.
   // The multilingual sums file itself is checked against the digest in laya-manifest.js.
-  const sumsResponse = await fetch(sumsUrl);
+  const sumsLimit = LAYA_MAX_BYTES.SHA256SUMS ?? 1024 * 1024;
+  const sumsController = new AbortController();
+  const sumsResponse = await fetch(sumsUrl, { signal: sumsController.signal });
   if (!sumsResponse.ok) {
     throw new Error(
       `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: HTTP ${sumsResponse.status} (${sumsUrl})`,
     );
   }
+  const sumsTotal = Number(sumsResponse.headers.get("content-length")) || 0;
+  if (sumsLimit != null && sumsTotal > sumsLimit) {
+    sumsController.abort();
+    throw new Error(
+      `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: Content-Length ${sumsTotal} exceeds maximum allowed size ${sumsLimit} bytes`,
+    );
+  }
   const sumsBytes = new Uint8Array(await sumsResponse.arrayBuffer());
+  if (sumsLimit != null && sumsBytes.byteLength > sumsLimit) {
+    throw new Error(
+      `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: size ${sumsBytes.byteLength} exceeds maximum allowed size ${sumsLimit} bytes`,
+    );
+  }
   await verifySha256(sumsBytes, LAYA_SHA256SUMS_SHA256[checkpoint], `${spec.repo}/SHA256SUMS`);
   const sums = parseSha256Sums(new TextDecoder().decode(sumsBytes));
 
@@ -228,11 +273,17 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
   // case their byte-identical upstream artifact supplies the digest.
   const basename = (url) => String(url).split("/").pop().split("?")[0];
   const integrityFor = (key, file, url) => {
-    const sha256 = sums[urls[file] == null && localMap[key] ? file : basename(url)] ?? sums[file];
+    const resolvedName = urls[file] == null && localMap[key] ? file : basename(url);
+    const sha256 = sums[resolvedName] ?? sums[file];
     if (!sha256 && urls[file] != null && basename(url) !== file) {
       throw new Error(`no pinned sha256 for ${url} (${spec.repo}/${file})`);
     }
-    return { sha256 };
+    const maxBytes =
+      LAYA_MAX_BYTES[resolvedName] ??
+      LAYA_MAX_BYTES[file] ??
+      LAYA_MAX_BYTES[basename(url)] ??
+      LAYA_DEFAULT_MAX_BYTES;
+    return { sha256, maxBytes };
   };
 
   onProgress?.("tokenizer", 0, 0);

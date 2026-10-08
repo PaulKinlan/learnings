@@ -49,3 +49,28 @@ export const LAYA_REVISION = Object.freeze({
 export const LAYA_SHA256SUMS_SHA256 = Object.freeze({
   multilingual: "4cb3d664b7483d57c319254f96f8dec0d1c168f6c6ec88748b61e703f0968dad",
 });
+
+// Maximum expected download size in bytes per artifact (derived from known publisher artifact sizes
+// with reasonable tolerance, ~20%-50% headroom). Enforced during streaming by fetchBytes using
+// AbortController to defend against unbounded download buffering / memory exhaustion
+// (threat model tm-unbounded-download-buffer).
+export const LAYA_MAX_BYTES = Object.freeze({
+  "tokenizer.json": 50 * 1024 * 1024, // multilingual: 34,363,188 bytes (~34.4 MB) -> 50 MB cap
+  "ml-tokenizer.json": 50 * 1024 * 1024,
+  "en-tokenizer.json": 10 * 1024 * 1024, // english: 3,583,228 bytes (~3.6 MB) -> 10 MB cap
+  "laya_ml_act_head_fp32.tflite": 4 * 1024 * 1024, // actual: 795,816 bytes (~796 KB) -> 4 MB cap
+  "laya_act_head_fp32.tflite": 4 * 1024 * 1024, // actual: 1,057,960 bytes (~1.06 MB) -> 4 MB cap
+  "laya_ml_calibration.json": 64 * 1024, // actual: 9,156 bytes (~9.2 KB) -> 64 KB cap
+  "rl_agent_config.json": 64 * 1024, // actual: 745 bytes (~0.7 KB) -> 64 KB cap
+  "token_embeddings_fp16.bin": 450 * 1024 * 1024, // actual: 393,216,000 bytes (~393.2 MB) -> 450 MB cap
+  "laya_ml_s512_embeds_wfp16.tflite": 320 * 1024 * 1024, // actual: 251,806,912 bytes (~251.8 MB) -> 320 MB cap
+  "laya_ml_s256_embeds_wfp16.tflite": 320 * 1024 * 1024, // actual: 250,889,408 bytes (~250.9 MB) -> 320 MB cap
+  "laya_ml_s256_embeds_fp32.tflite": 600 * 1024 * 1024, // actual: 500,969,948 bytes (~501.0 MB) -> 600 MB cap
+  "laya_en_s512_wfp16.tflite": 1000 * 1024 * 1024, // actual: 843,929,120 bytes (~843.9 MB) -> 1000 MB cap
+  "SHA256SUMS": 1024 * 1024, // actual: 7,780 bytes (~7.8 KB) -> 1 MB cap
+  "ml-SHA256SUMS": 1024 * 1024,
+  "en-SHA256SUMS": 1024 * 1024,
+});
+
+export const LAYA_DEFAULT_MAX_BYTES = 1000 * 1024 * 1024; // 1 GB fallback cap
+

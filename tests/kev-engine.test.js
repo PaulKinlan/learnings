@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { KEV_REVISION, KEV_SHA256 } from "../site/decision-models/kev-manifest.js";
+import { KEV_REVISION, KEV_SHA256, KEV_MAX_BYTES } from "../site/decision-models/kev-manifest.js";
 import { fetchVerified, kevArtifactUrl } from "../site/decision-models/kev-engine.js";
 
 const ARTIFACTS = ["tokenizer.json", "config.json", "onnx/model_q4.onnx", "onnx/model_q4.onnx_data"];
@@ -37,3 +37,95 @@ test("a digest mismatch aborts before the bytes are returned", async () => {
   );
   await assert.rejects(fetchVerified(url, { label: "fixture" }), /no pinned sha256 for fixture/);
 });
+
+test("every artifact has a documented maximum size cap consistent with known sizes", () => {
+  assert.deepEqual(
+    Object.keys(KEV_MAX_BYTES).sort(),
+    [...ARTIFACTS].sort(),
+    "maximum size limits are configured for all known Kev artifacts",
+  );
+  for (const file of ARTIFACTS) {
+    assert.equal(typeof KEV_MAX_BYTES[file], "number");
+    assert.ok(KEV_MAX_BYTES[file] > 0, `${file} limit is positive`);
+  }
+});
+
+test("Content-Length header exceeding maximum allowed size aborts before reading body", async () => {
+  const originalFetch = globalThis.fetch;
+  let bodyAccessed = false;
+  const mockResponse = {
+    ok: true,
+    status: 200,
+    headers: new Headers({ "content-length": "200" }),
+    get body() {
+      bodyAccessed = true;
+      return new ReadableStream();
+    },
+  };
+  globalThis.fetch = async () => mockResponse;
+  try {
+    await assert.rejects(
+      fetchVerified("https://fixture.invalid/tokenizer.json", {
+        sha256: "0".repeat(64),
+        label: "fixture",
+        maxBytes: 100,
+      }),
+      /Content-Length 200 exceeds maximum allowed size 100 bytes/,
+    );
+    assert.equal(bodyAccessed, false, "streaming body was never accessed because Content-Length failed fast");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("streamed chunks exceeding maximum allowed size abort streaming before full body is buffered", async () => {
+  let streamCancelled = false;
+  let chunksEnqueued = 0;
+  const chunk1 = new Uint8Array(80);
+  const chunk2 = new Uint8Array(80);
+  const chunk3 = new Uint8Array(80);
+  const fullBytes = new Uint8Array(240);
+  fullBytes.set(chunk1, 0);
+  fullBytes.set(chunk2, 80);
+  fullBytes.set(chunk3, 160);
+  const goodDigest = createHash("sha256").update(fullBytes).digest("hex");
+
+  const stream = new ReadableStream({
+    pull(controller) {
+      if (streamCancelled) return;
+      chunksEnqueued++;
+      if (chunksEnqueued === 1) controller.enqueue(chunk1);
+      else if (chunksEnqueued === 2) controller.enqueue(chunk2);
+      else if (chunksEnqueued === 3) controller.enqueue(chunk3);
+      else controller.close();
+    },
+    cancel() {
+      streamCancelled = true;
+    },
+  });
+
+  const originalFetch = globalThis.fetch;
+  // No Content-Length header to verify stream chunk enforcement
+  globalThis.fetch = async () => new Response(stream);
+  try {
+    const outcome = await fetchVerified("https://fixture.invalid/custom", {
+      sha256: goodDigest,
+      label: "fixture",
+      maxBytes: 100,
+    }).then(
+      (bytes) => ({ status: "buffered", byteLength: bytes.byteLength }),
+      (err) => ({ status: "rejected", message: err.message }),
+    );
+
+    assert.equal(
+      outcome.status,
+      "rejected",
+      `oversized body was buffered (${outcome.byteLength} bytes) instead of rejected`,
+    );
+    assert.match(outcome.message, /stream exceeded maximum allowed size 100 bytes/);
+    assert.equal(streamCancelled, true, "underlying stream was cancelled via AbortController");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
