@@ -14,8 +14,12 @@ const QUANT_SPEC = JSON.parse(readFileSync(LEDGER_PATH, "utf8")).variants;
 
 // Pinned ONNX model files for live inspection (can be fetched via `node scripts/fetch-kev-fixtures.mjs`)
 const Q4_FILE = "/tmp/kev-files/onnx/model_q4.onnx";
-const Q4F16_FILE = "/tmp/kev-inspect/model_q4f16.onnx";
-const hasArtifacts = existsSync(Q4_FILE) && existsSync(Q4F16_FILE);
+const Q4F16_CANDIDATES = [
+  "/tmp/kev-files/onnx/model_q4f16.onnx",
+  "/tmp/kev-inspect/model_q4f16.onnx",
+];
+const q4f16File = Q4F16_CANDIDATES.find((p) => existsSync(p));
+const hasArtifacts = existsSync(Q4_FILE) && Boolean(q4f16File);
 
 test("quantization comparison: storage footprint and compression ratio", () => {
   // Unquantized Qwen3-0.6B baseline (float32: ~2.4 GB; float16: ~1.2 GB)
@@ -83,9 +87,9 @@ test("quantization comparison: manifest size limits bound both variants", () => 
 
 test(
   "quantization graph inspection: scripts/inspect-kev-graphs.py live traversal proves absence of temperature division",
-  { skip: !hasArtifacts ? "requires model_q4.onnx and model_q4f16.onnx in /tmp (run node scripts/fetch-kev-fixtures.mjs)" : false },
+  { skip: !hasArtifacts ? "requires model_q4.onnx and model_q4f16.onnx in /tmp/kev-files/onnx/ (run node scripts/fetch-kev-fixtures.mjs)" : false },
   () => {
-    const raw = execFileSync("uv", ["run", "--with", "onnx", "python3", "scripts/inspect-kev-graphs.py", Q4_FILE, Q4F16_FILE], {
+    const raw = execFileSync("uv", ["run", "--with", "onnx", "python3", "scripts/inspect-kev-graphs.py", Q4_FILE, q4f16File], {
       encoding: "utf8",
     });
     const inspected = JSON.parse(raw);

@@ -13,6 +13,11 @@ const ARTIFACTS = [
   { file: "config.json", url: `${BASE_URL}/config.json`, sha: KEV_SHA256["config.json"] },
   { file: "tokenizer.json", url: `${BASE_URL}/tokenizer.json`, sha: KEV_SHA256["tokenizer.json"] },
   { file: "onnx/model_q4.onnx", url: `${LFS_URL}/onnx/model_q4.onnx`, sha: KEV_SHA256["onnx/model_q4.onnx"] },
+  {
+    file: "onnx/model_q4f16.onnx",
+    url: `${LFS_URL}/onnx/model_q4f16.onnx`,
+    sha: "26e059ddd954efd9897772b098db10b9eeda9b873984dc1c73b32a9ce177c7c8",
+  },
 ];
 
 mkdirSync(resolve(TARGET_DIR, "onnx"), { recursive: true });

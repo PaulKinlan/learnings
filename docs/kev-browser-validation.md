@@ -75,19 +75,20 @@ Upstream empirical evaluation demonstrates the value of this scaling:
 
 ### Host-Side Temperature Scaling
 Because temperature scaling is a uniform scalar division on logits:
-$$p_i = \frac{\exp(z_i / T)}{\sum_j \exp(z_j / T)}$$
+$$p_i = \frac{\exp((z_i - \max(z)) / T)}{\sum_j \exp((z_j - \max(z)) / T)}$$
 1. It is strictly monotonic: $\operatorname{argmax}_i p_i(T) = \operatorname{argmax}_i z_i$ for all $T > 0$.
-2. For binary decisions, the logit difference $\Delta z = \ln(p / (1 - p))$ scales by $1 / T$. For example, an overconfident negative raw probability of $p = 0.021$ ($\Delta z = -3.842$) transforms under $T = 1.932$ to $\sigma(-3.842 / 1.932) = 0.120$, moderating overconfidence while preserving the `"no"` classification.
-3. In-browser engine `kev-pack.js` exposes `readAnswers({ scores, ends, temperature })` and `KEV_CALIBRATED_TEMPERATURE`.
-4. The on-device interface explicitly documents that raw model inference runs at $T = 1.0$ and notes the calibrated temperature of $T = 1.932$.
+2. In-browser `softmax()` subtracts the maximum before dividing by temperature, preventing numerical overflow even for tiny temperatures ($T \to 0^+$).
+3. For binary decisions, the logit difference $\Delta z = \ln(p / (1 - p))$ scales by $1 / T$. For example, an overconfident negative raw probability of $p = 0.021$ ($\Delta z = -3.842$) transforms under $T = 1.932$ to $\sigma(-3.842 / 1.932) = 0.120$, moderating overconfidence while preserving the `"no"` classification.
+4. In-browser engine `kev-pack.js` exposes `readAnswers({ scores, ends, temperature })` and `KEV_CALIBRATED_TEMPERATURE`.
+5. The on-device interface explicitly documents that raw model inference runs at $T = 1.0$ and notes the calibrated temperature of $T = 1.932$.
 
 ---
 
 ## 4. Distribution Parity Verification
 
-Distribution parity between the browser engine, real ONNX model execution, and upstream PyTorch Kev was verified across 12 paired decision exercises (`tests/kev-parity.test.js` and `research/kev-distribution-parity.json`):
+Distribution parity between the browser engine, real ONNX model execution, and upstream PyTorch Kev was verified across 12 paired decision exercises (`tests/kev-parity.test.js`, generated via `scripts/generate-parity-ledger.py` and saved in `research/kev-distribution-parity.json`):
 
-1. **Numerical Parity with Real Model Logits:** All 12 exercises were evaluated via real forward execution of `model_q4.onnx`. Browser `readAnswers()` outputs were compared against analytical PyTorch reference distributions across all options at both $T=1.0$ and $T=1.932$. Maximum absolute difference $|p_{\text{browser}} - p_{\text{reference}}| < 10^{-6}$ was confirmed across all exercises.
+1. **Numerical Parity with Real Model Logits and PyTorch Reference:** All 12 exercises were evaluated via real forward execution of `model_q4.onnx` and PyTorch Kev reference formulas. In-browser `packDecision()` was verified to reproduce the exact recorded token sequence and option gather positions. Browser `readAnswers()` outputs indexing into the full sequence logits were compared against both real ONNX execution and analytical PyTorch reference distributions across all options at both $T=1.0$ and $T=1.932$. Maximum absolute difference $|p_{\text{browser}} - p_{\text{reference}}| < 10^{-6}$ was confirmed across all exercises.
 2. **Option Position Invariance:** Reversing option order from `[billing, tech, sales, account]` to `[account, sales, tech, billing]` preserves both winning label (`billing`) and probability ($0.997$ vs $0.997$), proving readout gather indices land on token boundaries, not positional offsets.
 3. **Deterministic Primitives:**
    - **Choice:** Multi-class categorical distributions sum to $1.0$ within $10^{-12}$ tolerance.
@@ -135,13 +136,15 @@ Automated memory audits (`tests/kev-memory.test.js` and `research/kev-device-mem
 
 ## 7. Verification Artifacts & Test Evidence
 
-- `site/decision-models/kev-pack.js`: Delimiters, packing, temperature-scaled softmax, `KEV_CALIBRATED_TEMPERATURE`.
+- `site/decision-models/kev-pack.js`: Delimiters, packing, overflow-safe temperature-scaled softmax, `KEV_CALIBRATED_TEMPERATURE`.
 - `site/decision-models/kev-engine.js`: ONNX Runtime Web JSEP WASM execution, `temperature` support, cache and session cleanup on disposal.
 - `site/decision-models/on-device.js`: In-browser UI, honest backend and temperature reporting.
+- `scripts/fetch-kev-fixtures.mjs`: Automated downloader and sha256 verifier for pinned Kev artifacts (`config.json`, `tokenizer.json`, `model_q4.onnx`, `model_q4f16.onnx`).
 - `scripts/inspect-kev-graphs.py`: Automated ONNX graph inspection tool for q4 and q4f16 with full ancestor lineage traversal.
-- `tests/kev-parity.test.js`: Real tokenizer, delimiter IDs, unforgeable text escaping, sequence packing layout, real model forward inference parity ($< 10^{-6}$ tolerance), and argmax invariance.
+- `scripts/generate-parity-ledger.py`: Reproducible reference generator executing real ONNX inference and PyTorch distribution calculations.
+- `tests/kev-parity.test.js`: Real tokenizer, delimiter IDs, unforgeable text escaping, sequence packing layout, real model forward inference parity ($< 10^{-6}$ tolerance vs both ONNX and PyTorch reference), and argmax invariance.
 - `tests/kev-quantization.test.js`: Structural comparison of `q4` vs `q4f16`, verified against live graph inspection of pinned ONNX files.
 - `tests/kev-memory.test.js`: Memory caps, lifecycle disposal with cache clearing, and architectural memory footprint.
-- `research/kev-distribution-parity.json`: 12 paired exercise dataset generated from real model forward passes with raw logits and probability vectors.
+- `research/kev-distribution-parity.json`: 12 paired exercise dataset generated from real model forward passes with recorded input IDs, full sequence logits, and reference probability vectors.
 - `research/kev-quantization-comparison.json`: Graph node, operator, and size comparison ledger.
 - `research/kev-device-memory.json`: Heap, download, and execution profile.
