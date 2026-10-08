@@ -141,6 +141,25 @@ function ownCap(caps, key) {
 }
 
 /**
+ * Resolve an explicit maxBytes override at the helper's API boundary. Unlike a manifest lookup
+ * (ownCap, which falls through to CAP_DEFAULT), an explicit override is a caller-supplied value,
+ * so an invalid one is a bug that must fail loudly instead of silently unbinding the download:
+ * NaN, ±Infinity, 0, negatives and non-numeric strings would otherwise make `total > limit` /
+ * `received > limit` compare false (or always true) and either accept an oversized body or
+ * reject every byte. A missing override (null/undefined) returns undefined so the cap chain
+ * continues into the manifest lookup and CAP_DEFAULT (tm-unbounded-download-buffer).
+ */
+function explicitCap(value, label) {
+  if (value == null) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new Error(
+      `invalid maxBytes for ${label}: expected a finite positive number of bytes, got ${String(value)}`,
+    );
+  }
+  return value;
+}
+
+/**
  * Fetch a URL into a Uint8Array with progress callbacks, bounded streaming via AbortController,
  * and a required sha256 check. Rejects early if Content-Length exceeds maxBytes, and aborts
  * streaming immediately if accumulated chunks exceed maxBytes before SHA-256 verification
@@ -151,7 +170,7 @@ export async function fetchBytes(url, { onProgress = null, sha256, label = url, 
   const basename = String(url).split("/").pop()?.split("?")[0] ?? "";
   const labelBasename = String(label).split("/").pop()?.split("?")[0] ?? "";
   const limit =
-    maxBytes ??
+    explicitCap(maxBytes, label) ??
     ownCap(LAYA_MAX_BYTES, labelBasename) ??
     ownCap(LAYA_MAX_BYTES, basename) ??
     LAYA_DEFAULT_MAX_BYTES;

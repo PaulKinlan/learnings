@@ -159,3 +159,47 @@ test("inherited Object.prototype keys cannot suppress the bounded fallback cap",
     }
   }
 });
+
+test("explicit non-finite or non-positive maxBytes fails closed instead of accepting an oversized body", async () => {
+  const oneByte = new Uint8Array([7]);
+  const goodDigest = createHash("sha256").update(oneByte).digest("hex");
+  for (const bad of [NaN, Infinity, "invalid", 0, -1]) {
+    const originalFetch = globalThis.fetch;
+    const mockResponse = {
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-length": "2000000000" }),
+      get body() {
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(oneByte);
+            controller.close();
+          },
+        });
+      },
+    };
+    globalThis.fetch = async () => mockResponse;
+    try {
+      const outcome = await fetchVerified("https://fixture.invalid/custom", {
+        sha256: goodDigest,
+        label: "fixture",
+        maxBytes: bad,
+      }).then(
+        (bytes) => ({ status: "accepted", byteLength: bytes.byteLength }),
+        (err) => ({ status: "rejected", message: err.message }),
+      );
+      assert.equal(
+        outcome.status,
+        "rejected",
+        `maxBytes=${String(bad)}: a 2 GB Content-Length body was accepted instead of failing closed`,
+      );
+      assert.match(
+        outcome.message,
+        /invalid maxBytes for fixture/,
+        `maxBytes=${String(bad)}: rejection must name the invalid explicit cap`,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+});

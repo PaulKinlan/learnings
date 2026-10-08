@@ -58,6 +58,25 @@ function ownCap(caps, key) {
 }
 
 /**
+ * Resolve an explicit maxBytes override at the helper's API boundary. Unlike a manifest lookup
+ * (ownCap, which falls through to CAP_DEFAULT), an explicit override is a caller-supplied value,
+ * so an invalid one is a bug that must fail loudly instead of silently unbinding the download:
+ * NaN, ±Infinity, 0, negatives and non-numeric strings would otherwise make `total > limit` /
+ * `received > limit` compare false (or always true) and either accept an oversized body or
+ * reject every byte. A missing override (null/undefined) returns undefined so the cap chain
+ * continues into the manifest lookup and CAP_DEFAULT (tm-unbounded-download-buffer).
+ */
+function explicitCap(value, label) {
+  if (value == null) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new Error(
+      `invalid maxBytes for ${label}: expected a finite positive number of bytes, got ${String(value)}`,
+    );
+  }
+  return value;
+}
+
+/**
  * Fetch one artifact into bytes, reporting progress, and refuse bytes whose SHA-256 does not
  * match the pinned digest. Downloads are strictly bounded by a maximum byte cap enforced
  * via AbortController while streaming (and checked against Content-Length before streaming begins)
@@ -71,7 +90,7 @@ export async function fetchVerified(url, { onProgress = null, sha256, label = ur
   const basename = String(url).split("/").pop()?.split("?")[0] ?? "";
   const labelBasename = String(label).split("/").pop()?.split("?")[0] ?? "";
   const limit =
-    maxBytes ??
+    explicitCap(maxBytes, label) ??
     ownCap(KEV_MAX_BYTES, labelBasename) ??
     ownCap(KEV_MAX_BYTES, basename) ??
     KEV_DEFAULT_MAX_BYTES;
