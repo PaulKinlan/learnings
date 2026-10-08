@@ -1,0 +1,83 @@
+{
+  "comparison": "Kev-0.6B ONNX Quantization Analysis (q4 vs q4f16)",
+  "repository": "onnx-community/kev-0.6b-ONNX",
+  "base_model": "Qwen/Qwen3-0.6B-Base (1024 hidden, 28 layers, 16 attention heads, 8 kv heads)",
+  "inspection_script": "scripts/inspect-kev-graphs.py",
+  "variants": {
+    "q4": {
+      "target_environment": "CPU via ONNX Runtime Web JSEP WASM build",
+      "files": {
+        "graph": "onnx/model_q4.onnx",
+        "graph_size_bytes": 1245327,
+        "graph_size_mb": 1.19,
+        "weights": "onnx/model_q4.onnx_data",
+        "weights_size_bytes": 374822912,
+        "weights_size_mb": 357.46
+      },
+      "quantization_scheme": {
+        "transformer_projections": "4-bit integer weights using MatMulNBits (block_size: 32)",
+        "embedding_matrix": "GatherBlockQuantized (4-bit block-quantized lookups)",
+        "activations": "float32 throughout transformer backbone",
+        "pointer_head": "float32 query and key projections (Linear 1024 -> 256)"
+      },
+      "graph_topology": {
+        "total_nodes": 5909,
+        "matmul_nbits_nodes": 196,
+        "gather_block_quantized_nodes": 1,
+        "cast_nodes": 239,
+        "pointer_head_nodes": 4,
+        "pointer_head_scale_constant": 0.0625,
+        "has_temperature_division_in_graph": false,
+        "logits_producer_op": "Mul"
+      },
+      "runtime_compatibility": {
+        "jsep_wasm": "PASS — GatherBlockQuantized registers through the JSEP bridge",
+        "plain_wasm": "FAIL — Missing kernel GatherBlockQuantized(1)",
+        "asyncify_wasm": "FAIL — Missing kernel GatherBlockQuantized(1)",
+        "webgpu": "UNSUPPORTED — Requires float16 activation layout"
+      },
+      "memory_footprint_mb": 375
+    },
+    "q4f16": {
+      "target_environment": "WebGPU via ONNX Runtime Web",
+      "files": {
+        "graph": "onnx/model_q4f16.onnx",
+        "graph_size_bytes": 3338522,
+        "graph_size_mb": 3.18,
+        "weights": "onnx/model_q4f16.onnx_data",
+        "weights_size_bytes": 335357952,
+        "weights_size_mb": 319.82
+      },
+      "quantization_scheme": {
+        "transformer_projections": "4-bit integer weights using MatMulNBits (block_size: 32)",
+        "embedding_matrix": "GatherBlockQuantized",
+        "activations": "float16 throughout transformer backbone",
+        "pointer_head": "float32 precision preserved via cast_to_fp32 and cast_to_fp16 boundaries"
+      },
+      "graph_topology": {
+        "total_nodes": 5961,
+        "matmul_nbits_nodes": 196,
+        "gather_block_quantized_nodes": 1,
+        "cast_nodes": 287,
+        "pointer_head_nodes": 14,
+        "pointer_head_scale_constant": 0.0625,
+        "has_temperature_division_in_graph": false,
+        "logits_producer_op": "Cast"
+      },
+      "runtime_compatibility": {
+        "jsep_wasm": "INCOMPATIBLE — CPU kernels expect float32 activations",
+        "webgpu": "OPTIMIZED — Native WGSL float16 shader execution"
+      },
+      "memory_footprint_mb": 335
+    }
+  },
+  "tradeoffs": {
+    "size_reduction": {
+      "unquantized_fp16_baseline_mb": 1150,
+      "q4_compression_ratio": "3.07x (~67.4% reduction)",
+      "q4f16_compression_ratio": "3.43x (~70.8% reduction)"
+    },
+    "numerical_precision": "q4f16 achieves a smaller weights payload (335 MB vs 375 MB) by storing float16 constants, but requires 48 additional Cast operators around the pointer head to guard against float16 underflow during inner product dot products. q4 executes completely in float32 arithmetic on CPU, yielding high numerical headroom.",
+    "deployment_recommendation": "Use q4 on CPU (browser Wasm JSEP); use q4f16 only when WebGPU binary is vendored and GPU adapter is present."
+  }
+}
