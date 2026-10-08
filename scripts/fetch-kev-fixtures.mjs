@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { KEV_REVISION, KEV_SHA256 } from "../site/decision-models/kev-manifest.js";
 
-const TARGET_DIR = "/tmp/kev-files";
+const TARGET_DIR = process.env.KEV_FILES_DIR || "/tmp/kev-files";
 const BASE_URL = `https://huggingface.co/onnx-community/kev-0.6b-ONNX/raw/${KEV_REVISION}`;
 const LFS_URL = `https://huggingface.co/onnx-community/kev-0.6b-ONNX/resolve/${KEV_REVISION}`;
 
