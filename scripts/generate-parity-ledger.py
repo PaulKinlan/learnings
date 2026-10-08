@@ -6,6 +6,7 @@ exercises, records full sequence input IDs, option end token gather positions,
 and raw model logits, and evaluates reference softmax distributions at T=1.0 and T=1.932.
 """
 import json
+import os
 import re
 from pathlib import Path
 import numpy as np
@@ -17,9 +18,10 @@ except ImportError:
     print("Run with: uv run --with onnxruntime --with tokenizers python3 scripts/generate-parity-ledger.py")
     exit(1)
 
-CONFIG_PATH = "/tmp/kev-files/config.json"
-TOKENIZER_PATH = "/tmp/kev-files/tokenizer.json"
-MODEL_PATH = "/tmp/kev-files/onnx/model_q4.onnx"
+KEV_FILES_DIR = Path(os.environ.get("KEV_FILES_DIR", "/tmp/kev-files"))
+CONFIG_PATH = str(KEV_FILES_DIR / "config.json")
+TOKENIZER_PATH = str(KEV_FILES_DIR / "tokenizer.json")
+MODEL_PATH = str(KEV_FILES_DIR / "onnx/model_q4.onnx")
 
 with open(CONFIG_PATH) as f:
     cfg = json.load(f)
