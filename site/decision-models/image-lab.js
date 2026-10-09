@@ -258,7 +258,7 @@ export function drawSecurityPreset(canvas) {
   ctx.fillText('OPENAI_API_KEY = ', 60, 146);
   ctx.fillStyle = '#f87171';
   ctx.font = 'bold 13px monospace';
-  ctx.fillText('"sk-proj-91aB4cE9829f0a82b99214cd91807aa3bc"', 188, 146);
+  ctx.fillText('"sk-proj-REDACTED"', 188, 146);
 
   // Another secret
   ctx.fillStyle = 'rgba(239, 68, 68, 0.2)';
@@ -268,7 +268,7 @@ export function drawSecurityPreset(canvas) {
   ctx.fillStyle = '#cbd5e1';
   ctx.fillText('DATABASE_DSN = ', 60, 174);
   ctx.fillStyle = '#f87171';
-  ctx.fillText('"postgres://admin:MasterPass2026@10.0.1.4:5432/core"', 172, 174);
+  ctx.fillText('"postgres://user:REDACTED@<host>:5432/core"', 172, 174);
 
   ctx.fillStyle = '#cbd5e1';
   ctx.fillText('DEBUG = ', 60, 202);
