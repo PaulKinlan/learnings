@@ -5,7 +5,7 @@
  * and JevImageBench v0.1.5 explorer table.
  */
 
-import { gate, loopbackEndpoint, validateAnswers } from './core.js';
+import { gate, loopbackEndpoint, validateAnswers, PROVIDER_TIMEOUT_MS } from './core.js';
 import {
   BENCHMARK_META,
   JEV_IMAGE_BENCH_DATA,
@@ -707,7 +707,7 @@ async function fetchVision(url, init, signal) {
  * leaves every other caller with no timeout, and a provider that accepts the connection and never
  * answers then never settles. core.js decide()/generate() default the same 45s for the same reason.
  */
-export async function decideImage({ spec, imagePayload, engine = 'client', endpoint = '', key = '', model = 'Imajev-4B' }, signal = AbortSignal.timeout(45000)) {
+export async function decideImage({ spec, imagePayload, engine = 'client', endpoint = '', key = '', model = 'Imajev-4B' }, signal = AbortSignal.timeout(PROVIDER_TIMEOUT_MS)) {
   validateImageSpec(spec, imagePayload);
 
   // Global mock interceptor for test suites
@@ -1221,7 +1221,7 @@ export function setupImageLab() {
           endpoint,
           key,
           model
-        }, AbortSignal.timeout(45000));
+        }, AbortSignal.timeout(PROVIDER_TIMEOUT_MS));
 
         lastResult = result;
         if (statusEl) {
