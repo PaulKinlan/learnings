@@ -1,5 +1,5 @@
 import {adaptationSpec,adaptationExamples} from './examples.js';
-import {trialMetrics} from './core.js';
+import {trialMetrics,PROVIDER_TIMEOUT_MS} from './core.js';
 import {$,setupSettings,runSpec,settings,el,download} from './ui.js';
 let receipt=null,controller=null,version=0;
 function stale(){version++;receipt=null;$('comparison').replaceChildren();$('raw').textContent='No current trial.';$('download').disabled=true;$('status').textContent='Inputs changed. Run a new paired trial.';}
@@ -15,7 +15,7 @@ $('compare').onclick=async()=>{
   if($('drift').value==='swapped'){const c=base.questions.category.criteria;[c.veln,c.sova]=[c.sova,c.veln];}
   const withExamples=structuredClone(base);withExamples.state=`Labelled examples (reference only):\n${$('labelled-examples').value}\n\nNew item to classify:\n${base.state}`;
   const arms=[];const expected=$('expected').value,provider=settings().provider,mode=$('drift').value;
-  for(const [label,spec] of [['Without examples',base],['With examples',withExamples]]){if(controller.signal.aborted)throw new Error('Comparison cancelled.');const result=await runSpec(spec,AbortSignal.any([controller.signal,AbortSignal.timeout(45000)]));arms.push({label,spec,result});if(version!==started)throw new Error('Inputs changed during comparison. Results discarded; run again.');}
+  for(const [label,spec] of [['Without examples',base],['With examples',withExamples]]){if(controller.signal.aborted)throw new Error('Comparison cancelled.');const result=await runSpec(spec,AbortSignal.any([controller.signal,AbortSignal.timeout(PROVIDER_TIMEOUT_MS)]));arms.push({label,spec,result});if(version!==started)throw new Error('Inputs changed during comparison. Results discarded; run again.');}
   receipt={at:new Date().toISOString(),provider,mode,expected,arms,qualification:'One labelled pair; not a calibration or generalization study.'};
   $('status').textContent=`${arms[0].result.source} — two arms complete. ${receipt.qualification}`;$('raw').textContent=JSON.stringify(receipt,null,2);$('download').disabled=false;render();
  }catch(e){$('status').textContent=e.message;}finally{$('compare').disabled=false;$('cancel').disabled=true;controller=null;}

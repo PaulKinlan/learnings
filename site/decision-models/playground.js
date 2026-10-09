@@ -9,7 +9,7 @@
 import { loadLaya } from "./laya-engine.js";
 import { loadKev, KevSession } from "./kev-engine.js";
 import { Classifier } from "./classifier-api.js";
-import { validateAnswers } from "./core.js";
+import { validateAnswers, PROVIDER_TIMEOUT_MS } from "./core.js";
 import { renderOptions, choiceConfidence } from "./laya-pack.js";
 import {
   choose as kevChoose,
@@ -66,7 +66,7 @@ const engines = {
           // labs wire the same 45s boundary (core.js decide()/generate(), image-lab.js
           // decideImage()), so a provider that accepts the connection and never answers still
           // ends the run instead of leaving the Run button disabled with no way out.
-          const signal = AbortSignal.timeout(45000);
+          const signal = AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
           let res;
           try {
             res = await fetch("https://api.typesafe.ai/v1/systemone", {

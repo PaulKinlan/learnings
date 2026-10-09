@@ -79,7 +79,8 @@ function providerURL(provider, settings, direct) {
   if(typeof location==='undefined'||!['127.0.0.1','localhost','[::1]'].includes(location.hostname)) fail('Relay is available only when serving this site locally.');
   return new URL('/api/'+provider,location.origin).href;
 }
-export async function decide(spec, settings, signal=AbortSignal.timeout(45000)) {
+export const PROVIDER_TIMEOUT_MS = 45000;
+export async function decide(spec, settings, signal=AbortSignal.timeout(PROVIDER_TIMEOUT_MS)) {
   const url=settings.provider==='jev'?providerURL('jev',settings,'https://api.typesafe.ai/v1/systemone'):loopbackEndpoint(settings.endpoint);
   if(settings.provider==='jev'&&!settings.key?.trim()) fail('Enter a Jev API key first.');
   const start=performance.now();
@@ -87,7 +88,7 @@ export async function decide(spec, settings, signal=AbortSignal.timeout(45000)) 
   return {data,elapsed:performance.now()-start,source:settings.provider==='jev'?'Jev API':'Kev local server',requestedModel:settings.model};
 }
 export const GENERATOR_PROMPT = `You design small educational decision-model experiments. Return ONLY a JSON object with exactly title (string), description (string), state (string), questions (object keyed by lowercase IDs). Each question has type, instructions (string), and optionally criteria. Types: noul = probability of yes, criteria optional {true:string,false:string}; choice = select among criteria object mapping 2–255 labels to string descriptions; score = expected index across criteria array of 2–10 ordered string levels. At least one question. No other fields. These are System One decisions: text context and bounded choices, not prose generation or chain-of-thought. Keep questions independent: they see the same state, not each other's answers. Include an abstain option where useful. Code, not the model, must do arithmetic, enforce permissions and perform actions. Never request keys, fetch URLs or emit HTML/JavaScript. Produce a meaningful state and rubric for the user's idea. The renderer is fixed: input editor, distributions, confidence and threshold. You cannot invent extra UI or code.`;
-export async function generate(idea, settings, signal=AbortSignal.timeout(45000)) {
+export async function generate(idea, settings, signal=AbortSignal.timeout(PROVIDER_TIMEOUT_MS)) {
   text(idea,'Idea'); text(settings.key,'Generator API key'); text(settings.model,'Generator model');
   const claude=settings.provider==='claude';
   const data=await post(providerURL(claude?'claude':'openai',settings,claude?'https://api.anthropic.com/v1/messages':'https://api.openai.com/v1/chat/completions'),claude?{'x-api-key':settings.key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}:{Authorization:`Bearer ${settings.key}`},claude?{model:settings.model,max_tokens:4096,system:GENERATOR_PROMPT,messages:[{role:'user',content:idea}]}:{model:settings.model,messages:[{role:'system',content:GENERATOR_PROMPT},{role:'user',content:idea}],response_format:{type:'json_object'}},signal);
