@@ -5,7 +5,7 @@
  * and JevImageBench v0.1.5 explorer table.
  */
 
-import { gate, loopbackEndpoint, validateAnswers, PROVIDER_TIMEOUT_MS } from './core.js';
+import { gate, loopbackEndpoint, validateAnswers, PROVIDER_TIMEOUT_MS, validateSpec } from './core.js';
 import {
   BENCHMARK_META,
   JEV_IMAGE_BENCH_DATA,
@@ -640,53 +640,21 @@ export const PRESETS = {
 
 /**
  * Validate image decision specification and payload.
+ * Image decisions validate questions and rubrics using core.js validateSpec,
+ * preserving image-specific requirements: imagePayload must be a valid data URL or blob,
+ * and text state is optional since the visual payload supplies context.
  */
 export function validateImageSpec(spec, imagePayload) {
-  if (!spec || typeof spec !== 'object') {
-    throw new Error('Specification must be a JSON object.');
-  }
-  if (typeof spec.title !== 'string' || !spec.title.trim()) {
-    throw new Error('Specification requires a non-empty title string.');
-  }
-  if (!spec.questions || typeof spec.questions !== 'object' || Object.keys(spec.questions).length === 0) {
-    throw new Error('At least one typed question is required.');
-  }
   if (!imagePayload || typeof imagePayload !== 'string' || (!imagePayload.startsWith('data:image/') && !imagePayload.startsWith('blob:'))) {
     throw new Error('A valid image (data URL or blob) must be loaded.');
   }
-  for (const [id, q] of Object.entries(spec.questions)) {
-    // The same three ids core.js:validateSpec refuses explicitly. The character regex still admits
-    // 'constructor' and 'prototype', so without this list the image lab runs a schema the sibling
-    // lab rejects, and every downstream map keyed by the id collides with Object.prototype
-    // instead of holding the caller's own entry.
-    if (!/^[a-z][a-z0-9_]*$/.test(id) || ['constructor', 'prototype', '__proto__'].includes(id)) {
-      throw new Error(`Invalid question ID "${id}": use simple lowercase letters and underscores.`);
-    }
-    if (!['choice', 'score', 'noul'].includes(q.type)) {
-      throw new Error(`Invalid question type for "${id}": must be choice, score, or noul.`);
-    }
-    if (typeof q.instructions !== 'string' || !q.instructions.trim()) {
-      throw new Error(`Question "${id}" requires non-empty instructions.`);
-    }
-    if (q.type === 'choice') {
-      if (!q.criteria || typeof q.criteria !== 'object' || Object.keys(q.criteria).length < 2) {
-        throw new Error(`Choice question "${id}" requires at least 2 named criteria options.`);
-      }
-      // Option labels are caller-supplied keys. core.js keeps them rather than reserving names — a
-      // label only has to be non-empty text — so prototype-named labels are valid options and
-      // canonicalize() below must hold them without touching Object.prototype.
-      for (const label of Object.keys(q.criteria)) {
-        if (!label.trim()) {
-          throw new Error(`Choice question "${id}" has an empty criteria option label.`);
-        }
-      }
-    }
-    if (q.type === 'score') {
-      if (!Array.isArray(q.criteria) || q.criteria.length < 2 || q.criteria.length > 10) {
-        throw new Error(`Score question "${id}" requires 2 to 10 ordered criteria levels.`);
-      }
-    }
+  if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
+    return validateSpec(spec);
   }
+  const withDefaults = { ...spec };
+  if (!Object.hasOwn(spec, 'description')) withDefaults.description = 'Image decision specification';
+  if (!Object.hasOwn(spec, 'state')) withDefaults.state = '(image payload)';
+  validateSpec(withDefaults);
   return true;
 }
 
