@@ -17,7 +17,7 @@ import {
   decideImage,
   renderImageAnswers
 } from '../site/decision-models/image-lab.js';
-import { gate, validateAnswers } from '../site/decision-models/core.js';
+import { gate, validateAnswers, validateSpec } from '../site/decision-models/core.js';
 
 test('JevImageBench v0.1.5: dataset integrity & metadata', () => {
   assert.equal(BENCHMARK_META.name, 'JevImageBench');
@@ -445,7 +445,7 @@ test('Image decision schema validation: reject bad specs and payloads', () => {
       title: '   ',
       questions: { q1: { type: 'noul', instructions: 'Test' } }
     }, validImage);
-  }, /non-empty title/i);
+  }, /Title must be non-empty text/);
 
   // Missing questions
   assert.throws(() => {
@@ -453,7 +453,7 @@ test('Image decision schema validation: reject bad specs and payloads', () => {
       title: 'Title',
       questions: {}
     }, validImage);
-  }, /at least one typed question/i);
+  }, /At least one question is required/);
 
   // Invalid question ID
   assert.throws(() => {
@@ -463,7 +463,7 @@ test('Image decision schema validation: reject bad specs and payloads', () => {
         'Bad-ID!': { type: 'noul', instructions: 'Test' }
       }
     }, validImage);
-  }, /invalid question id/i);
+  }, /Use simple lowercase question IDs/);
 
   // Choice requires >= 2 criteria
   assert.throws(() => {
@@ -473,7 +473,7 @@ test('Image decision schema validation: reject bad specs and payloads', () => {
         pick: { type: 'choice', instructions: 'Choose', criteria: { only_one: 'desc' } }
       }
     }, validImage);
-  }, /at least 2 named criteria/i);
+  }, /Choice requires 2–255 named options/);
 
   // Score requires 2..10 criteria
   assert.throws(() => {
@@ -483,7 +483,7 @@ test('Image decision schema validation: reject bad specs and payloads', () => {
         score: { type: 'score', instructions: 'Score', criteria: ['level 0'] }
       }
     }, validImage);
-  }, /2 to 10 ordered criteria levels/i);
+  }, /Score requires 2–10 ordered levels/);
 });
 
 test('Decision readout formulas and probability distribution properties', async () => {
@@ -622,7 +622,7 @@ test('image lab clears the prior run on JSON, validation, provider and timeout f
     await page.click('#preset-ui');
     await run('Decision complete');
     await page.type('#questions', JSON.stringify({ questions: {} }));
-    await emptyResult('Error: Specification requires a non-empty title string.');
+    await emptyResult('Error: Title must be non-empty text.');
 
     const selectEngine = async value => page.evaluate(v => {
       const select = document.querySelector('#engine');
@@ -1107,7 +1107,7 @@ test('Image lab schema: prototype-named question ids are refused like core.js:va
   );
   assert.throws(
     () => validateImageSpec(protoIdSpec, DUMMY_IMAGE),
-    /invalid question id/i,
+    /Use simple lowercase question IDs/,
     'a __proto__ question id is refused instead of being handed to every id-keyed map downstream',
   );
 
@@ -1118,7 +1118,7 @@ test('Image lab schema: prototype-named question ids are refused like core.js:va
           { title: 'Proto key triage', questions: { [id]: { type: 'noul', instructions: 'Is the path clear?' } } },
           DUMMY_IMAGE,
         ),
-      /invalid question id/i,
+      /Use simple lowercase question IDs/,
       `'${id}' is refused by core.js:validateSpec and must be refused here too`,
     );
   }
@@ -1185,7 +1185,7 @@ test('Image lab schema: choice option labels must be non-empty text, as core.js 
         },
         DUMMY_IMAGE,
       ),
-    /empty criteria option label/i,
+    /Option must be non-empty text/,
   );
 
   assert.doesNotThrow(() =>
@@ -1198,3 +1198,139 @@ test('Image lab schema: choice option labels must be non-empty text, as core.js 
     ),
   );
 });
+
+// learnings-x6p: validateImageSpec delegates to core.js validateSpec, eliminating divergence
+// where validateImageSpec previously accepted specs core.js rejected:
+//   (a) choice question with > 255 options (core: 'Choice requires 2–255 named options in this workbench.')
+//   (b) noul question with criteria keys other than true/false (e.g. {yes, no})
+//   (c) question with unknown extra fields (core: 'Unexpected specification field...')
+//   and checks option descriptions and score levels are non-empty text.
+test('Image lab schema: validateImageSpec rejects divergent cases the same way validateSpec does (learnings-x6p)', () => {
+  const dummyImage = DUMMY_IMAGE;
+  const getError = fn => {
+    let err;
+    assert.throws(() => {
+      try {
+        fn();
+      } catch (e) {
+        err = e;
+        throw e;
+      }
+    });
+    return err;
+  };
+
+  // Case (a): Choice question with 300 options (> 255)
+  const choice300 = {};
+  for (let i = 0; i < 300; i++) choice300[`option_${i}`] = `Description for option ${i}`;
+  const specChoice300 = {
+    title: 'Choice upper bound test',
+    description: 'Test choice options count',
+    state: 'State',
+    questions: {
+      action: {
+        type: 'choice',
+        instructions: 'Choose an option',
+        criteria: choice300
+      }
+    }
+  };
+  const coreErrA = getError(() => validateSpec(specChoice300));
+  const imageErrA = getError(() => validateImageSpec(specChoice300, dummyImage));
+  assert.equal(imageErrA.message, coreErrA.message);
+  assert.match(imageErrA.message, /Choice requires 2–255 named options/);
+
+  // Case (b): Noul question whose criteria keys are {yes, no} instead of {true, false}
+  const specNoulYesNo = {
+    title: 'Noul criteria keys test',
+    description: 'Test noul criteria schema',
+    state: 'State',
+    questions: {
+      is_valid: {
+        type: 'noul',
+        instructions: 'Is this valid?',
+        criteria: { yes: 'It is valid', no: 'It is invalid' }
+      }
+    }
+  };
+  const coreErrB = getError(() => validateSpec(specNoulYesNo));
+  const imageErrB = getError(() => validateImageSpec(specNoulYesNo, dummyImage));
+  assert.equal(imageErrB.message, coreErrB.message);
+  assert.match(imageErrB.message, /Unexpected specification field/);
+
+  // Case (c): Question with an unknown extra field
+  const specExtraField = {
+    title: 'Extra field test',
+    description: 'Test unknown question field rejection',
+    state: 'State',
+    questions: {
+      triage: {
+        type: 'noul',
+        instructions: 'Should we triage?',
+        unexpected_extra_property: true
+      }
+    }
+  };
+  const coreErrC = getError(() => validateSpec(specExtraField));
+  const imageErrC = getError(() => validateImageSpec(specExtraField, dummyImage));
+  assert.equal(imageErrC.message, coreErrC.message);
+  assert.match(imageErrC.message, /Unexpected specification field/);
+
+  // Additional divergences mentioned in review:
+  // Choice option descriptions must be non-empty text
+  const specChoiceEmptyDesc = {
+    title: 'Choice empty desc test',
+    description: 'Test option description non-empty text',
+    state: 'State',
+    questions: {
+      action: {
+        type: 'choice',
+        instructions: 'Choose',
+        criteria: { opt1: 'Valid description', opt2: '   ' }
+      }
+    }
+  };
+  const coreErrDesc = getError(() => validateSpec(specChoiceEmptyDesc));
+  const imageErrDesc = getError(() => validateImageSpec(specChoiceEmptyDesc, dummyImage));
+  assert.equal(imageErrDesc.message, coreErrDesc.message);
+  assert.match(imageErrDesc.message, /Option description must be non-empty text/);
+
+  // Score levels must be non-empty text
+  const specScoreNumericLevel = {
+    title: 'Score level non-text test',
+    description: 'Test score level must be text',
+    state: 'State',
+    questions: {
+      severity: {
+        type: 'score',
+        instructions: 'Rate severity',
+        criteria: ['Low', 2, 'High']
+      }
+    }
+  };
+  const coreErrScore = getError(() => validateSpec(specScoreNumericLevel));
+  const imageErrScore = getError(() => validateImageSpec(specScoreNumericLevel, dummyImage));
+  assert.equal(imageErrScore.message, coreErrScore.message);
+  assert.match(imageErrScore.message, /Score level must be non-empty text/);
+
+  // Positive control: image-specific spec without state or description still succeeds
+  assert.doesNotThrow(() => validateImageSpec({
+    title: 'Image-only spec without state',
+    questions: {
+      q1: { type: 'noul', instructions: 'Is this an image?' }
+    }
+  }, dummyImage));
+
+  // Unknown top-level field rejection
+  assert.throws(
+    () => validateImageSpec({
+      title: 'Extra top-level field',
+      unknownTopLevel: 'invalid',
+      questions: {
+        q1: { type: 'noul', instructions: 'Is this an image?' }
+      }
+    }, dummyImage),
+    /Unexpected specification field/
+  );
+});
+
