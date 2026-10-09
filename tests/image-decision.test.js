@@ -1313,13 +1313,64 @@ test('Image lab schema: validateImageSpec rejects divergent cases the same way v
   assert.equal(imageErrScore.message, coreErrScore.message);
   assert.match(imageErrScore.message, /Score level must be non-empty text/);
 
-  // Positive control: image-specific spec without state or description still succeeds
+  // Case (a): description and/or state omitted -> validateImageSpec accepts (defaults applied)
   assert.doesNotThrow(() => validateImageSpec({
-    title: 'Image-only spec without state',
+    title: 'Image-only spec without state or description',
     questions: {
       q1: { type: 'noul', instructions: 'Is this an image?' }
     }
-  }, dummyImage));
+  }, dummyImage), 'omitting description and state applies image defaults and validates');
+
+  assert.doesNotThrow(() => validateImageSpec({
+    title: 'Omitted state with custom description',
+    description: 'Custom description',
+    questions: {
+      q1: { type: 'noul', instructions: 'Is this an image?' }
+    }
+  }, dummyImage), 'omitting only state applies state default and keeps description');
+
+  assert.doesNotThrow(() => validateImageSpec({
+    title: 'Omitted description with custom state',
+    state: 'Custom state',
+    questions: {
+      q1: { type: 'noul', instructions: 'Is this an image?' }
+    }
+  }, dummyImage), 'omitting only description applies description default and keeps state');
+
+  // Case (b): description: null and state: null (and empty-string variants) -> validateImageSpec rejects exactly as validateSpec does
+  const baseSpec = {
+    title: 'Null/empty field triage',
+    description: 'Valid description',
+    state: 'Valid state',
+    questions: {
+      q1: { type: 'noul', instructions: 'Is this an image?' }
+    }
+  };
+
+  for (const field of ['description', 'state']) {
+    const expectedRegex = new RegExp(`${field === 'description' ? 'Description' : 'State'} must be non-empty text`);
+
+    // null variant: present-but-null must NOT default, must be rejected like core validateSpec
+    const specNull = { ...baseSpec, [field]: null };
+    const coreErrNull = getError(() => validateSpec(specNull));
+    const imageErrNull = getError(() => validateImageSpec(specNull, dummyImage));
+    assert.equal(imageErrNull.message, coreErrNull.message, `${field}: null must be rejected identically to core validateSpec`);
+    assert.match(imageErrNull.message, expectedRegex);
+
+    // empty string variant: present-but-empty must be rejected like core validateSpec
+    const specEmpty = { ...baseSpec, [field]: '' };
+    const coreErrEmpty = getError(() => validateSpec(specEmpty));
+    const imageErrEmpty = getError(() => validateImageSpec(specEmpty, dummyImage));
+    assert.equal(imageErrEmpty.message, coreErrEmpty.message, `${field}: empty string must be rejected identically to core validateSpec`);
+    assert.match(imageErrEmpty.message, expectedRegex);
+
+    // whitespace-only variant
+    const specWhitespace = { ...baseSpec, [field]: '   ' };
+    const coreErrWhitespace = getError(() => validateSpec(specWhitespace));
+    const imageErrWhitespace = getError(() => validateImageSpec(specWhitespace, dummyImage));
+    assert.equal(imageErrWhitespace.message, coreErrWhitespace.message, `${field}: whitespace string must be rejected identically to core validateSpec`);
+    assert.match(imageErrWhitespace.message, expectedRegex);
+  }
 
   // Unknown top-level field rejection
   assert.throws(

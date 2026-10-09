@@ -651,11 +651,10 @@ export function validateImageSpec(spec, imagePayload) {
   if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
     return validateSpec(spec);
   }
-  validateSpec({
-    ...spec,
-    description: spec.description ?? 'Image decision specification',
-    state: spec.state ?? '(image payload)'
-  });
+  const withDefaults = { ...spec };
+  if (!Object.hasOwn(spec, 'description')) withDefaults.description = 'Image decision specification';
+  if (!Object.hasOwn(spec, 'state')) withDefaults.state = '(image payload)';
+  validateSpec(withDefaults);
   return true;
 }
 
