@@ -1039,7 +1039,7 @@ export function setupImageLab() {
       statusEl.textContent = `Preset loaded: ${p.name}. Ready to evaluate.`;
     }
     if (answersEl) answersEl.replaceChildren();
-    if (rawDetails) rawDetails.hidden = true;
+    if (rawDetails) rawDetails.hidden = 'until-found';
     lastResult = null;
   }
 
@@ -1175,7 +1175,7 @@ export function setupImageLab() {
   if (runBtn) {
     runBtn.addEventListener('click', async () => {
       if (answersEl) answersEl.replaceChildren();
-      if (rawDetails) rawDetails.hidden = true;
+      if (rawDetails) rawDetails.hidden = 'until-found';
       lastResult = null;
       let spec;
       try {

@@ -608,7 +608,7 @@ test('image lab clears the prior run on JSON, validation, provider and timeout f
       }));
       assert.equal(state.answers, '', `${state.status}: previous answers must be gone`);
       assert.equal(state.count, 0);
-      assert.equal(state.rawHidden, true);
+      assert.equal(state.rawHidden, 'until-found');
     };
     await run('Decision complete');
     const first = await page.evaluate(() => document.querySelector('#answers').textContent);
@@ -712,7 +712,7 @@ test('image lab cuts off a provider that never answers at the 45s boundary (lear
     assert.equal(state.status, 'Error: Request cancelled or timed out. No automatic retry.');
     assert.equal(state.answers, '', 'a timed-out run must not leave the previous readout on screen');
     assert.equal(state.count, 0);
-    assert.equal(state.rawHidden, true);
+    assert.equal(state.rawHidden, 'until-found');
     assert.equal(state.runDisabled, false, 'the timed-out run must terminate and re-enable the run button');
   } finally {
     if (page) await page.close();
@@ -1547,4 +1547,57 @@ test('image lab: drop zone styles, CSP compliance, keyboard activation, and non-
     server.close();
   }
 });
+
+test('image lab raw request/response panel uses hidden=until-found and is findable before reveal (learnings-eq5)', async () => {
+  const { serve } = await import('../scripts/serve.mjs');
+  const { launch } = await import('./lib/cdp.mjs');
+  const { server, url } = await serve();
+  let page;
+  try {
+    page = await launch();
+    await page.goto(url + 'decision-models/image-lab.html');
+    await page.waitFor(() => document.querySelector('#preview-image')?.src?.startsWith('data:image/'));
+
+    const check = await page.evaluate(() => {
+      const raw = document.getElementById('raw-details');
+      const cs = window.getComputedStyle(raw);
+      const rect = raw.getBoundingClientRect();
+      const isVisuallyHidden = rect.height === 0 || cs.contentVisibility === 'hidden';
+      const hiddenAttr = raw.getAttribute('hidden');
+      const hiddenProp = raw.hidden;
+
+      // In-page text find matches content inside hidden="until-found"
+      const foundInPage = window.find('Request & response JSON');
+
+      // beforematch event is supported and fires when revealed via fragment navigation
+      let beforematchFired = false;
+      raw.addEventListener('beforematch', () => {
+        beforematchFired = true;
+      });
+      location.hash = '#raw-details';
+
+      return {
+        hiddenAttr,
+        hiddenProp,
+        isVisuallyHidden,
+        foundInPage,
+        beforematchFired,
+        hiddenAfterReveal: raw.getAttribute('hidden'),
+        hasBeforematchHandler: 'onbeforematch' in raw
+      };
+    });
+
+    assert.equal(check.hiddenAttr, 'until-found');
+    assert.equal(check.hiddenProp, 'until-found');
+    assert.equal(check.isVisuallyHidden, true);
+    assert.equal(check.foundInPage, true);
+    assert.equal(check.hasBeforematchHandler, true);
+    assert.equal(check.beforematchFired, true);
+    assert.equal(check.hiddenAfterReveal, null);
+  } finally {
+    if (page) await page.close();
+    server.close();
+  }
+});
+
 

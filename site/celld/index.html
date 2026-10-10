@@ -3,12 +3,35 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; worker-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval' 'sha256-2phzosNx8w+h++7mHYusHbKHtqefSndNzTId2r3OEXE='; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; worker-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
   <meta name="referrer" content="no-referrer">
   <title>celld &amp; Durable Object Fleet Architecture: Field Guide &amp; Simulators · Learnings</title>
   <link rel="stylesheet" href="../style.css">
   <link rel="stylesheet" href="./celld.css">
   <meta name="description" content="Complete engineering field guide and interactive simulators for celld (SQLite/LTX cell engine) and Cloudflare Durable Object fleets: S3 CAS ownership, monotonic epoch fencing, fleet vs bucket durability, load balancing, and fleet-wide usage accounting and querying.">
+  <!-- Speculation Rules: sha256 hash in CSP script-src above must be regenerated if this block changes -->
+  <script type="speculationrules">
+  {
+    "prefetch": [
+      {
+        "source": "list",
+        "urls": [
+          "../neural-networks/",
+          "../decision-models/",
+          "../opt-chronicles/"
+        ]
+      }
+    ],
+    "prerender": [
+      {
+        "source": "list",
+        "urls": [
+          "../index.html"
+        ]
+      }
+    ]
+  }
+  </script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
