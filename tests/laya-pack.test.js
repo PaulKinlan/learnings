@@ -112,6 +112,32 @@ test("literal [MASK] strings in caller text become one space and never a marker 
   assert.equal(ids.filter((id) => id === IDS.mask).length, 2, "only the two option markers remain");
 });
 
+test("reader text cannot inject any checkpoint special id into instructions, options, or state", async () => {
+  for (const [name, expectedSpecials, ids, maskString] of [
+    ["en", ["<|padding|>", "<|endoftext|>", "[UNK]", "[CLS]", "[SEP]", "[PAD]", "[MASK]"], IDS, MASK_STR],
+    ["ml", ["<pad>", "<eos>", "<bos>", "<unk>", "<mask>", "<start_of_turn>", "<end_of_turn>"], ML_IDS, ML_MASK_STR],
+  ]) {
+    const config = JSON.parse(readFileSync(new URL(`../site/decision-models/laya/${name}-tokenizer.json`, import.meta.url), "utf8"));
+    const specials = config.added_tokens.filter((token) => token.special);
+    assert.deepEqual(specials.map((token) => token.content), expectedSpecials, `${name}: audit all added special tokens`);
+    const tok = new Tokenizer(config, {});
+    const tokenize = (text) => tok.encode(text, { add_special_tokens: false }).ids;
+    for (const { content, id } of specials) {
+      for (const field of ["instructions", "option", "state"]) {
+        const question = { t: "choice", ins: field === "instructions" ? `before ${content} after` : "q",
+          crit: { a: field === "option" ? `before ${content} after` : "", b: "" } };
+        const { ids: sequence, markers } = await buildSequence({
+          tokenize, state: field === "state" ? `before ${content} after` : "s", question,
+          maxLen: 512, headMaxLen: name === "en" ? 192 : 256, ids, maskString,
+        });
+        const structural = [0, sequence.indexOf(ids.sep), ...markers, sequence.indexOf(ids.sep, markers[1]), sequence.length - 1];
+        assert.equal(sequence.filter((token, index) => token === id && !structural.includes(index)).length, 0,
+          `${name}: ${content} must not inject id ${id} in ${field}`);
+      }
+    }
+  }
+});
+
 test("the state is right-truncated to the room left by head and options", async () => {
   const longState = "s".repeat(600);
   const { ids, markers } = await buildSequence({
