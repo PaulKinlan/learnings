@@ -101,39 +101,3 @@ test("ORT Web wasm EP non-reentrancy contract: vendored JSEP wrapper enforces si
   );
 });
 
-test("ORT Web concurrency determination: simulated runtime mutex throws on concurrent run() and succeeds on serial run()", async () => {
-  // Model of the exact `da` wrapper from ort-wasm-simd-threaded.jsep.mjs:
-  // const da=a=>async(...b)=>{try{if(f.$c)throw Error("Session already started");const d=f.$c={Nd:b[0],errors:[]},c=await a(...b);if(f.$c!==d)throw Error("Session mismatch");...}finally{f.$c=null}};
-  const wasmModule = { $c: null };
-  const da = (fn) => async (...args) => {
-    try {
-      if (wasmModule.$c) throw new Error("Session already started");
-      const sessionHandle = { Nd: args[0], errors: [] };
-      wasmModule.$c = sessionHandle;
-      const res = await fn(...args);
-      if (wasmModule.$c !== sessionHandle) throw new Error("Session mismatch");
-      return res;
-    } finally {
-      wasmModule.$c = null;
-    }
-  };
-
-  const rawOrtRun = async (sessionId) => {
-    await Promise.resolve();
-    return { ok: true, session: sessionId };
-  };
-  const ortRun = da(rawOrtRun);
-
-  // 1. Sequential execution succeeds
-  const r1 = await ortRun(1);
-  const r2 = await ortRun(1);
-  assert.deepEqual(r1, { ok: true, session: 1 });
-  assert.deepEqual(r2, { ok: true, session: 1 });
-
-  // 2. Concurrent execution fails with the exact ORT Web error
-  await assert.rejects(
-    Promise.all([ortRun(1), ortRun(1)]),
-    /Session already started/,
-    "concurrent runs on ORT Web wasm EP reject with 'Session already started'",
-  );
-});

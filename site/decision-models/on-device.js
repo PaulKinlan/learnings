@@ -275,7 +275,7 @@ export async function evaluateExercises(exercises, decideFn, onResult) {
   return results;
 }
 
-export async function runExercises() {
+async function runExercises() {
   const target = $("exercises");
   target.replaceChildren();
   passed = 0;
