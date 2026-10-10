@@ -97,10 +97,7 @@ export async function downloadArtifact(art, targetDir, tempDir, fetchFn = fetch)
     console.log(`[stale] ${art.file} hash mismatch at ${dest}, re-downloading...`);
   }
 
-  const limit =
-    art.maxBytes ??
-    KEV_MAX_BYTES[art.file] ??
-    (art.file === "onnx/model_q4f16.onnx" ? 10 * 1024 * 1024 : KEV_DEFAULT_MAX_BYTES);
+  const limit = art.maxBytes ?? KEV_MAX_BYTES[art.file] ?? KEV_DEFAULT_MAX_BYTES;
 
   const tempFile = join(tempDir, `${art.file.replace(/\//g, "_")}-${randomUUID()}.part`);
   let tempFd;
@@ -230,6 +227,18 @@ export async function fetchKevFixtures({
     } catch {}
   };
   process.on("exit", cleanup);
+  // 'exit' does not fire on default signal termination; clean up and re-exit
+  // with the conventional signal exit codes so kev-fetch-* dirs never leak.
+  const onSigint = () => {
+    cleanup();
+    process.exit(130);
+  };
+  const onSigterm = () => {
+    cleanup();
+    process.exit(143);
+  };
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
 
   try {
     for (const art of artifacts) {
@@ -237,6 +246,8 @@ export async function fetchKevFixtures({
     }
     console.log("All Kev validation fixtures ready.");
   } finally {
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
     process.off("exit", cleanup);
     cleanup();
   }

@@ -14,6 +14,7 @@ import {
   symlinkSync,
   existsSync,
   statSync,
+  lstatSync,
   readdirSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -77,6 +78,60 @@ test("symlink planted at destination is not followed and sentinel file is untouc
       readFileSync(sentinelFile, "utf8"),
       secretContent,
       "sentinel file content must remain completely untouched",
+    );
+  } finally {
+    rmSync(targetDir, { recursive: true, force: true });
+    rmSync(tempDir, { recursive: true, force: true });
+    rmSync(sentinelDir, { recursive: true, force: true });
+  }
+});
+
+test("symlink planted mid-download at destination is refused at promotion and sentinel is untouched", async () => {
+  const targetDir = mkdtempSync(join(tmpdir(), "kev-test-target-"));
+  const tempDir = mkdtempSync(join(tmpdir(), "kev-test-temp-"));
+  const sentinelDir = mkdtempSync(join(tmpdir(), "kev-test-sentinel-"));
+  const sentinelFile = join(sentinelDir, "victim.txt");
+  const secretContent = "HIGHLY_CONFIDENTIAL_DO_NOT_OVERWRITE";
+  writeFileSync(sentinelFile, secretContent);
+
+  const destFile = join(targetDir, "config.json");
+
+  const dummyBytes = new Uint8Array([1, 2, 3, 4]);
+  const sha = createHash("sha256").update(dummyBytes).digest("hex");
+  const art = {
+    file: "config.json",
+    url: "https://mock.invalid/config.json",
+    sha,
+    maxBytes: 1024,
+  };
+
+  // TOCTOU: the destination passes the initial check, then the symlink is
+  // planted during the fetch, before the promotion-time lstat / O_NOFOLLOW open.
+  const mockFetch = async () => {
+    symlinkSync(sentinelFile, destFile);
+    return new Response(dummyBytes);
+  };
+
+  try {
+    await assert.rejects(
+      downloadArtifact(art, targetDir, tempDir, mockFetch),
+      /Refusing to follow symlink at destination/,
+      "promotion must refuse a symlink planted after the initial check",
+    );
+
+    assert.equal(
+      readFileSync(sentinelFile, "utf8"),
+      secretContent,
+      "sentinel file content must remain completely untouched",
+    );
+    assert.ok(
+      lstatSync(destFile).isSymbolicLink(),
+      "planted symlink itself was not replaced or removed",
+    );
+    assert.equal(
+      readdirSync(tempDir).length,
+      0,
+      "temporary part file was cleaned up on refusal",
     );
   } finally {
     rmSync(targetDir, { recursive: true, force: true });
