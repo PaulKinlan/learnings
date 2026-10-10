@@ -14,6 +14,19 @@ export const QTYPE_ONEHOT = { choice: [1, 0, 0], score: [0, 1, 0], noul: [0, 0, 
 export const ENGLISH_MASK_STRING = "[MASK]";
 export const ENGLISH_SPECIAL_IDS = { cls: 50281, sep: 50282, pad: 50283, mask: 50284, unk: 50280 };
 
+// All special:true literals in the vendored en-tokenizer.json and ml-tokenizer.json
+// added_tokens tables. The selected checkpoint's mask is replaced first, as before.
+const READER_SPECIAL_STRINGS = [
+  "<|padding|>", "<|endoftext|>", "[UNK]", "[CLS]", "[SEP]", "[PAD]", "[MASK]",
+  "<pad>", "<eos>", "<bos>", "<unk>", "<mask>", "<start_of_turn>", "<end_of_turn>",
+];
+
+function neutralizeReaderText(text, maskString) {
+  let safe = String(text).replaceAll(maskString, " ");
+  for (const special of READER_SPECIAL_STRINGS) safe = safe.replaceAll(special, " ");
+  return safe;
+}
+
 /** Python's json.dumps(value, ensure_ascii=False, separators=(", ", ": ")) — the spacing
  * matters: the graph was trained on Python-rendered text, and a compact JS stringify is a
  * different string. Float formatting follows JS Number, not Python repr (noted limitation:
@@ -97,15 +110,15 @@ export async function buildSequence({ tokenize, state, question, maxLen, headMax
   if (order.length !== opts.length || new Set(order).size !== order.length)
     throw new Error("option_order must be a permutation of the options");
 
-  // §B.3: literal mask strings in the instructions become one space; never trim or collapse.
-  const ins = String(q.ins).replaceAll(maskString, " ");
+  // §B.3: literal mask strings become one space; all other special literals are also inert.
+  const ins = neutralizeReaderText(q.ins, maskString);
   let headIds = await tokenize(`${q.t} question: ${ins}`);
 
-  // §B.4: mask string -> space, ONE leading ASCII space, at most 48 text tokens per option,
+  // §B.4: special literals -> space, ONE leading ASCII space, at most 48 text tokens per option,
   // with the integer mask id prepended (so an unsqueezed option occupies at most 49 slots).
   let optIds = [];
   for (const i of order) {
-    optIds.push([ids.mask, ...(await tokenize(" " + opts[i].replaceAll(maskString, " "))).slice(0, 48)]);
+    optIds.push([ids.mask, ...(await tokenize(" " + neutralizeReaderText(opts[i], maskString))).slice(0, 48)]);
   }
 
   // §B.5: the squeezing rule — only when the head budget is blown.
@@ -127,8 +140,8 @@ export async function buildSequence({ tokenize, state, question, maxLen, headMax
   }
   out.push(ids.sep);
 
-  // §B.7: the state is serialized, mask strings spaced, tokenized without special tokens.
-  const stateIds = await tokenize(serializeState(state).replaceAll(maskString, " "));
+  // §B.7: the state is serialized, special literals spaced, tokenized without special tokens.
+  const stateIds = await tokenize(neutralizeReaderText(serializeState(state), maskString));
 
   // §B.8: right-truncate the state to the remaining room, append the final [SEP], slice to N.
   const room = Math.max(0, maxLen - out.length - 1);
