@@ -349,9 +349,13 @@
   place-items: center;
 }
 
+/* Single source of truth for the heat-N palette: used by both the app.js heatmaps
+   (.attn-table, .mini-cell) and the widgets.js attention playground (.attention-table).
+   Every page that renders heat-N cells loads this file, so no other stylesheet may
+   redefine these classes. Text colours meet WCAG AA (>=4.5:1) at 0.82rem. */
 .heat-0 { background: #1e293b; color: #94a3b8; }
 .heat-1 { background: #0369a1; color: #f8fafc; }
-.heat-2 { background: #0284c7; color: #f8fafc; }
+.heat-2 { background: #0284c7; color: #0b0f19; }
 .heat-3 { background: #38bdf8; color: #0b0f19; }
 .heat-4 { background: #bae6fd; color: #0b0f19; }
 .heat-neg { background: #881337; color: #fecdd3; }
