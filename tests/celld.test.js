@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   CasEpochSimulator,
   simulateLoadBalancing,
@@ -57,4 +58,22 @@ test('celld calculateFleetAccounting shows >98% cross-DO RPC reduction with cred
   });
   assert.ok(res.naiveDroppedPct > 85, 'Naive central BillingDO should bottleneck at 10,000 req/s');
   assert.ok(res.rpcReductionPct > 98, `Expected >98% RPC reduction, got ${res.rpcReductionPct}%`);
+});
+
+test('celld index.html defines valid speculationrules for prefetching siblings and prerendering hub (learnings-bjx)', () => {
+  const htmlPath = new URL('../site/celld/index.html', import.meta.url);
+  const celldHtml = readFileSync(htmlPath, 'utf8');
+  const specRulesMatch = celldHtml.match(/<script type="speculationrules">([\s\S]*?)<\/script>/);
+  assert.ok(specRulesMatch, 'speculationrules script block must exist in site/celld/index.html');
+  const rules = JSON.parse(specRulesMatch[1]);
+  assert.ok(Array.isArray(rules.prefetch), 'rules must declare prefetch rules');
+  assert.ok(Array.isArray(rules.prerender), 'rules must declare prerender rules');
+  assert.equal(rules.prefetch[0].source, 'list');
+  assert.deepEqual(rules.prefetch[0].urls, [
+    '../neural-networks/',
+    '../decision-models/',
+    '../opt-chronicles/'
+  ]);
+  assert.equal(rules.prerender[0].source, 'list');
+  assert.deepEqual(rules.prerender[0].urls, ['../index.html']);
 });
