@@ -1385,3 +1385,166 @@ test('Image lab schema: validateImageSpec rejects divergent cases the same way v
   );
 });
 
+test('image lab: drop zone styles, CSP compliance, keyboard activation, and non-image rejection (learnings-2w9, learnings-ae0, learnings-1ee)', async () => {
+  const { serve } = await import('../scripts/serve.mjs');
+  const { launch } = await import('./lib/cdp.mjs');
+  const { server, url } = await serve();
+  let page;
+  try {
+    page = await launch();
+    await page.send('Page.addScriptToEvaluateOnNewDocument', {
+      source: `
+        window.__cspViolations = [];
+        addEventListener('securitypolicyviolation', e => {
+          window.__cspViolations.push({
+            directive: e.violatedDirective,
+            blockedURI: e.blockedURI
+          });
+        });
+      `
+    });
+
+    await page.goto(url + 'decision-models/image-lab.html');
+    await page.waitFor(() => document.querySelector('#preview-image').src.startsWith('data:image/'));
+
+    // 1. learnings-2w9: CSP compliance, file input hidden from drop zone, and migrated styles computed values
+    const violations = await page.evaluate(() => window.__cspViolations);
+    assert.equal(violations.length, 0, `Expected 0 CSP violations, got: ${JSON.stringify(violations)}`);
+
+    const computedStyles = await page.evaluate(() => {
+      const get = sel => window.getComputedStyle(document.querySelector(sel));
+      return {
+        settingsHeadingMarginTop: get('#settings-heading').marginTop,
+        engineNoticeMarginTop: get('#engine-notice').marginTop,
+        modelNameLabelMarginTop: get('.model-name-label').marginTop,
+        imageFileInputDisplay: get('#image-file').display,
+        questionsMinHeight: get('#questions').minHeight,
+        benchmarkMarginTop: get('#benchmark').marginTop,
+        benchSettingsMarginTop: get('.bench-settings').marginTop,
+        benchSettingsMarginBottom: get('.bench-settings').marginBottom,
+        benchCountMarginTop: get('#bench-count').marginTop,
+        labFooterLinksMarginTop: get('.lab-footer-links').marginTop
+      };
+    });
+    assert.equal(computedStyles.settingsHeadingMarginTop, '0px', 'settings-heading marginTop must be 0px');
+    assert.equal(computedStyles.engineNoticeMarginTop, '9.6px', 'engine-notice marginTop must be 0.6rem (9.6px)');
+    assert.equal(computedStyles.modelNameLabelMarginTop, '6.4px', 'model-name-label marginTop must be 0.4rem (6.4px)');
+    assert.equal(computedStyles.imageFileInputDisplay, 'none', 'image-file display must be none');
+    assert.equal(computedStyles.questionsMinHeight, '224px', 'questions textarea minHeight must be 14rem (224px), not overridden by textarea.code 18rem');
+    assert.equal(computedStyles.benchmarkMarginTop, '64px', 'benchmark section marginTop must be 4rem (64px)');
+    assert.equal(computedStyles.benchSettingsMarginTop, '24px', 'bench-settings marginTop must be 1.5rem (24px)');
+    assert.equal(computedStyles.benchSettingsMarginBottom, '24px', 'bench-settings marginBottom must be 1.5rem (24px)');
+    assert.equal(computedStyles.benchCountMarginTop, '12.8px', 'bench-count marginTop must be 0.8rem (12.8px)');
+    assert.equal(computedStyles.labFooterLinksMarginTop, '48px', 'lab-footer-links marginTop must be 3rem (48px)');
+
+    const measurements1280 = await page.evaluate(() => {
+      const input = document.querySelector('#image-file');
+      const dropZone = document.querySelector('#drop-zone');
+      const inputRect = input.getBoundingClientRect();
+      const dropRect = dropZone.getBoundingClientRect();
+      return {
+        inputDisplay: window.getComputedStyle(input).display,
+        inputWidth: inputRect.width,
+        inputHeight: inputRect.height,
+        dropBorder: window.getComputedStyle(dropZone).borderStyle
+      };
+    });
+    assert.equal(measurements1280.inputDisplay, 'none');
+    assert.equal(measurements1280.inputWidth, 0);
+    assert.equal(measurements1280.inputHeight, 0);
+    assert.equal(measurements1280.dropBorder, 'dashed');
+
+    // 390px mobile check
+    await page.emulateViewport({ width: 390, height: 844, mobile: true, scale: 1 });
+    const measurements390 = await page.evaluate(() => {
+      const input = document.querySelector('#image-file');
+      const inputRect = input.getBoundingClientRect();
+      return {
+        inputDisplay: window.getComputedStyle(input).display,
+        inputWidth: inputRect.width,
+        inputHeight: inputRect.height
+      };
+    });
+    assert.equal(measurements390.inputDisplay, 'none');
+    assert.equal(measurements390.inputWidth, 0);
+    assert.equal(measurements390.inputHeight, 0);
+
+    // 2. learnings-ae0: Keyboard activation on role="button" drop zone
+    await page.emulateViewport({ width: 1280, height: 900, mobile: false, scale: 1 });
+    const keyResults = await page.evaluate(() => {
+      const dropZone = document.querySelector('#drop-zone');
+      const input = document.querySelector('#image-file');
+      let clicks = 0;
+      input.addEventListener('click', e => {
+        clicks++;
+        e.preventDefault();
+      });
+
+      const enterEv = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+      dropZone.dispatchEvent(enterEv);
+      const afterEnter = clicks;
+
+      const spaceEv = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
+      dropZone.dispatchEvent(spaceEv);
+      const afterSpace = clicks;
+      const spacePrevented = spaceEv.defaultPrevented;
+
+      const escEv = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      dropZone.dispatchEvent(escEv);
+      const afterEsc = clicks;
+
+      return { afterEnter, afterSpace, afterEsc, spacePrevented };
+    });
+    assert.equal(keyResults.afterEnter, 1, 'Enter key must trigger file input click');
+    assert.equal(keyResults.afterSpace, 2, 'Space key must trigger file input click');
+    assert.equal(keyResults.afterEsc, 2, 'Other keys must not trigger file input click');
+    assert.equal(keyResults.spacePrevented, true, 'Space keydown must prevent default scrolling');
+
+    // 3. learnings-1ee: Non-image file handling and clearing
+    const nonImageInputStatus = await page.evaluate(() => {
+      const status = document.querySelector('#status');
+      const input = document.querySelector('#image-file');
+      const dt = new DataTransfer();
+      dt.items.add(new File(['data'], 'test.txt', { type: 'text/plain' }));
+      input.files = dt.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return status.textContent;
+    });
+    assert.match(nonImageInputStatus, /test\.txt.*is not an image/i);
+
+    // Choosing a valid image clears the error
+    await page.evaluate(() => {
+      const input = document.querySelector('#image-file');
+      const dt = new DataTransfer();
+      dt.items.add(new File(['fake-png-bytes'], 'valid.png', { type: 'image/png' }));
+      input.files = dt.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.waitFor(() => document.querySelector('#status').textContent.includes('valid.png'));
+    const validStatus = await page.evaluate(() => document.querySelector('#status').textContent);
+    assert.match(validStatus, /valid\.png/);
+    assert.doesNotMatch(validStatus, /not an image/);
+
+    // Dropping a non-image file shows error
+    const nonImageDropStatus = await page.evaluate(() => {
+      const status = document.querySelector('#status');
+      const dropZone = document.querySelector('#drop-zone');
+      const dt = new DataTransfer();
+      dt.items.add(new File(['pdf'], 'doc.pdf', { type: 'application/pdf' }));
+      const dropEvent = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt });
+      dropZone.dispatchEvent(dropEvent);
+      return status.textContent;
+    });
+    assert.match(nonImageDropStatus, /doc\.pdf.*is not an image/i);
+
+    // Presets clear the error
+    await page.click('#preset-ui');
+    const presetStatus = await page.evaluate(() => document.querySelector('#status').textContent);
+    assert.match(presetStatus, /Preset loaded/);
+    assert.doesNotMatch(presetStatus, /not an image/);
+  } finally {
+    if (page) await page.close();
+    server.close();
+  }
+});
+

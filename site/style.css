@@ -11,3 +11,13 @@
 .pill-speed{background:#e0f2fe;color:#0369a1}
 .pill-cost{background:#fef3c7;color:#92400e}
 .highlight-row{background:#f8fafc;font-weight:550}
+.drop-zone input[type=file],.drop-zone-input,#image-file{display:none}
+.settings-heading,#settings-heading{margin-top:0}
+.engine-notice,#engine-notice{margin-top:.6rem}
+.model-name-label{margin-top:.4rem}
+textarea.questions-code,textarea.code.questions-code{min-height:14rem}
+.benchmark-section,#benchmark{margin-top:4rem}
+.bench-settings{margin:1.5rem 0}
+.bench-count,#bench-count{margin-top:.8rem}
+.lab-footer-links{margin-top:3rem}
+
