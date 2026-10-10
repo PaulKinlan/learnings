@@ -1407,9 +1407,35 @@ test('image lab: drop zone styles, CSP compliance, keyboard activation, and non-
     await page.goto(url + 'decision-models/image-lab.html');
     await page.waitFor(() => document.querySelector('#preview-image').src.startsWith('data:image/'));
 
-    // 1. learnings-2w9: CSP compliance and file input hidden from drop zone
+    // 1. learnings-2w9: CSP compliance, file input hidden from drop zone, and migrated styles computed values
     const violations = await page.evaluate(() => window.__cspViolations);
     assert.equal(violations.length, 0, `Expected 0 CSP violations, got: ${JSON.stringify(violations)}`);
+
+    const computedStyles = await page.evaluate(() => {
+      const get = sel => window.getComputedStyle(document.querySelector(sel));
+      return {
+        settingsHeadingMarginTop: get('#settings-heading').marginTop,
+        engineNoticeMarginTop: get('#engine-notice').marginTop,
+        modelNameLabelMarginTop: get('.model-name-label').marginTop,
+        imageFileInputDisplay: get('#image-file').display,
+        questionsMinHeight: get('#questions').minHeight,
+        benchmarkMarginTop: get('#benchmark').marginTop,
+        benchSettingsMarginTop: get('.bench-settings').marginTop,
+        benchSettingsMarginBottom: get('.bench-settings').marginBottom,
+        benchCountMarginTop: get('#bench-count').marginTop,
+        labFooterLinksMarginTop: get('.lab-footer-links').marginTop
+      };
+    });
+    assert.equal(computedStyles.settingsHeadingMarginTop, '0px', 'settings-heading marginTop must be 0px');
+    assert.equal(computedStyles.engineNoticeMarginTop, '9.6px', 'engine-notice marginTop must be 0.6rem (9.6px)');
+    assert.equal(computedStyles.modelNameLabelMarginTop, '6.4px', 'model-name-label marginTop must be 0.4rem (6.4px)');
+    assert.equal(computedStyles.imageFileInputDisplay, 'none', 'image-file display must be none');
+    assert.equal(computedStyles.questionsMinHeight, '224px', 'questions textarea minHeight must be 14rem (224px), not overridden by textarea.code 18rem');
+    assert.equal(computedStyles.benchmarkMarginTop, '64px', 'benchmark section marginTop must be 4rem (64px)');
+    assert.equal(computedStyles.benchSettingsMarginTop, '24px', 'bench-settings marginTop must be 1.5rem (24px)');
+    assert.equal(computedStyles.benchSettingsMarginBottom, '24px', 'bench-settings marginBottom must be 1.5rem (24px)');
+    assert.equal(computedStyles.benchCountMarginTop, '12.8px', 'bench-count marginTop must be 0.8rem (12.8px)');
+    assert.equal(computedStyles.labFooterLinksMarginTop, '48px', 'lab-footer-links marginTop must be 3rem (48px)');
 
     const measurements1280 = await page.evaluate(() => {
       const input = document.querySelector('#image-file');

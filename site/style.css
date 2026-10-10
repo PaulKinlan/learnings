@@ -15,7 +15,7 @@
 .settings-heading,#settings-heading{margin-top:0}
 .engine-notice,#engine-notice{margin-top:.6rem}
 .model-name-label{margin-top:.4rem}
-.questions-code{min-height:14rem}
+textarea.questions-code,textarea.code.questions-code{min-height:14rem}
 .benchmark-section,#benchmark{margin-top:4rem}
 .bench-settings{margin:1.5rem 0}
 .bench-count,#bench-count{margin-top:.8rem}
