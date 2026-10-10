@@ -334,14 +334,14 @@ function attention(el) {
   const V = [[0, 1], [2, 0], [-1, 0], [0, 2], [0, 1], [1, 3]];
   const ui = setup(el, [
     h('h3', 'Who attends to whom?'),
-    h('p', 'Hand-authored 2D Q, K and V vectors, not a trained model. Each row sums to 1. Select a query token; hover, focus or click a cell for its exact dot product and probability. Column numbers distinguish “The” from “the”.'),
+    h('p', 'Hand-authored 2D Q, K and V vectors, not a trained model. Each row sums to 1. Select a query token; focus, click or move between cells with the arrow keys for its exact dot product and probability. Column numbers distinguish “The” from “the”.'),
     h('div', '', 'controls', {}, [
       select('token', 'Query token', tokens.map((t, i) => [i, `${i + 1}: ${t}`])),
       select('mask', 'Attention mask', [['full', 'Bidirectional'], ['causal', 'Causal (past and self only)']])
     ]),
     h('pre', '', '', {'data-vectors': ''}),
     h('div', '', 'table-scroll', {}, [
-      h('table', '', 'attention-table', {'data-heatmap': ''})
+      h('table', '', 'attention-table', {'data-heatmap': '', role: 'grid', 'aria-label': 'Attention weights', 'aria-rowcount': String(tokens.length + 1), 'aria-colcount': String(tokens.length + 1)})
     ]),
     readout()
   ]);
@@ -354,13 +354,40 @@ function attention(el) {
     ['Q \\ K', ...tokens.map((t, i) => `${i + 1} ${t}`)].forEach(t => { const th = document.createElement('th'); th.scope = 'col'; th.textContent = t; head.append(th); });
     const body = table.createTBody();
     const describe = (i, j) => ui.status(`${tokens[i]} (${i + 1}) → ${tokens[j]} (${j + 1}): Q·K = ${dot(Q[i], K[j])}; /√2 = ${fmt(dot(Q[i], K[j]) / Math.sqrt(2))}; ${a.scores[i][j] === -Infinity ? 'masked to −∞; ' : ''}softmax weight = ${fmt(a.weights[i][j])}. V = [${V[j]}]; weighted contribution = [${V[j].map(v => fmt(v * a.weights[i][j]))}].`);
+    // One tab stop for the whole 6 × 6 grid: roving tabindex keeps only the active cell in the
+    // tab order, and the arrow keys move focus (and the status readout) between cells.
+    const cells = [];
+    let current = { i: selected, j: selected };
+    const rove = () => cells.forEach((cell, k) => { cell.tabIndex = k === current.i * tokens.length + current.j ? 0 : -1; });
+    const move = (i, j) => {
+      if (i < 0 || j < 0 || i >= tokens.length || j >= tokens.length) return;
+      current = { i, j };
+      rove();
+      cells[i * tokens.length + j].focus();
+    };
     tokens.forEach((t, i) => {
       const tr = body.insertRow(); tr.classList.toggle('selected-query', i === selected);
       const th = document.createElement('th'); th.scope = 'row'; th.textContent = `${i + 1} ${t}`; tr.append(th);
       tokens.forEach((_, j) => {
         const td = tr.insertCell(), b = document.createElement('button'); b.type = 'button'; b.className = `heat-${Math.min(4, Math.floor(a.weights[i][j] * 5))}`;
         b.textContent = a.weights[i][j].toFixed(3); b.setAttribute('aria-label', `Query ${i + 1} ${t}, key ${j + 1} ${tokens[j]}: ${b.textContent}`);
-        ['pointerenter', 'focus', 'click'].forEach(event => b.addEventListener(event, () => describe(i, j))); td.append(b);
+        b.tabIndex = i === current.i && j === current.j ? 0 : -1;
+        // Activation (click) and keyboard focus update the live region; plain mouse hover does not.
+        b.addEventListener('click', () => { current = { i, j }; rove(); b.focus(); });
+        b.addEventListener('focus', () => { current = { i, j }; rove(); describe(i, j); });
+        b.addEventListener('keydown', ev => {
+          let ni = i, nj = j;
+          if (ev.key === 'ArrowDown') ni = i + 1;
+          else if (ev.key === 'ArrowUp') ni = i - 1;
+          else if (ev.key === 'ArrowRight') nj = j + 1;
+          else if (ev.key === 'ArrowLeft') nj = j - 1;
+          else if (ev.key === 'Home') nj = 0;
+          else if (ev.key === 'End') nj = tokens.length - 1;
+          else return;
+          ev.preventDefault();
+          move(ni, nj);
+        });
+        cells.push(b); td.append(b);
       });
     }); describe(selected, selected);
   }
