@@ -206,7 +206,50 @@ test("Classifier API: classify() dispatches independent question decisions concu
   classifier.destroy();
 });
 
-// learnings-aak: both accumulators in classifier-api.js are keyed by caller-supplied question ids,
+// learnings-0g3 (review follow-up): abort must be observed after the concurrent decisions
+// settle too. decide() is not abortable, so an abort that fires while decisions are in flight
+// cannot cancel them — but classify() must still reject with AbortError rather than return
+// results computed after the caller asked to stop.
+test("Classifier API: classify() rejects when the signal aborts while decisions are in flight (learnings-0g3)", async () => {
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const gatedSession = {
+    window: 512,
+    encode: (text) => text.split(/\s+/),
+    async decide(state, question) {
+      await gate; // stay pending until released, so the abort fires mid-flight
+      return { answer: { type: "noul", noul: 0.85, confidence: 0.7 }, tokens: 1, markers: 1 };
+    },
+  };
+  const questions = [{ id: "is_urgent", type: "binary", prompt: "Urgent?" }];
+  const classifier = new Classifier(gatedSession, { questions }, toLayaQuestions(questions, null));
+
+  // Abort before the call: the dispatch-time check rejects immediately.
+  const alreadyAborted = new AbortController();
+  alreadyAborted.abort();
+  await assert.rejects(
+    () => classifier.classify("state", { signal: alreadyAborted.signal }),
+    (err) => err.name === "AbortError",
+  );
+
+  // Abort mid-flight: dispatch succeeds, decisions stay pending on the gate, then the signal
+  // aborts and the gate is released. The post-settle check must reject, not resolve.
+  const controller = new AbortController();
+  const pending = classifier.classify("state", { signal: controller.signal });
+  await Promise.resolve(); // let the dispatch reach the in-flight await
+  controller.abort();
+  release();
+
+  await assert.rejects(() => pending, (err) => {
+    assert.equal(controller.signal.aborted, true, "the signal must be aborted");
+    assert.equal(err.name, "AbortError", "a mid-flight abort must surface as an AbortError");
+    return true;
+  });
+
+  classifier.destroy();
+});
 // so both are null-prototype maps. `__proto__` is a valid id as far as create()'s validation goes
 // (it checks only that the id is a non-empty string), and the playground reaches create() with the
 // demo-5 schema textarea's JSON.parse output and no id validation in front of it.

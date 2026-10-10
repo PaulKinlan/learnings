@@ -283,6 +283,11 @@ export class Classifier {
       }),
     );
 
+    // decide() is not abortable, so an abort that fires while the decisions are in flight
+    // cannot cancel them — but it must still fail the call. Re-check after Promise.all settles
+    // so a mid-flight abort rejects with AbortError instead of returning already-stale results.
+    signal?.throwIfAborted();
+
     // Fold back in the caller's question order, not completion order, so a slower question can
     // never reorder the returned map. If one decide() rejects, Promise.all rejects with that
     // error before `results` is returned; the local map is discarded and the other in-flight
