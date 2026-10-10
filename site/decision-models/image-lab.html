@@ -34,7 +34,7 @@
 
     <!-- Lab Engine & Gate Settings -->
     <section class="settings" aria-labelledby="settings-heading">
-      <h2 id="settings-heading" style="margin-top:0">Decision Engine & Gate Policy</h2>
+      <h2 id="settings-heading" class="settings-heading">Decision Engine & Gate Policy</h2>
       <div class="fields">
         <div>
           <label for="engine">Vision decision engine</label>
@@ -43,7 +43,7 @@
             <option value="local">Local Vision Decision Server (loopback: 8009)</option>
             <option value="api">TypeSafe-hosted multimodal adapter (api.typesafe.ai)</option>
           </select>
-          <div id="engine-notice" class="notice" style="margin-top:.6rem">
+          <div id="engine-notice" class="notice engine-notice">
             <strong>Notice: UI and schema validation simulation.</strong> Connect a local vision server (e.g. llama.cpp / vLLM / Kev serve) or multimodal API endpoint below to run actual model weights.
           </div>
         </div>
@@ -54,7 +54,7 @@
         <div id="api-field" hidden>
           <label for="api-key">TypeSafe API key (memory only)</label>
           <input id="api-key" type="password" autocomplete="off" spellcheck="false">
-          <label for="model-name" style="margin-top:.4rem">Model ID (informational — changing it does not change the recipient: api.typesafe.ai/v1/systemone)</label>
+          <label for="model-name" class="model-name-label">Model ID (informational — changing it does not change the recipient: api.typesafe.ai/v1/systemone)</label>
           <input id="model-name" value="Imajev-4B" autocomplete="off">
         </div>
         <div>
@@ -81,7 +81,7 @@
 
         <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-label="Drop image file here or click to select">
           <strong>Drag &amp; drop an image here</strong>, click to browse, or paste directly with <code>Ctrl+V</code>
-          <input type="file" id="image-file" accept="image/*" style="display:none">
+          <input type="file" id="image-file" class="drop-zone-input" accept="image/*">
         </div>
 
         <div class="preview-wrap">
@@ -90,7 +90,7 @@
         <p id="image-meta" class="small"></p>
 
         <label for="questions">Typed questions schema (editable JSON)</label>
-        <textarea id="questions" class="code" spellcheck="false" style="min-height:14rem"></textarea>
+        <textarea id="questions" class="code questions-code" spellcheck="false"></textarea>
 
         <div class="actions">
           <button id="run-decision" type="button">Run vision decision</button>
@@ -112,11 +112,11 @@
     </div>
 
     <!-- JevImageBench Explorer Table Section -->
-    <section id="benchmark" style="margin-top:4rem">
+    <section id="benchmark" class="benchmark-section">
       <h2>JevImageBench v0.1.5: 50 Vision Decision Systems Ranked</h2>
       <p>Independent benchmark data from <a href="https://benchmarkheaven.com/image-jev-bench" target="_blank" rel="noreferrer noopener">benchmarkheaven.com/image-jev-bench</a> evaluating 50 vision models on bounded multimodal decision tasks across speed, cost, intelligence, and calibration.</p>
 
-      <div class="settings" style="margin:1.5rem 0">
+      <div class="settings bench-settings">
         <div class="fields">
           <div>
             <label for="bench-search">Search models or base backbones</label>
@@ -150,13 +150,13 @@
             </select>
           </div>
         </div>
-        <p id="bench-count" class="small" style="margin-top:.8rem"></p>
+        <p id="bench-count" class="small bench-count"></p>
       </div>
 
       <div id="bench-table-container" class="table-scroll"></div>
     </section>
 
-    <p style="margin-top:3rem"><a href="catalogue.html">View use-case catalogue</a> · <a href="index.html">Read the decision models report</a> · <a href="on-device.html">Run text deciders on-device</a></p>
+    <p class="lab-footer-links"><a href="catalogue.html">View use-case catalogue</a> · <a href="index.html">Read the decision models report</a> · <a href="on-device.html">Run text deciders on-device</a></p>
   </main>
 
   <footer>

@@ -1067,17 +1067,27 @@ export function setupImageLab() {
     });
     dropZone.addEventListener('drop', e => {
       const file = e.dataTransfer?.files?.[0];
-      if (file && file.type.startsWith('image/')) {
+      if (!file) return;
+      if (file.type.startsWith('image/')) {
         const reader = new FileReader();
         reader.onload = ev => {
           loadImagePayload(ev.target.result, `Dropped: ${file.name}`);
           if (statusEl) statusEl.textContent = `Custom image dropped: ${file.name}.`;
         };
         reader.readAsDataURL(file);
+      } else {
+        const name = file.name ? `File "${file.name}"` : 'Selected file';
+        if (statusEl) statusEl.textContent = `${name} is not an image. Please select an image file.`;
       }
     });
     dropZone.addEventListener('click', () => {
       fileInput?.click();
+    });
+    dropZone.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        if (e.key === ' ') e.preventDefault();
+        fileInput?.click();
+      }
     });
   }
 
@@ -1085,13 +1095,18 @@ export function setupImageLab() {
   if (fileInput) {
     fileInput.addEventListener('change', () => {
       const file = fileInput.files?.[0];
-      if (file && file.type.startsWith('image/')) {
+      if (!file) return;
+      if (file.type.startsWith('image/')) {
         const reader = new FileReader();
         reader.onload = ev => {
           loadImagePayload(ev.target.result, `Selected: ${file.name}`);
           if (statusEl) statusEl.textContent = `Image loaded from file: ${file.name}.`;
         };
         reader.readAsDataURL(file);
+      } else {
+        const name = file.name ? `File "${file.name}"` : 'Selected file';
+        if (statusEl) statusEl.textContent = `${name} is not an image. Please select an image file.`;
+        fileInput.value = '';
       }
     });
   }
