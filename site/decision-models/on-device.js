@@ -99,7 +99,7 @@ const TICKET = "I was charged twice for the same order and nobody answers my ema
 const PHISHING = "Please confirm your password and reply with the full number on the front of your card.";
 const CREDENTIAL_QUESTION = "Is the sender trying to get the reader's password or card number?";
 
-const EXERCISES = [
+export const EXERCISES = [
   {
     name: "A ticket about a double charge",
     kind: "choice",
@@ -225,7 +225,7 @@ function bar(label, value) {
 }
 
 /** Read a distribution the way the primitive it belongs to is meant to be read. */
-function readout(exercise, distribution) {
+export function readout(exercise, distribution) {
   if (exercise.kind === "noul") {
     const p = noulProbability(distribution);
     return { summary: `p(yes) = ${p.toFixed(3)}`, verdict: verdict(p), pass: verdict(p) === exercise.expect };
@@ -246,45 +246,80 @@ function readout(exercise, distribution) {
 let passed = 0;
 const latencies = [];
 
+/**
+ * Evaluate exercises sequentially.
+ *
+ * Concurrency determination (learnings-fzk):
+ * ONNX Runtime Web's WASM execution provider (`ort.bundle.min.mjs` driving
+ * `ort-wasm-simd-threaded.jsep.wasm`) is strictly NON-REENTRANT. Calling `decidePacked()` /
+ * `session.run()` concurrently on the same session causes `ort-wasm-simd-threaded.jsep.mjs`'s
+ * `da()` wrapper to throw `Error: Session already started` via its internal module mutex (`f.$c`),
+ * while `Mr()` WebAssembly C stack allocation (`a.stackAlloc` / `a.stackRestore`) corrupts the
+ * linear memory stack when awaited calls interleave.
+ *
+ * Furthermore, each exercise evaluates a distinct `state` prompt, which precludes Kev's single-state
+ * delimiter sequence packing, and creating redundant session instances would consume prohibitive
+ * WASM heap memory (~375 MB per session). Real wall-clock overlap is also unachievable on the
+ * synchronous CPU WASM EP. Dispatches must remain strictly serialized.
+ */
+export async function evaluateExercises(exercises, decideFn, onResult) {
+  const results = [];
+  for (const exercise of exercises) {
+    const result = await decideFn(exercise.state, [exercise.question]);
+    const distribution = result.distributions[0];
+    const read = readout(exercise, distribution);
+    const item = { exercise, result, distribution, read };
+    results.push(item);
+    onResult?.(item);
+  }
+  return results;
+}
+
 async function runExercises() {
   const target = $("exercises");
   target.replaceChildren();
   passed = 0;
   latencies.length = 0;
+  $("run").disabled = true;
+  $("batch").disabled = true;
+  $("custom").disabled = true;
 
-  for (const exercise of EXERCISES) {
-    const result = await decide(exercise.state, [exercise.question]);
-    const distribution = result.distributions[0];
-    const read = readout(exercise, distribution);
-    if (read.pass) passed++;
-    latencies.push(result.ms);
+  try {
+    await evaluateExercises(EXERCISES, decide, ({ exercise, result, distribution, read }) => {
+      if (read.pass) passed++;
+      latencies.push(result.ms);
 
-    const box = el("section", undefined, "answer");
-    box.append(el("h3", `${read.pass ? "Passes" : "Fails"} — ${exercise.name}`));
-    if (exercise.note) box.append(el("p", exercise.note, "small"));
-    box.append(el("p", read.summary));
-    for (const [label, value] of exercise.question.options.map((o, i) => [o, distribution[i]])) box.append(bar(label, value));
-    box.append(el("p", `Expected ${exercise.expect}. ${result.ms.toFixed(0)} ms, ${result.tokens} tokens.`, "small"));
-    if (result.flat)
-      box.append(
-        el(
-          "p",
-          "Every score in this graph output was identical, so this distribution is a uniform tie rather than a decision. That is what a missing delimiter looks like — check the delimiter ids before reading anything into the numbers.",
-          "bad",
-        ),
-      );
-    target.append(box);
+      const box = el("section", undefined, "answer");
+      box.append(el("h3", `${read.pass ? "Passes" : "Fails"} — ${exercise.name}`));
+      if (exercise.note) box.append(el("p", exercise.note, "small"));
+      box.append(el("p", read.summary));
+      for (const [label, value] of exercise.question.options.map((o, i) => [o, distribution[i]])) {
+        box.append(bar(label, value));
+      }
+      box.append(el("p", `Expected ${exercise.expect}. ${result.ms.toFixed(0)} ms, ${result.tokens} tokens.`, "small"));
+      if (result.flat) {
+        box.append(
+          el(
+            "p",
+            "Every score in this graph output was identical, so this distribution is a uniform tie rather than a decision. That is what a missing delimiter looks like — check the delimiter ids before reading anything into the numbers.",
+            "bad",
+          ),
+        );
+      }
+      target.append(box);
+    });
+
+    const sorted = [...latencies].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    $("summary").textContent =
+      `${passed} of ${EXERCISES.length} exercises matched the expected answer. ` +
+      `Latency per decision: fastest ${Math.min(...latencies).toFixed(0)} ms, median ${median.toFixed(0)} ms, slowest ${Math.max(...latencies).toFixed(0)} ms, ` +
+      `measured in this tab on ${session.checkpoint}.`;
+  } finally {
+    $("run").disabled = false;
+    $("batch").disabled = false;
+    $("custom").disabled = false;
   }
-
-  const sorted = [...latencies].sort((a, b) => a - b);
-  const median = sorted[Math.floor(sorted.length / 2)];
-  $("summary").textContent =
-    `${passed} of ${EXERCISES.length} exercises matched the expected answer. ` +
-    `Latency per decision: fastest ${Math.min(...latencies).toFixed(0)} ms, median ${median.toFixed(0)} ms, slowest ${Math.max(...latencies).toFixed(0)} ms, ` +
-    `measured in this tab on ${session.checkpoint}.`;
-  $("run").disabled = false;
-  $("batch").disabled = false;
-  $("custom").disabled = false;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -344,13 +379,15 @@ async function runCustom() {
   $("exercises").replaceChildren(box);
 }
 
-$("load").onclick = load;
-$("backend-check").onclick = () => {
-  const gpu = typeof navigator !== "undefined" && "gpu" in navigator;
-  $("backend-check-out").textContent =
-    `navigator.gpu: ${gpu ? "present" : "absent"} · crossOriginIsolated: ${typeof crossOriginIsolated === "boolean" ? crossOriginIsolated : "unknown"} · ` +
-    `hardwareConcurrency: ${navigator.hardwareConcurrency ?? "unknown"} · deviceMemory: ${navigator.deviceMemory ?? "not reported"}`;
-};
-$("run").onclick = () => runExercises().catch((e) => line(String(e), "bad"));
-$("batch").onclick = () => runBatch().catch((e) => line(String(e), "bad"));
-$("custom").onclick = () => runCustom().catch((e) => line(String(e.message || e), "bad"));
+if (typeof document !== "undefined") {
+  $("load").onclick = load;
+  $("backend-check").onclick = () => {
+    const gpu = typeof navigator !== "undefined" && "gpu" in navigator;
+    $("backend-check-out").textContent =
+      `navigator.gpu: ${gpu ? "present" : "absent"} · crossOriginIsolated: ${typeof crossOriginIsolated === "boolean" ? crossOriginIsolated : "unknown"} · ` +
+      `hardwareConcurrency: ${navigator.hardwareConcurrency ?? "unknown"} · deviceMemory: ${navigator.deviceMemory ?? "not reported"}`;
+  };
+  $("run").onclick = () => runExercises().catch((e) => line(String(e), "bad"));
+  $("batch").onclick = () => runBatch().catch((e) => line(String(e), "bad"));
+  $("custom").onclick = () => runCustom().catch((e) => line(String(e.message || e), "bad"));
+}
