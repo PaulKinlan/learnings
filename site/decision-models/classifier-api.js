@@ -99,6 +99,79 @@ export function toLayaQuestions(questions, context) {
   return layaQuestions;
 }
 
+/**
+ * Turn one Laya `answer` into the Classifier API's per-question decision shape.
+ *
+ * Pure in `qid`, the mapped `qConfig` (whose `meta` carries the caller's original type and
+ * options) and the decoded `answer`. classify() runs it once per question inside the
+ * concurrent dispatch, so it must not touch shared state — and it doesn't: the only object it
+ * creates is the returned decision.
+ */
+function formatDecision(qid, qConfig, answer) {
+  const originalType = qConfig.meta.originalType;
+
+  if (originalType === "binary") {
+    const pTrue = answer.noul;
+    const pFalse = Number((1 - pTrue).toFixed(6));
+    const conf = answer.confidence ?? (1 - Math.abs(pTrue - 0.5) * 2);
+    return {
+      id: qid,
+      label: pTrue >= 0.5 ? "true" : "false",
+      probability: pTrue,
+      confidence: conf,
+      probabilities: [
+        { label: "true", probability: pTrue },
+        { label: "false", probability: pFalse },
+      ],
+    };
+  }
+
+  if (originalType === "ordinal") {
+    const optionsList = qConfig.meta.optionsList;
+    const probs = optionsList.map((o, idx) => {
+      const label = typeof o === "string" ? o : o.label;
+      const description = typeof o === "string" ? undefined : o.description;
+      const p = answer.probabilities[String(idx)] ?? (answer.probabilities[label] || 0);
+      return { label, description, probability: p };
+    });
+
+    // Compute expected score
+    const levels = optionsList.map((o) => Number(typeof o === "string" ? o : o.label));
+    const numeric = levels.every((n) => Number.isFinite(n));
+    let expectedScore = answer.score;
+    if (numeric) {
+      expectedScore = probs.reduce((acc, p, idx) => acc + levels[idx] * p.probability, 0);
+    }
+
+    const sorted = [...probs].sort((a, b) => b.probability - a.probability);
+    const winningLabel = sorted[0]?.label || String(Math.round(answer.score));
+
+    return {
+      id: qid,
+      label: winningLabel,
+      confidence: answer.confidence,
+      expectedScore: Number(expectedScore.toFixed(3)),
+      probabilities: probs,
+    };
+  }
+
+  // Categorical
+  const optionsList = qConfig.meta.optionsList;
+  const probs = optionsList.map((o) => {
+    const label = typeof o === "string" ? o : o.label;
+    const description = typeof o === "string" ? undefined : o.description;
+    const p = answer.probabilities[label] ?? 0;
+    return { label, description, probability: p };
+  });
+
+  return {
+    id: qid,
+    label: answer.choice,
+    confidence: answer.confidence,
+    probabilities: probs,
+  };
+}
+
 export class Classifier {
   constructor(session, schema, layaQuestions) {
     this._session = session;
@@ -188,74 +261,34 @@ export class Classifier {
     // prototype instead of adding the decision, dropping it from the returned map.
     const results = Object.create(null);
 
-    for (const [qid, qConfig] of Object.entries(this._layaQuestions)) {
-      signal?.throwIfAborted();
-      const { answer } = await this._session.decide(stateText, {
-        t: qConfig.t,
-        ins: qConfig.ins,
-        crit: qConfig.crit,
-      });
-
-      const originalType = qConfig.meta.originalType;
-
-      if (originalType === "binary") {
-        const pTrue = answer.noul;
-        const pFalse = Number((1 - pTrue).toFixed(6));
-        const conf = answer.confidence ?? (1 - Math.abs(pTrue - 0.5) * 2);
-        results[qid] = {
-          id: qid,
-          label: pTrue >= 0.5 ? "true" : "false",
-          probability: pTrue,
-          confidence: conf,
-          probabilities: [
-            { label: "true", probability: pTrue },
-            { label: "false", probability: pFalse },
-          ],
-        };
-      } else if (originalType === "ordinal") {
-        const optionsList = qConfig.meta.optionsList;
-        const probs = optionsList.map((o, idx) => {
-          const label = typeof o === "string" ? o : o.label;
-          const description = typeof o === "string" ? undefined : o.description;
-          const p = answer.probabilities[String(idx)] ?? (answer.probabilities[label] || 0);
-          return { label, description, probability: p };
+    // The questions are independent: each decide() builds its own sequence and tensors and
+    // writes only its own key of the caller-supplied map. Dispatch them concurrently so total
+    // time approaches the slowest single inference rather than the sum of all of them.
+    //
+    // Concurrency is safe here because this engine loads LiteRT.js with `accelerator: "wasm"`
+    // (see laya-engine.js). On that single-threaded CPU backend `run()` is reentrant: each call
+    // returns fresh output buffers (LiteRT.js's own suite pins this with a concurrent-run test
+    // that reads two runs' distinct outputs), and the wasm compute never suspends mid-run, so
+    // overlapping decide() calls cannot clobber one another. Each decide() also creates its own
+    // input tensors and copies its outputs out via `.data()` before returning.
+    const decisions = await Promise.all(
+      Object.entries(this._layaQuestions).map(async ([qid, qConfig]) => {
+        signal?.throwIfAborted();
+        const { answer } = await this._session.decide(stateText, {
+          t: qConfig.t,
+          ins: qConfig.ins,
+          crit: qConfig.crit,
         });
+        return { qid, decision: formatDecision(qid, qConfig, answer) };
+      }),
+    );
 
-        // Compute expected score
-        const levels = optionsList.map((o) => Number(typeof o === "string" ? o : o.label));
-        const numeric = levels.every((n) => Number.isFinite(n));
-        let expectedScore = answer.score;
-        if (numeric) {
-          expectedScore = probs.reduce((acc, p, idx) => acc + levels[idx] * p.probability, 0);
-        }
-
-        const sorted = [...probs].sort((a, b) => b.probability - a.probability);
-        const winningLabel = sorted[0]?.label || String(Math.round(answer.score));
-
-        results[qid] = {
-          id: qid,
-          label: winningLabel,
-          confidence: answer.confidence,
-          expectedScore: Number(expectedScore.toFixed(3)),
-          probabilities: probs,
-        };
-      } else {
-        // Categorical
-        const optionsList = qConfig.meta.optionsList;
-        const probs = optionsList.map((o) => {
-          const label = typeof o === "string" ? o : o.label;
-          const description = typeof o === "string" ? undefined : o.description;
-          const p = answer.probabilities[label] ?? 0;
-          return { label, description, probability: p };
-        });
-
-        results[qid] = {
-          id: qid,
-          label: answer.choice,
-          confidence: answer.confidence,
-          probabilities: probs,
-        };
-      }
+    // Fold back in the caller's question order, not completion order, so a slower question can
+    // never reorder the returned map. If one decide() rejects, Promise.all rejects with that
+    // error before `results` is returned; the local map is discarded and the other in-flight
+    // decides finish with no observable partial state.
+    for (const { qid, decision } of decisions) {
+      results[qid] = decision;
     }
 
     return results;

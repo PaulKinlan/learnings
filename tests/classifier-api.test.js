@@ -160,6 +160,52 @@ test("Classifier API: classify formats decisions for binary, categorical and ord
   await assert.rejects(() => classifier.classify("test"), /The classifier session has been destroyed/);
 });
 
+// learnings-0g3: classify() must overlap the independent per-question decide() calls instead of
+// awaiting them one at a time (N questions used to cost N sequential forward passes). The
+// mock tracks overlap with an in-flight counter and a microtask yield, so the assertion does
+// not depend on wall-clock timing — all dispatches must have started before any finishes.
+test("Classifier API: classify() dispatches independent question decisions concurrently and preserves order (learnings-0g3)", async () => {
+  const base = new MockLayaSession();
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const concurrent = {
+    window: base.window,
+    encode: (text) => base.encode(text),
+    async decide(state, question) {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      try {
+        // Yield so every dispatch starts before any of them completes; this pins overlap
+        // structurally rather than by comparing elapsed time.
+        await Promise.resolve();
+        return await base.decide(state, question);
+      } finally {
+        inFlight--;
+      }
+    },
+  };
+
+  const schema = {
+    context: "Customer triage",
+    questions: [
+      { id: "is_urgent", type: "binary", prompt: "Is this ticket urgent?" },
+      { id: "dept", type: "categorical", prompt: "Which team?", options: [{ label: "billing" }, { label: "tech" }] },
+      { id: "severity", type: "ordinal", prompt: "Severity rating", options: [{ label: "1" }, { label: "2" }, { label: "3" }] },
+    ],
+  };
+  const classifier = new Classifier(concurrent, schema, toLayaQuestions(schema.questions, schema.context));
+
+  const result = await classifier.classify("Payment failed for invoice #4421");
+
+  assert.equal(maxInFlight, 3, "all three decisions must be in flight at once, not serialized");
+  assert.deepEqual(Object.keys(result), ["is_urgent", "dept", "severity"], "result keys keep the caller's question order");
+  assert.equal(result.is_urgent.label, "true");
+  assert.equal(result.dept.label, "billing");
+  assert.equal(result.severity.label, "3");
+
+  classifier.destroy();
+});
+
 // learnings-aak: both accumulators in classifier-api.js are keyed by caller-supplied question ids,
 // so both are null-prototype maps. `__proto__` is a valid id as far as create()'s validation goes
 // (it checks only that the id is a non-empty string), and the playground reaches create() with the
