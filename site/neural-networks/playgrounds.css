@@ -26,18 +26,17 @@ button:hover, .button:hover { background: #0c4a6e; }
 .pixel-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); max-width: 26rem; gap: 3px; }
 .pixel-grid button { min-height: 36px; padding: .2rem 0; background: #0b0f19; border-color: #64748b; }
 .pixel-grid .lit-pixel { background: #dbeafe; color: #0b0f19; }
-.pixel-grid .receptive { outline: 3px solid #fbbf24; outline-offset: -3px; }
+/* Two-tone inset rings: the dark ring (15.7:1) marks the window on lit pixels, the
+   amber ring (11.5:1) on dark ones. Box-shadow, not outline, so the keyboard focus
+   ring (an outset outline) is never overridden and stays fully visible. */
+.pixel-grid .receptive { box-shadow: inset 0 0 0 3px #0b0f19, inset 0 0 0 6px #fbbf24; }
 .playground td { padding: .35rem; font-variant-numeric: tabular-nums; }
 .probability-row { display: grid; grid-template-columns: 4.5rem minmax(3rem, 1fr) 5rem; gap: .5rem; align-items: center; margin-block: .5rem; }
 .attention-table { min-width: 34rem; }
 .attention-table th { font-size: .85rem; }
 .attention-table td { padding: .15rem; }
 .attention-table button { width: 100%; padding: .3rem; font-size: .85rem; border-color: #64748b; }
-.attention-table .heat-0 { background: #101c30; }
-.attention-table .heat-1 { background: #153c57; }
-.attention-table .heat-2 { background: #165578; }
-.attention-table .heat-3 { background: #7dd3fc; color: #0b0f19; }
-.attention-table .heat-4 { background: #bae6fd; color: #0b0f19; }
+/* Heat colours come from nn.css, the single source of truth for .heat-N. */
 .selected-query { outline: 2px solid #fbbf24; outline-offset: -2px; }
 .chapter-toc { display: block; }
 .playground .table-scroll { max-inline-size: 100%; }
