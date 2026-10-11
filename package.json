@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.js",
+    "test:changed": "node scripts/test-changed.mjs --run",
     "test:browser": "node tests/browser.mjs",
     "test:kev-parity": "node --test tests/kev-parity.test.js",
     "fetch:kev": "node scripts/fetch-kev-fixtures.mjs",
