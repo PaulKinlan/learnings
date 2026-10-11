@@ -2,8 +2,8 @@
 // Conservative affected-test selection. The full gate is `node --test tests/*.test.js`.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
-import { basename, join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { basename, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
@@ -45,17 +45,19 @@ export function selectTests(changed, tests = allTests(), contents = path => read
 }
 
 export function changedFiles(base) {
-  const diff = git('diff', '--name-only', '--diff-filter=ACMRTUXBD', base, '--');
+  // With rename detection Git reports only the destination, hiding tests that
+  // still reference the deleted source. Report both paths instead.
+  const diff = git('diff', '--name-only', '--no-renames', '--diff-filter=ACMRTUXBD', base, '--');
   const untracked = git('ls-files', '--others', '--exclude-standard');
   return [...new Set([diff, untracked].filter(Boolean).flatMap(lines => lines.split('\n')))].sort();
 }
 
 function defaultBase() {
-  try { return git('merge-base', 'origin/main', 'HEAD'); }
-  catch { return 'HEAD~1'; }
+  try { return { ref: git('merge-base', 'origin/main', 'HEAD'), fallback: false }; }
+  catch { return { ref: 'HEAD~1', fallback: true }; }
 }
 
-const invoked = process.argv[1] && fileURLToPath(new URL(process.argv[1], `file://${process.cwd()}/`)) === fileURLToPath(import.meta.url);
+const invoked = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
 if (invoked) {
   const args = process.argv.slice(2);
   let base;
@@ -66,7 +68,10 @@ if (invoked) {
     else { console.error('Usage: node scripts/test-changed.mjs [--base <ref>] [--run]'); process.exit(2); }
   }
   try {
-    const tests = selectTests(changedFiles(base ?? defaultBase()));
+    const chosenBase = base ? { ref: base, fallback: false } : defaultBase();
+    // HEAD~1 is the documented fallback ref, but it may omit earlier commits
+    // on a multi-commit branch. Select the full suite rather than a false green.
+    const tests = chosenBase.fallback ? allTests() : selectTests(changedFiles(chosenBase.ref));
     if (!run) console.log(tests.join('\n'));
     else {
       const result = spawnSync(process.execPath, ['--test', ...tests], { cwd: root, stdio: 'inherit' });
