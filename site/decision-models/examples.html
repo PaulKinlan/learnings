@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; font-src 'self'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* http://[::1]:* https://127.0.0.1:* https://localhost:* https://[::1]:*; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Examples and schema playground · Learnings</title>
+<link rel="stylesheet" href="../style.css">
+<script type="module" src="examples-page.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header>
+  <a href="../">Paul’s learnings</a>
+  <nav aria-label="Main">
+    <a href="../decision-models/catalogue.html">Use cases</a>
+    <a href="../decision-models/">Report</a>
+    <a href="../decision-models/lab.html">Decision lab</a>
+    <a href="../decision-models/image-lab.html">Image decisions</a>
+    <a href="../decision-models/on-device.html">In your browser</a>
+    <a href="../decision-models/playground.html">Playground</a>
+    <a href="../decision-models/examples.html" aria-current="page">Examples</a>
+    <a href="../decision-models/adaptation.html">Unfamiliar labels</a>
+  </nav>
+</header>
+<main id="main">
+<h1>Examples, and a schema you can edit.</h1>
+<p class="lead">Copy the exact request shape, or write your own specification and see what the workbench will accept before any model runs.</p>
+<p class="notice"><strong>This page calls nothing.</strong> The blocks below are text, and the schema playground only reads JSON you paste into it. A request happens when you run the decision lab, the playground or the on-device page yourself.</p>
+
+<section id="examples">
+<h2>Examples</h2>
+<p>The report describes what these models do; these are the four call shapes you would actually write. Each one names what it sends and where, because the difference between a hosted request and a local one is the whole point.</p>
+<p id="copy-status" class="small" role="status"></p>
+
+<h3>Jev over HTTP</h3>
+<p class="small">The hosted route. One POST carries the state, the questions and the options; the reply carries one answer object per question ID, never generated prose. <a href="#s1">[1]</a></p>
+<pre data-example="jev-curl"><code>curl https://api.typesafe.ai/v1/systemone \
+  -H "Authorization: Bearer $JEV_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "jev-1.13.0",
+    "state": "The export fails in Safari; CSV export still works in Chrome.",
+    "questions": {
+      "severity": {
+        "type": "score",
+        "instructions": "How severe is the issue for the user?",
+        "criteria": ["Cosmetic issue", "Degraded feature with workaround", "Blocking issue without workaround"]
+      }
+    }
+  }'</code></pre>
+<div class="actions">
+  <button class="secondary" data-copy="jev-curl">Copy the Jev request</button>
+  <a class="button" href="lab.html?demo=score">Run this pattern in the lab</a>
+</div>
+<p class="small">The reply is shaped <code>{"answers":{"severity":{"type":"score","score":1.4,"probabilities":{…},"confidence":0.83}}}</code>. <code>core.js</code> refuses a reply that adds an answer ID it did not ask for, or whose distribution does not sum to one: an extra answer fails the whole response rather than half-rendering it.</p>
+
+<h3>Jev from a page you serve yourself</h3>
+<p class="small">A direct browser call from GitHub Pages is refused: the OPTIONS preflight to <code>api.typesafe.ai</code> with the Pages origin returned HTTP 400 and no <code>Access-Control-Allow-Origin</code> (measured 22 September 2026, no key used). Run <code>npm run serve</code>, open the loopback URL it prints, and the browser talks to your own origin instead.</p>
+<pre data-example="jev-fetch"><code>// npm run serve prints a loopback URL. The relay forwards only /api/jev,
+// /api/openai and /api/claude, checks same-origin, and logs nothing.
+const key = document.querySelector('#decision-key').value; // memory only, never stored
+const response = await fetch('/api/jev', {
+  method: 'POST',
+  credentials: 'omit',
+  redirect: 'error',
+  referrerPolicy: 'no-referrer',
+  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+  body: JSON.stringify({
+    model: 'jev-1.13.0',
+    state: 'The export fails in Safari; CSV export still works in Chrome.',
+    questions: {
+      severity: {
+        type: 'score',
+        instructions: 'How severe is the issue for the user?',
+        criteria: ['Cosmetic issue', 'Degraded feature with workaround', 'Blocking issue without workaround'],
+      },
+    },
+  }),
+});
+if (!response.ok) throw new Error(`Jev returned HTTP ${response.status}`);
+const { answers } = await response.json();</code></pre>
+<div class="actions">
+  <button class="secondary" data-copy="jev-fetch">Copy the browser request</button>
+  <a class="button" href="lab.html">Run this pattern in the lab</a>
+</div>
+
+<h3>Kev in this browser</h3>
+<p class="small">The same decision, on your own machine, with no key and no server. The engine is the one this site runs: ONNX Runtime Web over a single packed sequence, with every artifact checked against a pinned SHA-256 before the runtime sees it.</p>
+<pre data-example="kev-browser"><code>import { loadKev } from './kev-engine.js';
+
+// Nothing downloads until this call: a 7 MB tokenizer, a 1.3 MB graph and a
+// 375 MB q4 weights file, once, from huggingface.co, cached after that.
+const kev = await loadKev({
+  onProgress: ({ stage, loaded, total }) =&gt; console.log(stage, loaded, total),
+});
+
+const { distributions, tokens, ms } = await kev.decidePacked(
+  'The export fails in Safari; CSV export still works in Chrome.',
+  [{
+    instruction: 'How severe is the issue for the user?',
+    options: ['Cosmetic issue', 'Degraded feature with workaround', 'Blocking issue without workaround'],
+  }],
+);
+
+// One array of probabilities per question, in the order you asked them.
+console.log(`${tokens} tokens in a single pass, ${ms.toFixed(0)} ms`, distributions[0]);</code></pre>
+<div class="actions">
+  <button class="secondary" data-copy="kev-browser">Copy the Kev call</button>
+  <a class="button" href="playground.html">Run Kev in the playground</a>
+</div>
+<p class="small">A graph that finds no delimiter tokens returns a flat distribution instead of raising. That is a failure speaking, not a confident tie, so compare the probabilities rather than reading the largest one.</p>
+
+<h3>Kev through its own local server</h3>
+<p class="small">The same checkpoint behind an HTTP route, in the same request and response shape as Jev. Useful when you want one process to answer many clients.</p>
+<pre data-example="kev-server"><code>git clone https://github.com/jaredpalmer/kev.git
+cd kev
+uv sync --extra serve
+KEV_DTYPE=bf16 uv run --extra serve python -m kev.serve --run jaredpalmer/kev-0.8b --port 8009
+
+# then, in another shell, the same body as the hosted request:
+curl http://127.0.0.1:8009/v1/systemone \
+  -H "Content-Type: application/json" \
+  -d '{"model":"kev-0.8b","state":"The export fails in Safari.","questions":{"severity":{"type":"score","instructions":"How severe is the issue?","criteria":["Cosmetic","Workaround exists","Blocking"]}}}'</code></pre>
+<div class="actions">
+  <button class="secondary" data-copy="kev-server">Copy the server recipe</button>
+  <a class="button" href="on-device.html">Run Kev in this tab instead</a>
+</div>
+<p class="small">If you point a page at that server, the endpoint must be loopback only (<code>localhost</code>, <code>127.0.0.1</code> or <code>[::1]</code>) and the path must be exactly <code>/v1/systemone</code> — <code>core.js</code> refuses anything else, including a URL that carries credentials, a query string or a fragment. Upstream <code>laya-serve</code> answers the same shape but binds <code>0.0.0.0</code> with no authentication unless <code>LAYA_API_KEY</code> is set: do not expose it on a network you do not control.</p>
+</section>
+
+<section id="schema-playground">
+<h2>Schema playground</h2>
+<p>A specification is plain data: <code>title</code>, <code>description</code>, <code>state</code>, and <code>questions</code> keyed by lowercase IDs. Each question is one of three types, and the limits are enforced, not suggested:</p>
+<ul>
+  <li><strong>noul</strong> — one probability of yes, optional <code>criteria</code> with exactly <code>true</code> and <code>false</code> descriptions.</li>
+  <li><strong>choice</strong> — 2 to 255 named options, each with a description. The model selects one; it cannot invent an option.</li>
+  <li><strong>score</strong> — 2 to 10 ordered levels. The answer is an expected level, which may be fractional.</li>
+</ul>
+<p class="small">Any other field is refused. No code, no URLs, no extra UI: the renderer is fixed, so a schema can describe a decision but never an application. Checking here is the same walker the lab and the generator use, so a schema this page accepts is one they accept.</p>
+<div class="fields">
+  <div>
+    <label for="schema-example">Start from a checked example</label>
+    <select id="schema-example">
+      <option value="">Choose an example…</option>
+    </select>
+  </div>
+  <div>
+    <label for="schema-model">Model ID for the request preview</label>
+    <input id="schema-model" value="jev-1.13.0" autocomplete="off" spellcheck="false">
+  </div>
+</div>
+<label for="schema">Your specification (JSON)</label>
+<textarea id="schema" class="code" spellcheck="false" aria-describedby="schema-status"></textarea>
+<div class="actions">
+  <button id="schema-check">Check schema</button>
+  <button id="schema-copy" class="secondary">Copy validated JSON</button>
+  <button id="schema-download" class="secondary">Download</button>
+  <button id="schema-open-lab" class="secondary">Open in the lab</button>
+</div>
+<p id="schema-status" class="status" role="status">Paste a specification, or pick an example above. Nothing is sent anywhere.</p>
+<div id="schema-report" hidden>
+  <h3>Problems</h3>
+  <ul id="schema-issues"></ul>
+</div>
+<h3>Request the workbench would send</h3>
+<pre id="schema-request">No valid schema yet.</pre>
+<p class="small">Copy, download and “Open in the lab” stay disabled until the schema passes. Opening it in the lab keeps the draft in this tab’s session storage and the lab deletes it as it loads; nothing is written to localStorage, and no key is ever stored.</p>
+</section>
+
+<section id="sources">
+<h2>Sources</h2>
+<ol>
+  <li id="s1"><a href="https://typesafe.ai/blog/introducing-system-one-models-and-jev">TypeSafe: introducing System One models and Jev</a>.</li>
+  <li id="s2"><a href="https://github.com/jaredpalmer/kev">jaredpalmer/kev</a> — the upstream decision models and the <code>kev.serve</code> route.</li>
+  <li id="s3"><a href="https://huggingface.co/onnx-community/kev-0.6b-ONNX">onnx-community/kev-0.6b-ONNX</a> — the pinned export this site runs.</li>
+  <li id="s4"><a href="./">The field guide</a> — mechanism, evidence status and the measured limitations behind every claim above.</li>
+</ol>
+</section>
+<p><a href="lab.html#generator">Let a model draft a specification instead</a> · <a href="./architecture.html">Why can a decision model be fast?</a></p>
+</main>
+<footer>A working notebook, not a promise of correctness. Examples checked against this site’s own clients on 17 October 2026. <a href="https://github.com/PaulKinlan/learnings">Source &amp; limitations</a>. No analytics. API requests happen only when you ask.</footer>
+</body>
+</html>

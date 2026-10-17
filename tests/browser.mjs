@@ -271,5 +271,25 @@ try{
  }
  await p.goto(base+'decision-models/');check('report explicit CORS and browser-inference limitations',await p.evaluate(()=>document.body.textContent.includes('HTTP 400')&&document.body.textContent.includes('Run it in this tab')));
  await p.emulateViewport({width:1440,height:1000,mobile:false,scale:1});await p.screenshot(out+'/desktop-report.png',{fullPage:true});
+ // Examples page + schema playground: the two surfaces that turn the report into something a
+ // reader can copy and author. Everything checked here is local: no key, no model, no network.
+ await p.goto(base+'decision-models/examples.html');await p.waitFor(()=>document.querySelector('#schema-status').textContent.startsWith('Valid.'));
+ check('examples page validates its prefilled schema and previews the request',await p.evaluate(()=>document.querySelector('#schema-issues').children.length===0&&document.querySelector('#schema-request').textContent.includes('"questions"')));
+ check('examples page offers four copyable blocks',await p.evaluate(()=>document.querySelectorAll('pre[data-example]').length===4&&document.querySelector('[data-example="jev-curl"] code').textContent.startsWith('curl https://api.typesafe.ai/v1/systemone')));
+ await p.evaluate(()=>document.querySelector('[data-copy="jev-fetch"]').click());await p.waitFor(()=>document.querySelector('#copy-status').textContent.length>0);
+ check('copy button reports a real outcome',await p.evaluate(()=>/Copied|refused clipboard access/.test(document.querySelector('#copy-status').textContent)));
+ await p.evaluate(()=>{const a=document.getElementById('schema');a.value=JSON.stringify({title:'t',description:'d',state:'s',questions:{first:{type:'choice',instructions:'pick',criteria:{one:'only one option'}},SECOND:{type:'noul',instructions:''}}});a.dispatchEvent(new Event('input',{bubbles:true}));});
+ await p.waitFor(()=>document.querySelector('#schema-issues').children.length>0);
+ check('schema playground reports every problem with a JSON path',await p.evaluate(()=>document.querySelectorAll('#schema-issues li').length===3&&document.querySelector('#schema-issues li code').textContent==='questions.first.criteria'&&document.getElementById('schema-open-lab').disabled));
+ await p.evaluate(()=>{const s=document.getElementById('schema-example');s.value='machine';s.dispatchEvent(new Event('change',{bubbles:true}));});
+ await p.waitFor(()=>document.querySelector('#schema-status').textContent.startsWith('Valid.'));
+ await p.screenshot(out+'/desktop-examples.png',{fullPage:true});
+ await p.evaluate(()=>document.getElementById('schema-open-lab').click());
+ await p.waitFor(()=>location.pathname.endsWith('lab.html')&&document.querySelector('#demo-title').textContent.length>0);
+ check('schema playground hands a validated schema to the lab, once',await p.evaluate(()=>document.querySelector('#demo-title').textContent==='A small support state machine'&&document.querySelector('#generation-status').textContent.startsWith('Loaded the specification shared from the schema playground')&&sessionStorage.getItem('decision-spec-draft')===null));
+ await p.goto(base+'decision-models/examples.html');await p.waitFor(()=>document.querySelector('#schema-status').textContent.length>0);
+ await p.emulateViewport({width:390,height:844,mobile:true,scale:1});
+ check('examples page no mobile horizontal overflow',await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth&&document.querySelector('main h1').textContent.length>0));
+ await p.emulateViewport({width:1440,height:1000,mobile:false,scale:1});
  const receipt={at:new Date().toISOString(),commit,base,checks,resources,harnesses,qualification:'UI behavior and synthetic transport fixtures only. No paid model inference, local Kev weights, or training run.'};await writeFile(out+'/receipt.json',JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt,null,2));
 }finally{await p.close();if(local)await new Promise(r=>local.server.close(r));}
