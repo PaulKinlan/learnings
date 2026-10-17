@@ -12,8 +12,5 @@
   },
   "engines": {
     "node": ">=22"
-  },
-  "devDependencies": {
-    "@huggingface/tokenizers": "^0.2.0"
   }
 }

@@ -19,14 +19,13 @@ import { loadLaya } from "./laya-engine.js";
 let cachedLayaSession = null;
 let loadingLayaPromise = null;
 
-async function getLaya(onProgress, urls) {
+// Shared by the playground and the Classifier polyfill: one download, one compiled graph,
+// and one embedding table per page. A failed load is retriable; never cache a rejected promise.
+export async function loadSharedLaya({ onProgress, urls } = {}) {
   if (cachedLayaSession) return cachedLayaSession;
   if (!loadingLayaPromise) {
     loadingLayaPromise = loadLaya({
-      onProgress: (stage, received, total) => {
-        const loaded = total ? received / total : 0;
-        onProgress?.(loaded);
-      },
+      onProgress,
       urls: urls ?? (globalThis.__LAYA_URLS || {}),
     })
       .then((session) => {
@@ -232,7 +231,10 @@ export class Classifier {
       monitorTarget.dispatchEvent?.(event);
     };
 
-    const session = await getLaya(onProgress, urls);
+    const session = await loadSharedLaya({
+      onProgress: (_stage, received, total) => onProgress(total ? received / total : 0),
+      urls,
+    });
     signal?.throwIfAborted();
 
     // Map Classifier questions to Laya format
