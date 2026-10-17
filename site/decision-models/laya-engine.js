@@ -15,8 +15,8 @@
 //   work is correct — the act head compiles, and laya-pack.js pins the gate-0 captures
 //   id-for-id — the memory ceiling is the runtime's, not the model's.
 //
-// The main graph's weights download once from huggingface.co (the ONLY network requests, each
-// from an immutable commit revision and each verified byte-for-byte against the publisher's
+// The main graph's weights download on demand from huggingface.co; reloads may fetch them again.
+// Each comes from an immutable commit revision and is checked byte-for-byte against the publisher's
 // SHA256SUMS (an integrity check and not a root of trust, see the note in loadLaya); the act
 // head, the contract texts and this module are served from this site. Packing and decoding live
 // in laya-pack.js, pinned id-for-id against the publisher's gate captures.
