@@ -47,9 +47,9 @@ export function setupSettings(onChange = () => {}) {
 
     if (note) {
       note.textContent = p === 'laya'
-        ? 'Laya runs on-device in this tab via LiteRT.js (mmBERT-base). Weights download once (~650 MB total); zero data leaves your browser.'
+        ? 'Laya runs on-device in this tab via LiteRT.js (mmBERT-base). About 680 MB downloads on first use; a reload may fetch it again. No user text leaves your browser.'
         : p === 'kev'
-        ? 'Kev runs on-device in this tab via ONNX Runtime Web. Weights download once (~375 MB); zero data leaves your browser.'
+        ? 'Kev runs on-device in this tab via ONNX Runtime Web. About 375 MB downloads on first use; a reload may fetch it again. No user text leaves your browser.'
         : 'Jev sends state and questions directly to api.typesafe.ai with your API key. Incurs provider usage.';
     }
     onChange();

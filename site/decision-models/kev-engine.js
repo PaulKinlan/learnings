@@ -13,8 +13,8 @@
 // CPU path for this model, so that is what this engine uses — no transformers.js involved.
 //
 // The tokenizer is @huggingface/tokenizers (pure JS, no ORT inside). The artifacts download
-// once from huggingface.co — the only network requests — each from an immutable revision and
-// each verified against the digests in kev-manifest.js before it is handed to ORT.
+// from huggingface.co on demand (reloads may fetch them again). Model requests use immutable
+// revisions, and each artifact is verified against kev-manifest.js before ORT receives it.
 
 import * as ort from "../vendor/ort.bundle.min.mjs";
 import { Tokenizer } from "../vendor/tokenizers.min.mjs";
