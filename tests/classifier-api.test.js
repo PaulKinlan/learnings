@@ -302,6 +302,19 @@ test("Classifier API: create() delegates its question mapping to toLayaQuestions
   assert.doesNotMatch(create, /const layaQuestions = \{\}/, "create() must not rebuild the map with a plain {} accumulator");
 });
 
+// The 680 MB browser check is opt-in; keep its most important wiring invariant in the
+// fast Node suite so a direct loadLaya() in the playground cannot silently add a second graph.
+test("playground and Classifier share the same Laya loader (learnings-inb)", () => {
+  const playground = readFileSync(new URL("../site/decision-models/playground.js", import.meta.url), "utf8");
+  const classifier = readFileSync(new URL("../site/decision-models/classifier-api.js", import.meta.url), "utf8");
+  assert.match(playground, /import\s*\{[^}]*\bloadSharedLaya\b[^}]*\}\s*from\s*["']\.\/classifier-api\.js["']/);
+  const laya = playground.slice(playground.indexOf("  laya: {"), playground.indexOf("  kev: {"));
+  assert.ok(laya.startsWith("  laya: {"), "the playground still defines a Laya engine");
+  assert.match(laya, /load:\s*\(onProgress\)\s*=>\s*loadSharedLaya\(/);
+  assert.doesNotMatch(playground, /\bloadLaya\s*\(/, "playground must not create its own Laya graph");
+  assert.match(classifier, /const session = await loadSharedLaya\(/, "Classifier must use the same shared loader");
+});
+
 test("Classifier API: classify() returns a __proto__ question id as an own decision key (learnings-aak)", async () => {
   const questions = playgroundSchema();
   const classifier = new Classifier(new MockLayaSession(), { questions }, toLayaQuestions(questions, null));
