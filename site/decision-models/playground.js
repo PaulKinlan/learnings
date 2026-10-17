@@ -24,7 +24,7 @@ const $ = (id) => document.getElementById(id);
 const engines = {
   laya: {
     label: "Laya",
-    checkpointNote: "multilingual mmBERT on LiteRT.js (WASM/XNNPack), ~650 MB of verified downloads",
+    checkpointNote: "multilingual mmBERT on LiteRT.js (WASM/XNNPack), ~680 MB of verified downloads",
     // window.__LAYA_URLS is a test seam: when set (by a smoke driver), the shared loader
     // uses those asset URLs instead of the hub's. Unset in normal use.
     load: (onProgress) => loadSharedLaya({
