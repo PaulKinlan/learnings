@@ -35,9 +35,10 @@ try {
     const result = await page.evaluate((name) => {
       const section = document.querySelector(`[data-demo="${name}"]`);
       return { id: name, text: section.querySelector(".results").textContent,
-        meters: [...section.querySelectorAll(".results meter")].map((m) => m.value) };
+        answers: section.querySelectorAll(".results .answer").length };
     }, id);
-    assert.ok(result.meters.length > 0 && result.meters.every(Number.isFinite), `${id}: ${result.text}`);
+    assert.ok(result.answers > 0 && /\d+\.\d+%/.test(result.text) && !/NaN|Run failed:/.test(result.text),
+      `${id}: ${result.text}`);
     demos.push(result);
   }
   const beforeClassifier = await page.evaluate(() => performance.getEntriesByType("resource")
