@@ -2,27 +2,54 @@
 const own = (o, k) => Object.hasOwn(o, k);
 const record = x => x !== null && typeof x === 'object' && !Array.isArray(x);
 const fail = message => { throw new Error(message); };
-function keys(o, allowed) { if (!record(o) || Object.keys(o).some(k => !allowed.includes(k))) fail('Unexpected specification field. Only the documented JSON schema is accepted.'); }
-function text(s, name) { if (typeof s !== 'string' || !s.trim()) fail(`${name} must be non-empty text.`); }
-export function validateSpec(s) {
-  keys(s, ['title','description','state','questions']); text(s.title,'Title'); text(s.description,'Description'); text(s.state,'State');
-  if (!record(s.questions) || !Object.keys(s.questions).length) fail('At least one question is required.');
-  for (const [id,q] of Object.entries(s.questions)) {
-    if (!/^[a-z][a-z0-9_]*$/.test(id) || ['constructor','prototype','__proto__'].includes(id)) fail('Use simple lowercase question IDs.');
-    keys(q,['type','instructions','criteria']); text(q.instructions,'Instructions');
-    if (!['noul','choice','score'].includes(q.type)) fail('Question type must be noul, choice or score.');
+// decide()/generate() validate their own scalar arguments; the spec walker below reports instead.
+const text = (s, name) => { if (typeof s !== 'string' || !s.trim()) fail(`${name} must be non-empty text.`); };
+const SPEC_FIELDS = ['title','description','state','questions'];
+const QUESTION_FIELDS = ['type','instructions','criteria'];
+// One rule walker, two readers. validateSpecIssues() returns every problem with a JSON path for
+// the schema playground; validateSpec() throws the first one, so every existing caller keeps the
+// exact message and check order it had. A rule added here can never leave the two disagreeing.
+function reportKeys(o, allowed, path, add) {
+  if (!record(o) || Object.keys(o).some(k => !allowed.includes(k))) {
+    add(path, 'Unexpected specification field. Only the documented JSON schema is accepted.');
+    return false;
+  }
+  return true;
+}
+function reportText(s, name, path, add) {
+  if (typeof s !== 'string' || !s.trim()) { add(path, `${name} must be non-empty text.`); return false; }
+  return true;
+}
+export function validateSpecIssues(input) {
+  const issues = [];
+  const add = (path, message) => { issues.push({ path, message }); };
+  if (!reportKeys(input, SPEC_FIELDS, '', add)) return issues;
+  reportText(input.title,'Title','title',add); reportText(input.description,'Description','description',add); reportText(input.state,'State','state',add);
+  if (!record(input.questions) || !Object.keys(input.questions).length) { add('questions','At least one question is required.'); return issues; }
+  for (const [id,q] of Object.entries(input.questions)) {
+    const at = `questions.${id}`;
+    if (!/^[a-z][a-z0-9_]*$/.test(id) || ['constructor','prototype','__proto__'].includes(id)) add(at,'Use simple lowercase question IDs.');
+    if (!reportKeys(q, QUESTION_FIELDS, at, add)) continue;
+    reportText(q.instructions,'Instructions',`${at}.instructions`,add);
+    if (!['noul','choice','score'].includes(q.type)) { add(`${at}.type`,'Question type must be noul, choice or score.'); continue; }
     if(q.type === 'choice') {
-      if(!record(q.criteria) || Object.keys(q.criteria).length < 2 || Object.keys(q.criteria).length > 255) fail('Choice requires 2–255 named options in this workbench.');
-      for(const [k,v] of Object.entries(q.criteria)) { text(k,'Option'); text(v,'Option description'); }
+      if(!record(q.criteria) || Object.keys(q.criteria).length < 2 || Object.keys(q.criteria).length > 255) add(`${at}.criteria`,'Choice requires 2–255 named options in this workbench.');
+      else for(const [k,v] of Object.entries(q.criteria)) { reportText(k,'Option',`${at}.criteria.${k}`,add); reportText(v,'Option description',`${at}.criteria.${k}`,add); }
     }
     if(q.type === 'score') {
-      if(!Array.isArray(q.criteria) || q.criteria.length<2 || q.criteria.length>10) fail('Score requires 2–10 ordered levels (Jev-compatible).');
-      q.criteria.forEach(v=>text(v,'Score level'));
+      if(!Array.isArray(q.criteria) || q.criteria.length<2 || q.criteria.length>10) add(`${at}.criteria`,'Score requires 2–10 ordered levels (Jev-compatible).');
+      else q.criteria.forEach((v,i)=>reportText(v,'Score level',`${at}.criteria[${i}]`,add));
     }
     if(q.type === 'noul' && own(q,'criteria')) {
-      keys(q.criteria,['true','false']); for(const v of Object.values(q.criteria)) text(v,'Noul criterion');
+      if (reportKeys(q.criteria,['true','false'],`${at}.criteria`,add))
+        for(const [k,v] of Object.entries(q.criteria)) reportText(v,'Noul criterion',`${at}.criteria.${k}`,add);
     }
   }
+  return issues;
+}
+export function validateSpec(s) {
+  const [first] = validateSpecIssues(s);
+  if (first) fail(first.message);
   return structuredClone(s);
 }
 export function requestFor(spec, model) { validateSpec(spec); text(model,'Model'); return {model,state:spec.state,questions:spec.questions}; }
