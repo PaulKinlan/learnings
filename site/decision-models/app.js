@@ -70,5 +70,6 @@ $('load-spec').onclick=()=>{try{adoptSpec($('specification').value);$('generatio
 const requested=new URL(location.href).searchParams.get('demo');if(requested&&Object.hasOwn(examples,requested)){$('example').value=requested;load(requested);}else load('tools');
 // The schema playground's one-shot hand-off. Removed before validation so a rejected draft can
 // never be re-read, and a stale draft never blocks a normal visit to the lab.
-const shared=($=>{try{const value=sessionStorage.getItem($);sessionStorage.removeItem($);return value;}catch{return null;}})('decision-spec-draft');
+function takeSharedDraft(){try{const value=sessionStorage.getItem('decision-spec-draft');sessionStorage.removeItem('decision-spec-draft');return value;}catch{return null;}}
+const shared=takeSharedDraft();
 if(shared){try{adoptSpec(shared);$('generation-status').textContent='Loaded the specification shared from the schema playground. No API call made.';}catch(e){$('generation-status').textContent='Shared specification refused: '+e.message;}}

@@ -113,6 +113,25 @@ test('examples page ships the schema playground controls the module drives', () 
   assert.match(html, /id="schema-status" class="status" role="status"/, 'validation must be announced');
 });
 
+test('the module checks with the shared walker and previews with requestFor', () => {
+  const module = readFileSync(fileURLToPath(new URL('../site/decision-models/examples-page.js', import.meta.url)), 'utf8');
+  assert.match(module, /import \{ validateSpec, validateSpecIssues, requestFor \} from '\.\/core\.js'/, 'one import of the shared rules');
+  assert.match(module, /validateSpecIssues\(parsed\)/, 'issues come from the shared walker');
+  assert.match(module, /requestFor\(valid, model\)/, 'the preview is the real request builder');
+  assert.doesNotMatch(module, /innerHTML|outerHTML|insertAdjacentHTML/, 'untrusted text is never rendered as markup');
+});
+
+test('the lab consumes the shared draft once, before it validates it', () => {
+  const app = readFileSync(fileURLToPath(new URL('../site/decision-models/app.js', import.meta.url)), 'utf8');
+  const read = app.indexOf("sessionStorage.getItem('decision-spec-draft')");
+  const clear = app.indexOf("sessionStorage.removeItem('decision-spec-draft')");
+  const adopt = app.indexOf('adoptSpec(shared)');
+  assert.ok(read > 0, 'the lab never reads the draft');
+  assert.ok(clear > read, 'the draft must be deleted after it is read');
+  assert.ok(adopt > clear, 'a rejected draft must not stay readable, so adoption comes last');
+  assert.match(app, /function adoptSpec\(text\)\{/, 'one adoption path for pasted and shared specs');
+});
+
 test('the examples page is reachable from the decision-models navigation', () => {
   for (const page of ['index.html', 'catalogue.html', 'lab.html', 'image-lab.html', 'on-device.html', 'playground.html', 'adaptation.html', 'architecture.html']) {
     const source = readFileSync(fileURLToPath(new URL(`../site/decision-models/${page}`, import.meta.url)), 'utf8');

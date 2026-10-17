@@ -72,7 +72,7 @@ npm run test:on-device   # Run real in-browser LiteRT.js + ONNX Runtime Web smok
 ## Architecture Overview
 
 - `site/index.html` & `site/style.css`: Top-level Learnings Hub and shared zero-dependency stylesheet.
-- `site/decision-models/`: Field guide, interactive decision lab, prompt-based playground (`window.Classifier` polyfill), copyable Jev/Kev examples with a hand-authoring schema playground (`examples.html`, checked by the same `validateSpecIssues` walker as the generator), 37-entry use-case catalogue, and on-device inference engines (`laya-engine.js` via LiteRT.js and `kev-engine.js` via ONNX Runtime Web).
+- `site/decision-models/`: Field guide, interactive decision lab, prompt-based playground (`window.Classifier` polyfill), copyable Jev/Kev examples with a hand-authoring schema playground (`examples.html`, checked by the same `validateSpecIssues` walker as the generator), 43-entry use-case catalogue, and on-device inference engines (`laya-engine.js` via LiteRT.js and `kev-engine.js` via ONNX Runtime Web).
 - `site/neural-networks/`: Interactive first-principles Neural Network lab (pure `Float32Array` autograd + raw WebAssembly GEMM kernel) covering Perceptrons/MLPs/Backprop, CNNs, Transformers & Self-Attention, Continuous Image & Discrete Masked Text Diffusion, Decision Pointer Heads, and a composable Block Builder.
 - `site/celld/`: Interactive architecture deep-dive and simulator for `celld` (SQLite/LTX cell engine) and Cloudflare Durable Object fleet architecture (CAS epoch fencing, `fleet` vs `bucket` durability, load balancing, and fleet-wide usage accounting & querying).
 - `site/opt-chronicles/`: Interactive logbook and cluster failure simulator for Meta AI's OPT-175B training run.

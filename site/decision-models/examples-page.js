@@ -58,7 +58,7 @@ function sync() {
   $('schema-request').textContent = model
     ? JSON.stringify(requestFor(valid, model), null, 2)
     : 'Enter a model ID above to see the request body.';
-  setStatus(`Valid. ${count(Object.keys(valid.questions).length, 'question')}; the lab, the playground and the generator accept this specification.`);
+  setStatus(`Valid. ${count(Object.keys(valid.questions).length, 'question')}; the lab and the generator accept this specification.`);
 }
 
 for (const [id, spec] of Object.entries(SOURCES)) {
