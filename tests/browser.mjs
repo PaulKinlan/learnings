@@ -18,6 +18,10 @@ async function select(id,index){await p.evaluateWithGesture((selId,idx)=>{const 
 try{
  await p.goto(base+'decision-models/lab.html');await p.waitFor(()=>document.querySelector('#demo-title').textContent.length>0);
  check('default provider is Laya',await p.evaluate(()=>document.querySelector('#provider').value==='laya'&&document.querySelector('#provider-note').textContent.includes('LiteRT.js')));
+ check('lab Laya notice warns about a repeat download',await p.evaluate(()=>document.querySelector('#provider-note').textContent.includes('680 MB downloads on first use; a reload may fetch it again')));
+ await select('provider',1);
+ check('lab Kev notice warns about a repeat download',await p.evaluate(()=>document.querySelector('#provider-note').textContent.includes('375 MB downloads on first use; a reload may fetch it again')));
+ await select('provider',0);
  await p.evaluate(()=>{
   window.__MOCK_DECIDE__=(spec,cfg)=>{
    const answers={};
@@ -64,6 +68,10 @@ try{
  await p.emulateViewport({width:390,height:844,mobile:true,scale:1});check('lab no mobile horizontal overflow',await p.evaluate(()=>innerWidth===390&&document.documentElement.scrollWidth<=innerWidth));await p.screenshot(out+'/mobile-lab.png',{fullPage:true});
  const resources=await p.evaluate(()=>performance.getEntriesByType('resource').map(x=>x.name));check('reading and local mode load only same-origin assets',resources.every(u=>new URL(u).origin===new URL(base).origin));
  await p.goto(base+'decision-models/adaptation.html');await p.waitFor(()=>document.querySelector('#labelled-examples').value.length>0);
+ check('adaptation Laya notice warns about a repeat download',await p.evaluate(()=>document.querySelector('#provider-note').textContent.includes('680 MB downloads on first use; a reload may fetch it again')));
+ await select('provider',1);
+ check('adaptation Kev notice warns about a repeat download',await p.evaluate(()=>document.querySelector('#provider-note').textContent.includes('375 MB downloads on first use; a reload may fetch it again')));
+ await select('provider',0);
  await p.evaluate(()=>{
   window.__MOCK_DECIDE__=(spec,cfg)=>{
    return {data:{model:'Laya multilingual',answers:{category:{type:'choice',choice:'veln',confidence:0.85,probabilities:{veln:0.85,sova:0.05,tarn:0.05,unclear:0.05}}}},elapsed:12,source:'Laya (LiteRT.js in-browser)',requestedModel:'laya-multilingual'};
@@ -77,6 +85,11 @@ try{
  check('playground offers Laya, Kev and Jev',await p.evaluate(()=>Array.from(document.querySelectorAll('#engine option')).map(o=>o.value).join(',')==='laya,kev,jev'));
  check('playground has window.Classifier polyfill installed',await p.evaluate(()=>typeof window.Classifier==='function'));
  await p.screenshot(out+'/desktop-playground.png',{fullPage:true});
+ await p.goto(base+'decision-models/examples.html');
+ check('Kev browser example warns about a repeat download',await p.evaluate(()=>{
+  const snippet=document.querySelector('[data-example="kev-browser"]')?.textContent||'';
+  return snippet.includes('a reload may fetch it again')&&!/cached after that|download once/i.test(snippet);
+ }));
  await p.goto(base+'decision-models/architecture.html');await p.waitFor(()=>document.querySelector('#cost-shape').textContent.includes('Illustrative'));const before=await p.evaluate(()=>document.querySelector('#cost-shape').textContent);await p.type('#tokens','200');check('architecture calculator responds to input',await p.evaluate(()=>document.querySelector('#cost-shape').textContent)!==before);
  await p.goto(base+'decision-models/catalogue.html');check('catalogue contains 43 concrete entries',await p.evaluate(()=>document.querySelectorAll('tbody tr').length===43));check('catalogue no mobile document overflow',await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
  await p.goto(base+'decision-models/image-lab.html');await p.waitFor(()=>document.querySelector('#bench-table-container table')!==null);
