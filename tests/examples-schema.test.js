@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { validateSpec, validateSpecIssues, requestFor } from '../site/decision-models/core.js';
 import { examples, adaptationSpec } from '../site/decision-models/examples.js';
 
@@ -129,13 +130,20 @@ test('the lab consumes the shared draft once, before it validates it', () => {
   assert.ok(read > 0, 'the lab never reads the draft');
   assert.ok(clear > read, 'the draft must be deleted after it is read');
   assert.ok(adopt > clear, 'a rejected draft must not stay readable, so adoption comes last');
-  assert.match(app, /function adoptSpec\(text\)\{/, 'one adoption path for pasted and shared specs');
+  assert.match(app, /\bfunction\s+adoptSpec\s*\(\s*text\s*\)\s*\{/, 'one adoption path for pasted and shared specs');
 });
 
 test('the examples page is reachable from the decision-models navigation', () => {
-  for (const page of ['index.html', 'catalogue.html', 'lab.html', 'image-lab.html', 'on-device.html', 'playground.html', 'adaptation.html', 'architecture.html']) {
-    const source = readFileSync(fileURLToPath(new URL(`../site/decision-models/${page}`, import.meta.url)), 'utf8');
+  const dir = fileURLToPath(new URL('../site/decision-models/', import.meta.url));
+  const shared = readdirSync(dir).filter(name => name.endsWith('.html') && readFileSync(join(dir, name), 'utf8').includes('<nav aria-label="Main">'));
+  // Discovered, not listed: a new page that copies the shared header without this link fails here.
+  assert.ok(shared.length >= 8, `expected the shared navigation on several pages, found ${shared.join(', ')}`);
+  for (const page of shared) {
+    const source = readFileSync(join(dir, page), 'utf8');
+    if (page === 'examples.html') {
+      assert.match(source, /<a href="\.\.\/decision-models\/examples\.html" aria-current="page">Examples<\/a>/, `${page} must mark itself current`);
+      continue;
+    }
     assert.match(source, /<a href="\.\.\/decision-models\/examples\.html">Examples<\/a>/, `${page} does not link the examples page`);
   }
-  assert.match(html, /<a href="\.\.\/decision-models\/examples\.html" aria-current="page">Examples<\/a>/);
 });

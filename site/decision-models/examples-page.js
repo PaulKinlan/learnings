@@ -124,9 +124,15 @@ for (const button of document.querySelectorAll('[data-copy]')) {
       const range = document.createRange();
       range.selectNodeContents(block);
       const selection = getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
-      setCopyStatus('This browser refused clipboard access, so the block is selected: press Ctrl or Cmd + C.');
+      // A document without a selection object (detached frame, some embeds) still gets the
+      // explanation, just not the pre-selected block.
+      if (selection) {
+        selection.removeAllRanges();
+        selection.addRange(range);
+        setCopyStatus('This browser refused clipboard access, so the block is selected: press Ctrl or Cmd + C.');
+      } else {
+        setCopyStatus('This browser refused clipboard access. Select the block above and copy it with Ctrl or Cmd + C.');
+      }
     }
   });
 }

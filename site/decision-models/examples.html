@@ -31,7 +31,7 @@
 
 <section id="examples">
 <h2>Examples</h2>
-<p>The report describes what these models do; these are the four call shapes you would actually write. Each one names what it sends and where, because the difference between a hosted request and a local one is the whole point.</p>
+<p>The <a href="./">report</a> describes what these models do <a href="#s4">[4]</a>; these are the four call shapes you would actually write. Each one names what it sends and where, because the difference between a hosted request and a local one is the whole point.</p>
 <p id="copy-status" class="small" role="status"></p>
 
 <h3>Jev over HTTP</h3>
@@ -87,7 +87,7 @@ const { answers } = await response.json();</code></pre>
 </div>
 
 <h3>Kev in this browser</h3>
-<p class="small">The same decision, on your own machine, with no key and no server. The engine is the one this site runs: ONNX Runtime Web over a single packed sequence, with every artifact checked against a pinned SHA-256 before the runtime sees it.</p>
+<p class="small">The same decision, on your own machine, with no key and no server. The engine is the one this site runs <a href="#s3">[3]</a>: ONNX Runtime Web over a single packed sequence, with every artifact checked against a pinned SHA-256 before the runtime sees it.</p>
 <pre data-example="kev-browser"><code>import { loadKev } from './kev-engine.js';
 
 // Nothing downloads until this call: a 7 MB tokenizer, a 1.3 MB graph and a
@@ -113,7 +113,7 @@ console.log(`${tokens} tokens in a single pass, ${ms.toFixed(0)} ms`, distributi
 <p class="small">A graph that finds no delimiter tokens returns a flat distribution instead of raising. That is a failure speaking, not a confident tie, so compare the probabilities rather than reading the largest one.</p>
 
 <h3>Kev through its own local server</h3>
-<p class="small">The same checkpoint behind an HTTP route, in the same request and response shape as Jev. Useful when you want one process to answer many clients.</p>
+<p class="small">The same checkpoint behind an HTTP route <a href="#s2">[2]</a>, in the same request and response shape as Jev. Useful when you want one process to answer many clients.</p>
 <pre data-example="kev-server"><code>git clone https://github.com/jaredpalmer/kev.git
 cd kev
 uv sync --extra serve
