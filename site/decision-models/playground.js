@@ -6,9 +6,8 @@
 // options Kev sees are the same rendered strings Laya's contract renders (laya-pack's
 // renderOptions), so both engines read the same words.
 
-import { loadLaya } from "./laya-engine.js";
+import { Classifier, loadSharedLaya } from "./classifier-api.js";
 import { loadKev, KevSession } from "./kev-engine.js";
-import { Classifier } from "./classifier-api.js";
 import { validateAnswers, PROVIDER_TIMEOUT_MS } from "./core.js";
 import { renderOptions, choiceConfidence } from "./laya-pack.js";
 import {
@@ -26,9 +25,9 @@ const engines = {
   laya: {
     label: "Laya",
     checkpointNote: "multilingual mmBERT on LiteRT.js (WASM/XNNPack), ~650 MB of verified downloads",
-    // window.__LAYA_URLS is a test seam: when set (by a smoke driver), loadLaya uses those
-    // asset URLs instead of the hub's. Unset in normal use, so the hub is the source.
-    load: (onProgress) => loadLaya({
+    // window.__LAYA_URLS is a test seam: when set (by a smoke driver), the shared loader
+    // uses those asset URLs instead of the hub's. Unset in normal use.
+    load: (onProgress) => loadSharedLaya({
       onProgress: (stage, received, total) => onProgress(stage, received, total),
       ...(globalThis.__LAYA_URLS ? { urls: globalThis.__LAYA_URLS } : {}),
     }),
@@ -373,7 +372,7 @@ async function runClassifierDemo() {
     textContent: "Running inference via window.Classifier…",
   }));
 
-  const code = `// W3C Chrome Built-in Classifier API
+  const code = `// Chrome Built-in AI Classifier API proposal
 const schema = ${JSON.stringify(schema, null, 2)};
 
 const classifier = await Classifier.create(schema);
