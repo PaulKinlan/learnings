@@ -308,5 +308,5 @@ try{
  check('examples page no mobile horizontal overflow',await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth&&document.querySelector('main h1').textContent.length>0));
  await p.emulateViewport({width:1440,height:1000,mobile:false,scale:1});
  check('receipt names the tree it measured (no source file changed mid-run)',measureTree(repoRoot).tree===measured.tree);
- const receipt={at:new Date().toISOString(),commit,head:measured.head,headTree:measured.headTree,tree:measured.tree,dirty:measured.dirty,base,checks,resources,harnesses,qualification:'UI behavior and synthetic transport fixtures only. No paid model inference, local Kev weights, or training run.'};await writeFile(out+'/receipt.json',JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt,null,2));
+ const receipt={at:new Date().toISOString(),commit,head:measured.head,headTree:measured.headTree,tree:measured.tree,dirty:measured.dirty,links:measured.links,base,checks,resources,harnesses,qualification:'UI behavior and synthetic transport fixtures only. No paid model inference, local Kev weights, or training run.'};await writeFile(out+'/receipt.json',JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt,null,2));
 }finally{await p.close();if(local)await new Promise(r=>local.server.close(r));}

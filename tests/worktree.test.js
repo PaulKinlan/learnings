@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { measureTree } from './lib/worktree.mjs';
@@ -78,6 +78,50 @@ test('measuring never touches the real index or working tree state', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+// Regression for learnings-2pr: add -A fingerprints a symlink's PATH, but the serve
+// script reads through readFile and serves the TARGET's bytes. Overwriting the target
+// must change the measured tree (and the receipt manifest must name the link).
+test('a symlinked source file is measured by its target bytes, not its link path', () => {
+  const dir = makeRepo();
+  const outside = mkdtempSync(join(tmpdir(), 'link-target-'));
+  try {
+    const target = join(outside, 'target.html');
+    writeFileSync(target, 'BEFORE: served bytes\n');
+    mkdirSync(join(dir, 'site'));
+    symlinkSync(target, join(dir, 'site', 'index.html'));
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '-m', 'link');
+    const before = measureTree(dir);
+    assert.equal(before.dirty, true, 'a resolved symlink never matches its literal committed link entry');
+    assert.deepEqual(before.links.map(l => l.path), ['site/index.html']);
+    assert.equal(before.links[0].kind, 'file');
+    writeFileSync(target, 'AFTER: served bytes changed\n');
+    const after = measureTree(dir);
+    assert.equal(after.dirty, true);
+    assert.notEqual(after.tree, before.tree, 'changing the target bytes must change the measured tree');
+    assert.equal(measureTree(dir).tree, after.tree, 'the id stays content-addressed: identical bytes agree');
+    // Retargeting to a different path holding identical bytes must NOT change the id.
+    const target2 = join(outside, 'target2.html');
+    writeFileSync(target2, 'AFTER: served bytes changed\n');
+    rmSync(join(dir, 'site', 'index.html')); // removes the link, never its target
+    symlinkSync(target2, join(dir, 'site', 'index.html'));
+    assert.equal(measureTree(dir).tree, after.tree, 'same served bytes through a new target measure the same');
+  } finally { rmSync(dir, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); }
+});
+
+test('an untracked symlink is part of the measured tree, and a dangling one is deterministic', () => {
+  const dir = makeRepo();
+  try {
+    const before = measureTree(dir);
+    symlinkSync(join(dir, 'missing.html'), join(dir, 'dangling.html'));
+    const dangling = measureTree(dir);
+    assert.equal(dangling.dirty, true);
+    assert.notEqual(dangling.tree, before.tree);
+    assert.equal(measureTree(dir).tree, dangling.tree, 'an unreadable link still measures deterministically');
+    assert.deepEqual(dangling.links.map(l => [l.path, l.kind]), [['dangling.html', 'unreadable']]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 // Wiring guard: the browser gate must pin the measured tree in its receipt and name
 // its evidence directory for that tree, so a PASS on a dirty worktree cannot be
 // mistaken for a PASS on HEAD (learnings-j38).
@@ -87,7 +131,7 @@ test('browser receipt names the measured tree, not only HEAD', () => {
   assert.match(browser, /const measured=measureTree\(repoRoot\);/);
   assert.match(browser, /measured\.tree\.slice\(0,12\)/, 'evidence directory must be named for the measured tree');
   assert.doesNotMatch(browser, /\$\{basename\(repoRoot\)\}-\$\{commit\}/, 'evidence directory must not be named for HEAD');
-  for (const field of ['head:measured.head', 'headTree:measured.headTree', 'tree:measured.tree', 'dirty:measured.dirty']) {
+  for (const field of ['head:measured.head', 'headTree:measured.headTree', 'tree:measured.tree', 'dirty:measured.dirty', 'links:measured.links']) {
     assert.match(browser, new RegExp(field.replace(/\./g, '\\.')), `receipt must record ${field}`);
   }
   assert.match(browser, /receipt names the tree it measured/);
