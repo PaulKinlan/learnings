@@ -94,7 +94,10 @@ export async function runSpec(spec, signal, onProgress = null) {
       });
     }
     const started = performance.now();
-    const layaQuestions = {};
+    // Object.create(null): question ids are caller-supplied, and runSpec is exported without a
+    // validating caller — a plain {} would treat `__proto__` as a prototype assignment and
+    // silently drop that question (tm-plain-object-answer-accumulators; the learnings-5tf class).
+    const layaQuestions = Object.create(null);
     for (const [id, q] of Object.entries(spec.questions)) {
       layaQuestions[id] = {
         t: q.type,
@@ -144,7 +147,9 @@ export async function runSpec(spec, signal, onProgress = null) {
     });
     const { distributions, tokens, ms, flat } = await kevSession.decidePacked(spec.state, kevQuestions);
     const elapsed = performance.now() - started;
-    const answers = {};
+    // Object.create(null): same caller-supplied-id hazard as layaQuestions above
+    // (tm-plain-object-answer-accumulators) — a `__proto__` id must stay an own answer key.
+    const answers = Object.create(null);
     Object.keys(spec.questions).forEach((id, i) => {
       const q = spec.questions[id];
       const dist = distributions[i];
