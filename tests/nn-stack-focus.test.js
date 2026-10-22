@@ -16,22 +16,33 @@ const lifted = {transform: 'matrix(1, 0, 0, 1, 0, -2)', borderColor: 'rgb(56, 18
 const resting = {transform: 'none', borderColor: 'rgb(100, 116, 139)', boxShadow: 'none'};
 const afterClick = process.argv.includes('--before') ? lifted : resting;
 async function read(target, label) {
-  await browser.waitFor((sel, want) => {
-    const card = getComputedStyle(document.querySelector(sel));
-    return card.transform === want.transform && card.borderColor === want.borderColor &&
-      card.boxShadow === want.boxShadow;
+  // One atomic in-page read: the target match is checked, re-checked one timer tick later
+  // (a restarted transition fails the second sample), and the snapshot is captured in the
+  // same evaluation. A separate check-then-capture raced hover restarts under load — the
+  // predicate saw the settled card and the snapshot then read mid-transition (gate 4b0e5490,
+  // learnings-93m).
+  return browser.waitFor(async (sel, want) => {
+    const sample = () => {
+      const li = document.querySelector(sel);
+      const a = li.querySelector('h3 a');
+      const card = getComputedStyle(li);
+      const link = getComputedStyle(a);
+      return {
+        transform: card.transform, borderColor: card.borderColor, boxShadow: card.boxShadow,
+        outlineColor: link.outlineColor, outlineStyle: link.outlineStyle,
+        focusVisible: a.matches(':focus-visible'), focusWithin: li.matches(':focus-within'),
+        hover: li.matches(':hover'), activeElement: document.activeElement === a,
+        href: a.href,
+      };
+    };
+    const settled = (s) => s.transform === want.transform && s.borderColor === want.borderColor &&
+      s.boxShadow === want.boxShadow;
+    const first = sample();
+    if (!settled(first)) return null;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const second = sample();
+    return settled(second) ? second : null;
   }, {args: [selector, target], timeout: 10000, label});
-  return browser.evaluate(sel => {
-    const li = document.querySelector(sel);
-    const a = li.querySelector('h3 a');
-    const card = getComputedStyle(li);
-    const link = getComputedStyle(a);
-    return {transform: card.transform, borderColor: card.borderColor, boxShadow: card.boxShadow,
-      outlineColor: link.outlineColor, outlineStyle: link.outlineStyle,
-      focusVisible: a.matches(':focus-visible'), focusWithin: li.matches(':focus-within'),
-      hover: li.matches(':hover'), activeElement: document.activeElement === a,
-      href: a.href};
-  }, selector);
 }
 async function away() {
   await browser.send('Input.dispatchMouseEvent', {type: 'mouseMoved', x: 0, y: 0});
