@@ -7,9 +7,20 @@ const browser = await launch({candidates: ['/usr/bin/chromium']});
 const url = local.url + 'neural-networks/';
 const selector = '#nn-stack li:has(h3 a)';
 const anchor = selector + ' h3 a';
-const settle = () => new Promise(resolve => setTimeout(resolve, 250));
-async function read() {
-  await settle();
+// End states of the 0.15s lift transition on .nn-stack li (chapter.css). A fixed sleep raced
+// that transition under load and read the card mid-interpolation (learnings-93m); while a
+// transition runs, computed style only ever returns interpolated values, so an exact match on
+// the transitioned properties is possible once it has settled — which is what read() waits on.
+const lifted = {transform: 'matrix(1, 0, 0, 1, 0, -2)', borderColor: 'rgb(56, 189, 248)',
+  boxShadow: 'rgba(0, 0, 0, 0.4) 0px 4px 16px 0px'};
+const resting = {transform: 'none', borderColor: 'rgb(100, 116, 139)', boxShadow: 'none'};
+const afterClick = process.argv.includes('--before') ? lifted : resting;
+async function read(target, label) {
+  await browser.waitFor((sel, want) => {
+    const card = getComputedStyle(document.querySelector(sel));
+    return card.transform === want.transform && card.borderColor === want.borderColor &&
+      card.boxShadow === want.boxShadow;
+  }, {args: [selector, target], timeout: 10000, label});
   return browser.evaluate(sel => {
     const li = document.querySelector(sel);
     const a = li.querySelector('h3 a');
@@ -39,7 +50,7 @@ try {
   }
   assert.ok(found, 'Tab reaches the in-card anchor');
   await away();
-  const keyboard = await read();
+  const keyboard = await read(lifted, 'keyboard focus lift to settle');
 
   await browser.goto(url);
   await browser.waitFor(() => Boolean(document.querySelector("#nn-stack li h3 a")));
@@ -49,7 +60,7 @@ try {
   }, {capture: true}));
   await browser.click(anchor);
   await away();
-  const click = await read();
+  const click = await read(afterClick, 'click drop to settle');
 
   await browser.goto(url);
   await browser.waitFor(() => Boolean(document.querySelector("#nn-stack li h3 a")));
@@ -62,7 +73,7 @@ try {
   await browser.send('Page.navigateToHistoryEntry', {entryId: previous.id});
   await browser.waitFor(() => Boolean(document.querySelector('#nn-stack li h3 a')));
   await away();
-  const back = await read();
+  const back = await read(afterClick, 'back-navigation drop to settle');
 
   await browser.goto(url);
   await browser.waitFor(() => Boolean(document.querySelector("#nn-stack li h3 a")));
@@ -72,7 +83,7 @@ try {
     return {x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2)};
   }, anchor);
   await browser.send('Input.dispatchMouseEvent', {type: 'mouseMoved', ...position});
-  const hover = await read();
+  const hover = await read(lifted, 'hover lift to settle');
   for (const [name, value] of Object.entries({keyboard, click, back, hover})) console.log(`${name}: ${JSON.stringify(value)}`);
   assert.equal(keyboard.transform, 'matrix(1, 0, 0, 1, 0, -2)');
   assert.equal(keyboard.borderColor, 'rgb(56, 189, 248)');
