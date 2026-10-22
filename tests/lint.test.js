@@ -112,8 +112,11 @@ function scanFile(file) {
 
   lines.forEach((line, index) => {
     // Allow clearing a container (empty string or a single space), with or
-    // without whitespace around `=`.
-    if (/\.innerHTML\s*=\s*["']\s*["']/.test(line)) return;
+    // without whitespace around `=`. Anchored to the end of the statement: the
+    // RHS must be NOTHING BUT the empty literal (tm-lint-empty-clear-allowance-bypass).
+    // Unanchored, `el.innerHTML = "" + untrustedHtml` would match the allowance
+    // prefix and return before isSinkLine() ever runs.
+    if (/\.innerHTML\s*=\s*["']\s*["']\s*;?\s*(\/\/.*)?$/.test(line)) return;
 
     // Allow the known constant-only notice in image-lab.js. Scoped by path, so a
     // `notice.innerHTML = userInput` sink in any other file still fails.
@@ -160,6 +163,37 @@ test('file walk reaches .mjs sinks', () => {
     fs.writeFileSync(path.join(tmp, 'sink.mjs'), 'function bad(el) { el.innerHTML = "<b>x</b>"; }\n');
     const failures = lintTree(tmp);
     assert.strictEqual(failures.length, 1, 'The real walk must scan and catch the .mjs sink');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('the empty-string clearing allowance is anchored: a suffix after the literal is a sink (learnings-7wj)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), '7wj-lint-'));
+  try {
+    // Legitimate clears keep passing, including with a trailing comment.
+    fs.writeFileSync(path.join(tmp, 'clears.js'), [
+      'function reset(el, panel) {',
+      '  el.innerHTML = "";',
+      "  el.innerHTML = ' ';",
+      '  panel.innerHTML = "" ; // wipe the panel',
+      '}',
+      '',
+    ].join('\n'));
+    // Every one of these merely STARTS with an empty literal: the old unanchored allowance
+    // returned before isSinkLine() ran and silently allowed the concatenation (or comma
+    // expression) straight into the sink.
+    fs.writeFileSync(path.join(tmp, 'bypass.js'), [
+      'function inject(el, panel, userHtml) {',
+      '  el.innerHTML = "" + userHtml;',
+      '  panel.innerHTML = ""+ userHtml;',
+      '  el.innerHTML = "" , userHtml;',
+      '}',
+      '',
+    ].join('\n'));
+    const failures = lintTree(tmp);
+    assert.strictEqual(failures.length, 3, `every empty-literal-prefixed sink must fail, got:\n${failures.join('\n')}`);
+    assert.ok(failures.every(f => f.includes('bypass.js')), 'only bypass.js fails; the anchored clears stay allowed');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
