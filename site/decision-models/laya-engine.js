@@ -22,6 +22,7 @@
 // in laya-pack.js, pinned id-for-id against the publisher's gate captures.
 
 import { loadLiteRt, loadAndCompile, Tensor } from "../vendor/litert/index.js";
+import { artifactFetchOptions, assertArtifactResponse } from "./fetch-policy.mjs";
 import { Tokenizer } from "../vendor/tokenizers.min.mjs";
 import {
   ENGLISH_MASK_STRING,
@@ -176,7 +177,8 @@ export async function fetchBytes(url, { onProgress = null, sha256, label = url, 
     LAYA_DEFAULT_MAX_BYTES;
 
   const controller = new AbortController();
-  const res = await fetch(url, { signal: controller.signal });
+  const res = await fetch(url, artifactFetchOptions({ signal: controller.signal }));
+  assertArtifactResponse(res, label);
   if (!res.ok) throw new Error(`download failed for ${label}: HTTP ${res.status}`);
   const total = Number(res.headers.get("content-length")) || 0;
   if (limit != null && total > limit) {
@@ -284,7 +286,8 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
   // The multilingual sums file itself is checked against the digest in laya-manifest.js.
   const sumsLimit = LAYA_MAX_BYTES.SHA256SUMS ?? 1024 * 1024;
   const sumsController = new AbortController();
-  const sumsResponse = await fetch(sumsUrl, { signal: sumsController.signal });
+  const sumsResponse = await fetch(sumsUrl, artifactFetchOptions({ signal: sumsController.signal }));
+  assertArtifactResponse(sumsResponse, `SHA256SUMS ${spec.repo}@${spec.revision}`);
   if (!sumsResponse.ok) {
     throw new Error(
       `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: HTTP ${sumsResponse.status} (${sumsUrl})`,

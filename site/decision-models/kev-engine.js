@@ -25,6 +25,7 @@ import {
   readAnswers,
 } from "./kev-pack.js";
 import { KEV_REVISION, KEV_SHA256, KEV_MAX_BYTES, KEV_DEFAULT_MAX_BYTES } from "./kev-manifest.js";
+import { artifactFetchOptions, assertArtifactResponse } from "./fetch-policy.mjs";
 
 const REPO = "onnx-community/kev-0.6b-ONNX";
 // The pin: a commit sha, not a branch, so the bytes behind every URL are immutable.
@@ -96,7 +97,8 @@ export async function fetchVerified(url, { onProgress = null, sha256, label = ur
     KEV_DEFAULT_MAX_BYTES;
 
   const controller = new AbortController();
-  const res = await fetch(url, { signal: controller.signal });
+  const res = await fetch(url, artifactFetchOptions({ signal: controller.signal }));
+  assertArtifactResponse(res, label);
   if (!res.ok) throw new Error(`download failed for ${label}: HTTP ${res.status}`);
   const total = Number(res.headers.get("content-length")) || 0;
   if (limit != null && total > limit) {
