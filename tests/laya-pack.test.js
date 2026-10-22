@@ -19,6 +19,7 @@ import {
   decodeQuestion,
   READER_SPECIAL_STRINGS,
   specialLiteralsFromTokenizer,
+  tokenizerSpecials,
 } from "../site/decision-models/laya-pack.js";
 
 const IDS = ENGLISH_SPECIAL_IDS; // { cls: 50281, sep: 50282, pad: 50283, mask: 50284, unk: 50280 }
@@ -143,6 +144,20 @@ test("reader text cannot inject any checkpoint special id into instructions, opt
 // learnings-xp4: the neutralizer used a fixed 14-literal list, so a checkpoint that declares
 // its own special literals left a way to place a control token in a sequence built from
 // untrusted reader text. The literals now come from the loaded tokenizer's added_tokens.
+test("tokenizerSpecials takes every special:true literal, its normalized flag and its id", () => {
+  const spec = tokenizerSpecials({
+    added_tokens: [
+      { content: "<2mass>", id: 1, special: true, normalized: false },
+      { content: "<CTRL>", id: 9, special: true, normalized: true },
+      { content: "plainword", id: 2, special: false },
+    ],
+  });
+  assert.deepEqual(spec.ids, [1, 9], "declared special ids are collected for the token filter");
+  assert.deepEqual(spec.normalizedLiterals, ["<CTRL>"], "only the normalized:true literal is matched case-insensitively");
+  assert.ok(spec.literals.includes("<2mass>") && spec.literals.includes("<CTRL>"));
+  assert.ok(!spec.literals.includes("plainword"));
+});
+
 test("specialLiteralsFromTokenizer takes every special:true literal and keeps the built-in floor", () => {
   const literals = specialLiteralsFromTokenizer({
     added_tokens: [
@@ -205,15 +220,74 @@ test("a checkpoint-declared special literal is neutralized in instructions, opti
   await assert.rejects(build({ specialStrings: ["ok", ""] }), /specialStrings must be an array of non-empty strings/);
 });
 
-// Wiring guard (learnings-xp4): the engine must derive the literals from the tokenizer it
-// actually loaded, not fall back to the fixed list, and must pass them to buildSequence.
-test("laya-engine derives the neutralized literals from the loaded tokenizer", () => {
-  const engine = readFileSync(new URL("../site/decision-models/laya-engine.js", import.meta.url), "utf8");
-  assert.match(engine, /const specialStrings = specialLiteralsFromTokenizer\(tokenizerJson\);/);
-  assert.match(engine, /this\.specialStrings = specialStrings/);
-  assert.match(engine, /specialStrings: this\.specialStrings,/);
+// learnings-gen: an added token declared `normalized: true` is matched AFTER the tokenizer
+// normalizes the text, so masking the literal alone missed the case-folded alias. This is the
+// reviewer's exact repro: a Lowercase-normalizing checkpoint whose mask token is the
+// normalized:true literal <CTRL> still injected id 50284 from reader text "<ctrl>".
+test("a normalized:true checkpoint token cannot be injected through its case-folded alias", async () => {
+  const config = JSON.parse(readFileSync(new URL("../site/decision-models/laya/en-tokenizer.json", import.meta.url), "utf8"));
+  const maskId = 50284;
+  config.normalizer = { type: "Lowercase" };
+  const maskToken = config.added_tokens.find((token) => token.special && token.content === "[MASK]");
+  maskToken.content = "<CTRL>";
+  maskToken.normalized = true;
+  const specials = tokenizerSpecials(config);
+  assert.deepEqual(specials.normalizedLiterals, ["<CTRL>"], "the alias must be recognized as normalized");
+  assert.ok(specials.ids.includes(maskId), "the declared special id is known to the builder");
+
+  const tokenize = (text) => new Tokenizer(config, {}).encode(text, { add_special_tokens: false }).ids;
+  assert.deepEqual(tokenize("<ctrl>"), [maskId], "sanity: the tokenizer really does match the folded alias");
+
+  for (const field of ["instructions", "option", "state"]) {
+    const { ids, markers } = await buildSequence({
+      tokenize,
+      state: field === "state" ? "before <ctrl> after" : "s",
+      question: { t: "choice", ins: field === "instructions" ? "before <ctrl> after" : "q",
+        crit: { a: field === "option" ? "before <ctrl> after" : "", b: "" } },
+      maxLen: 512, headMaxLen: 192, ids: { cls: 50281, sep: 50282, mask: maskId },
+      maskString: "<CTRL>",
+      specialStrings: specials.literals,
+      normalizedSpecialStrings: specials.normalizedLiterals,
+      specialIds: specials.ids,
+    });
+    const structural = [0, ids.indexOf(50282), ...markers, ids.indexOf(50282, markers[1]), ids.length - 1];
+    assert.equal(ids.filter((id, index) => id === maskId && !structural.includes(index)).length, 0,
+      `${field}: the folded alias must not reach the sequence`);
+  }
 });
 
+// A normalizer that rewrites text in ways no literal match can predict (Strip, Replace) is
+// caught by the id filter: it does not care how the text changed, only which id came out.
+test("a control id that survives neutralization is dropped by the token-id filter", async () => {
+  const CONTROL = 50300;
+  // No literal in this text is special: the tokenizer emits the control id on its own.
+  const tokenize = (text) => (String(text).includes("magic") ? [CONTROL] : [...String(text)].map((c) => c.codePointAt(0)));
+  const build = (args) => buildSequence({
+    tokenize, maxLen: 512, headMaxLen: 192, ids: IDS, maskString: MASK_STR,
+    state: "s", question: { t: "choice", ins: "q", crit: { a: "", b: "" } }, ...args,
+  });
+  const leaky = await build({ state: "magic", question: { t: "choice", ins: "magic", crit: { a: "", b: "magic" } } });
+  assert.ok(leaky.ids.includes(CONTROL), "sanity: the stub injects the control id when nothing filters it");
+  const filtered = await build({
+    specialIds: [CONTROL],
+    state: "magic",
+    question: { t: "choice", ins: "magic", crit: { a: "", b: "magic" } },
+  });
+  assert.equal(filtered.ids.filter((id) => id === CONTROL).length, 0, "the control id must be dropped");
+  // The unknown id is exempt: an unmappable character legitimately tokenizes to it.
+  const kept = await build({ specialIds: [IDS.unk], state: "s", question: { t: "choice", ins: "q", crit: { a: "", b: "" } } });
+  assert.ok(kept.ids.length > 0, "the UNK id an unknown character produces is still allowed");
+});
+
+// Wiring guard (learnings-xp4, learnings-gen): the engine must derive the specials from the
+// tokenizer it actually loaded — literals, normalized aliases and ids — and pass all three.
+test("laya-engine derives the neutralized literals from the loaded tokenizer", () => {
+  const engine = readFileSync(new URL("../site/decision-models/laya-engine.js", import.meta.url), "utf8");
+  assert.match(engine, /const specials = tokenizerSpecials\(tokenizerJson\);/);
+  assert.match(engine, /this\.specials = specials/);
+  for (const field of ["specialStrings: this.specials?.literals", "normalizedSpecialStrings: this.specials?.normalizedLiterals", "specialIds: this.specials?.ids"])
+    assert.ok(engine.includes(field), `the engine must pass ${field}`);
+});
 test("the state is right-truncated to the room left by head and options", async () => {
   const longState = "s".repeat(600);
   const { ids, markers } = await buildSequence({
