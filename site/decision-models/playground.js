@@ -8,7 +8,7 @@
 
 import { Classifier, loadSharedLaya } from "./classifier-api.js";
 import { loadKev, KevSession } from "./kev-engine.js";
-import { validateAnswers, PROVIDER_TIMEOUT_MS } from "./core.js";
+import { validateAnswers, PROVIDER_TIMEOUT_MS, PROVIDER_FETCH_OPTIONS } from "./core.js";
 import { renderOptions, choiceConfidence } from "./laya-pack.js";
 import {
   choose as kevChoose,
@@ -80,6 +80,9 @@ const engines = {
                 questions: tsQuestions,
               }),
               signal,
+              // INV-FETCH-HYGIENE parity with core.js post(): a redirect must fail, not make
+              // the browser replay this POST (key, state, questions) at the redirect target.
+              ...PROVIDER_FETCH_OPTIONS,
             });
           } catch (error) {
             // core.js post() reports an aborted signal as a timeout, so the playground says the

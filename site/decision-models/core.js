@@ -94,9 +94,15 @@ export function loopbackEndpoint(value) {
   if(u.pathname!=='/v1/systemone') fail(`Endpoint path must be exactly /v1/systemone, got ${u.pathname}.`);
   return u.href;
 }
+// INV-FETCH-HYGIENE: the transport options every hosted-provider call must carry. A 307/308
+// makes the browser REPLAY the POST body — reader questions, state, an uploaded image — at the
+// redirect target; ambient credentials or a Referer would leak the key or the page URL along
+// with it. Spread this into every provider fetch init (post() below, the playground's hosted
+// Jev call, image-lab's hosted TypeSafe call) so the policy has one source.
+export const PROVIDER_FETCH_OPTIONS = { redirect: 'error', credentials: 'omit', referrerPolicy: 'no-referrer' };
 async function post(url, headers, body, signal) {
   let response;
-  try { response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body),signal,credentials:'omit',redirect:'error',referrerPolicy:'no-referrer'}); }
+  try { response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body),signal,...PROVIDER_FETCH_OPTIONS}); }
   catch(e) { if(signal?.aborted) throw new Error('Request cancelled or timed out. No automatic retry.'); throw new Error('Connection failed or browser CORS refused. Jev rejected the Pages origin in our preflight check. Serve locally and select the optional relay for hosted APIs; for Kev check the server and local-network permission. No automatic retry.'); }
   if(!response.ok) throw new Error(`Provider returned HTTP ${response.status}. Check access, model name or rate limits. No automatic retry.`);
   return response.json();
