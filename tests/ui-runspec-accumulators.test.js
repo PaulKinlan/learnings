@@ -13,7 +13,9 @@ registerHooks({
     const stubs = {
       "./core.js":
         "export const decide = async () => { throw new Error('unexpected jev path'); };" +
-        "export const gate = () => 'n/a';",
+        "export const gate = () => 'n/a';" +
+        // Mirror the real helper's non-browser behaviour: no location realm -> harness owns the seam.
+        "export const mockDecide = () => globalThis.__MOCK_DECIDE__ ?? null;",
       "./laya-engine.js":
         "export const loadLaya = async () => ({ checkpoint: 'fixture-laya'," +
         " decideAll: async (state, questions) => { globalThis.__layaQuestions = questions;" +
