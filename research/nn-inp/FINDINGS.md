@@ -21,15 +21,20 @@ Run from the repo root (each script serves `site/` itself):
 1. **Handlers are cheap — confirmed twice.** Event Timing `processingStart→End` is 0–4ms
    for every click/pointer event on both chapter pages (matches the earlier w6x measurement).
 
-2. **The page-side defect is gradient-descent's on-load race animation.** The devtools
-   timeline catches `FunctionCall "tick"` (the `requestAnimationFrame` handler in
-   `gradient-descent.js animate()`) at **704ms for the first frame and 102ms for the next**:
-   every frame clears and fully redraws two canvases (6 optimiser paths × 2 strokes on the
-   map + chart axes/paths). Under software raster each frame saturates the main thread, so
-   the 900ms animation stretches over several seconds of ~100ms-cadence long tasks. Any
-   input during that window queues behind it — that is the 1.3–10.4s hover duration the
-   bead was filed with. Fix direction: draw incrementally (only the newest path segment per
-   frame) instead of clear-everything-every-frame.
+2. **The page-side cost on gradient-descent is mostly NOT the drawing.** Direct
+   instrumentation (wrapping `requestAnimationFrame` and the canvas API before document
+   load) shows the real per-tick canvas work is ~1ms (putImageData 0.4–1.2ms, all strokes
+   ~0.1ms) and the animation runs only ~4–10 ticks. The big ticks traced as FunctionCall
+   400–700ms decompose into: (a) a one-time `background()` heat-map generation (230k
+   surface evaluations, ~300–400ms cold inside the first tick — the surface itself costs
+   2.3ms warm for all 230k calls in node), and (b) V8 Scavenger minor-GC pauses of ~95ms
+   each (measured 94–95ms per pause, i.e. environment-stretched; triggered by page-load
+   allocations, not by the ticks' own ~100–200KB). The devtools-timeline "704ms tick" of
+   the first run was this combination under heavier VM load. Fix direction
+   (learnings-am8, landed): allocation-free hot loops (scalar coordinate math in the same
+   order as `toPx()`, index bounds instead of `slice()`, a loop instead of `flatMap()`),
+   bit-exact rendering verified by canvas checksums; the residual stalls are GC and VM
+   load, not page code.
 
 3. **Chapter documents are expensive to lay out once at load.** Trace on
    gradient-descent.html: `UpdateLayoutTree` 495ms + full-document `Layout` 497ms
