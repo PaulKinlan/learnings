@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {execFileSync, spawn} from 'node:child_process';
-import {existsSync, mkdtempSync, rmSync} from 'node:fs';
+import {existsSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {test} from 'node:test';
@@ -51,7 +51,10 @@ test('SIGTERM interrupts a runner and removes its browser and profile', {skip: !
   let profile;
   try {
     profile = await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('runner did not launch')), 25000);
+      // 45s: launch() now retries a failed startup once (learnings-gib), so a slow-start box
+      // can legitimately take two 20s endpoint bounds before the runner reports its profile.
+      // A runner that is truly hung still trips this bound.
+      const timer = setTimeout(() => reject(new Error('runner did not launch')), 45000);
       let output = '';
       runner.stdout.on('data', (chunk) => {
         output += chunk;
@@ -102,4 +105,21 @@ test('orphan assertion names a deliberately unclosed browser', {skip: !binary}, 
   }
   await assertNoBrowserOrphans(profile);
   assert.equal(existsSync(profile), false);
+});
+
+test('a launch that fails once is retried, and both attempts are reported (learnings-gib)', {skip: !binary}, async () => {
+  // A stub "chromium" that exits immediately: each attempt rejects via the exit guard, so
+  // the retry runs without waiting out the endpoint timer, and the surfaced error must name
+  // both attempts.
+  const dir = mkdtempSync(join(tmpdir(), 'cdp-stub-'));
+  const stub = join(dir, 'chromium-stub');
+  writeFileSync(stub, '#!/bin/sh\nexit 0\n', {mode: 0o755});
+  try {
+    await assert.rejects(
+      launch({candidates: [stub], endpointTimeoutMs: 1000}),
+      (error) => /failed to launch twice: chromium exited early \(0\) \(first attempt: chromium exited early \(0\)\)/.test(error.message),
+    );
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
 });

@@ -73,7 +73,7 @@ export function resolveBinary(candidates = null) {
   return (candidates ?? getCandidateBrowsers()).find((b) => existsSync(b)) ?? null;
 }
 
-export async function launch({ width = 1000, height = 800, profile = null, fakeMedia = false, candidates = null } = {}) {
+export async function launch({ width = 1000, height = 800, profile = null, fakeMedia = false, candidates = null, endpointTimeoutMs = 20000 } = {}) {
   const binary = resolveBinary(candidates);
   if (!binary) throw new Error("no Chromium/Chrome binary found; set FLEET_CHROME (or VOICEBOX_CHROME)");
 
@@ -86,23 +86,48 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
     try { await assertNoBrowserOrphans(profile); }
     catch (error) { throw new Error(`cannot launch with occupied profile ${profile}: ${error.message}`); }
   }
-  profile = profile ?? mkdtempSync(path.join(os.tmpdir(), "voicebox-cdp-"));
-  const child = spawn(
-    binary,
-    [
-      "--headless=new",
-      ...(fakeMedia ? ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] : []),
-      "--disable-gpu",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-dev-shm-usage",
-      `--window-size=${width},${height}`,
-      `--user-data-dir=${profile}`,
-      "--remote-debugging-port=0",
-      "about:blank",
-    ],
-    { stdio: ["ignore", "pipe", "pipe"], detached: true },
-  );
+  // One bounded retry: on a loaded VM chromium occasionally fails to print its DevTools
+  // endpoint within the 20s bound (a gate once lost a run to exactly this, learnings-gib).
+  // A fresh attempt recovers a slow-start box; a genuinely broken binary still fails inside
+  // ~40s, far under the suite budget. Own profiles get a fresh temp dir per attempt.
+  let child = null;
+  const startChromium = () => {
+    if (ownProfile) profile = mkdtempSync(path.join(os.tmpdir(), "voicebox-cdp-"));
+    const spawned = spawn(
+      binary,
+      [
+        "--headless=new",
+        ...(fakeMedia ? ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] : []),
+        "--disable-gpu",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-dev-shm-usage",
+        `--window-size=${width},${height}`,
+        `--user-data-dir=${profile}`,
+        "--remote-debugging-port=0",
+        "about:blank",
+      ],
+      { stdio: ["ignore", "pipe", "pipe"], detached: true },
+    );
+    child = spawned;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`chromium did not print a DevTools endpoint within ${endpointTimeoutMs}ms`)), endpointTimeoutMs);
+      let buffer = "";
+      const scan = (chunk) => {
+        buffer += String(chunk);
+        const match = buffer.match(/ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[0-9a-f-]+/);
+        if (match) {
+          clearTimeout(timer);
+          resolve(match[0]);
+        }
+      };
+      spawned.stderr.on("data", scan);
+      spawned.stdout.on("data", scan);
+      spawned.once("error", (error) => { clearTimeout(timer); reject(error); });
+      spawned.once("exit", (code) => { clearTimeout(timer); reject(new Error(`chromium exited early (${code})`)); });
+    });
+  };
+
   let socket;
   let closed = false;
   const killGroup = () => {
@@ -137,22 +162,19 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
   };
 
   try {
-  const wsUrl = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("chromium did not print a DevTools endpoint")), 20000);
-    let buffer = "";
-    const scan = (chunk) => {
-      buffer += String(chunk);
-      const match = buffer.match(/ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[0-9a-f-]+/);
-      if (match) {
-        clearTimeout(timer);
-        resolve(match[0]);
-      }
-    };
-    child.stderr.on("data", scan);
-    child.stdout.on("data", scan);
-    child.once("error", (error) => { clearTimeout(timer); reject(error); });
-    child.once("exit", (code) => { clearTimeout(timer); reject(new Error(`chromium exited early (${code})`)); });
-  });
+  let wsUrl;
+  try {
+    wsUrl = await startChromium();
+  } catch (firstError) {
+    killGroup();
+    if (ownProfile) rmSync(profile, { recursive: true, force: true });
+    try {
+      wsUrl = await startChromium();
+    } catch (secondError) {
+      await close();
+      throw new Error(`chromium failed to launch twice: ${secondError.message} (first attempt: ${firstError.message})`);
+    }
+  }
 
   socket = new WebSocket(wsUrl);
   const pending = new Map();
