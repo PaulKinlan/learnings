@@ -295,6 +295,44 @@ test("SHA256SUMS stream is bounded: aborts before EOF with absent/lying Content-
   }
 });
 
+test("SHA256SUMS fetch is bounded by the wall-clock deadline: a stalled hub fails fast (tm-download-no-timeout)", async () => {
+  // The mock honours the signal it is handed: if the deadline is not actually wired to the sums
+  // request, the read below never rejects and this test fails by hanging.
+  let handedSignal = null;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (String(url).includes("SHA256SUMS")) {
+      handedSignal = options.signal;
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-length": "64" }),
+        get body() {
+          return new ReadableStream({
+            start(controller) {
+              handedSignal?.addEventListener("abort", () => controller.error(handedSignal.reason));
+            },
+          });
+        },
+      };
+    }
+    throw new Error(`unexpected fixture fetch: ${url}`);
+  };
+  try {
+    const t0 = Date.now();
+    await assert.rejects(
+      loadLaya({ urls: { SHA256SUMS: "https://fixture.invalid/SHA256SUMS" }, timeoutMs: 25 }),
+      /SHA256SUMS unavailable for .*: no data within 25ms/,
+      "a stalled sums hub must fail within the wall-clock deadline instead of hanging loadLaya forever",
+    );
+    assert.ok(handedSignal, "the abort signal was passed to the sums fetch");
+    assert.equal(handedSignal.reason?.name, "TimeoutError", "the deadline aborted with a TimeoutError");
+    assert.ok(Date.now() - t0 < 5000, "the stalled sums fetch failed fast instead of hanging forever");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("an inherited-name override filename still gets a bounded cap (integrityFor)", async () => {
   const sums = Object.entries(names)
     .map(([key, file]) => `${sha(payloads[key])}  ${file}\n`)
