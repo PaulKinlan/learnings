@@ -1,6 +1,6 @@
 // CPU-profile probe: idle profile for gradient-descent, click-phase profile for architectures.
-import {launch} from '/home/exedev/worktrees/learnings-nnflaky/tests/lib/cdp.mjs';
-import {serve} from '/home/exedev/worktrees/learnings-nnflaky/scripts/serve.mjs';
+import {launch} from '../../tests/lib/cdp.mjs';
+import {serve} from '../../scripts/serve.mjs';
 import {writeFileSync} from 'node:fs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));

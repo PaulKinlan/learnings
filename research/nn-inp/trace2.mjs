@@ -3,7 +3,7 @@ import {spawn} from 'node:child_process';
 import {mkdtempSync, rmSync} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {serve} from '/home/exedev/worktrees/learnings-nnflaky/scripts/serve.mjs';
+import {serve} from '../../scripts/serve.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const local = await serve();

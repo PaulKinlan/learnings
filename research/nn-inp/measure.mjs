@@ -1,8 +1,8 @@
 // INP / presentation-delay probe for the neural-network chapter pages (learnings-6nb).
 // Uses the repo's own zero-dependency CDP driver. Trusted input only (Input.dispatchMouseEvent),
 // because synthetic dispatchEvent produces no Event Timing entries.
-import {launch} from '/home/exedev/worktrees/learnings-nnflaky/tests/lib/cdp.mjs';
-import {serve} from '/home/exedev/worktrees/learnings-nnflaky/scripts/serve.mjs';
+import {launch} from '../../tests/lib/cdp.mjs';
+import {serve} from '../../scripts/serve.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const local = await serve();

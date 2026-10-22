@@ -1,6 +1,6 @@
 // Idle-only probe: load a page, install longtask observer, sit idle N seconds, report.
-import {launch} from '/home/exedev/worktrees/learnings-nnflaky/tests/lib/cdp.mjs';
-import {serve} from '/home/exedev/worktrees/learnings-nnflaky/scripts/serve.mjs';
+import {launch} from '../../tests/lib/cdp.mjs';
+import {serve} from '../../scripts/serve.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const page = process.argv[2] ?? 'neural-networks/gradient-descent.html';
