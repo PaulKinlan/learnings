@@ -15,7 +15,11 @@ import {
   PRESETS,
   validateImageSpec,
   decideImage,
-  renderImageAnswers
+  renderImageAnswers,
+  imageFileRejection,
+  imagePixelsRejection,
+  IMAGE_MAX_BYTES,
+  IMAGE_MAX_PIXELS
 } from '../site/decision-models/image-lab.js';
 import { gate, validateAnswers, validateSpec } from '../site/decision-models/core.js';
 
@@ -409,6 +413,25 @@ test('JevImageBench filtering and sorting helpers', () => {
   for (let i = 0; i < sortedByCost.length - 1; i++) {
     assert.ok(sortedByCost[i].cost <= sortedByCost[i + 1].cost, 'Must be sorted ascending by cost');
   }
+});
+
+test('Image Lab input guards: MIME allowlist, byte cap and pixel-decode cap (tm-image-payload-unbounded)', () => {
+  const f = (type, size, name = 'photo.img') => ({ type, size, name });
+  // Accept the allowlisted raster formats within budget.
+  for (const type of ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif']) {
+    assert.equal(imageFileRejection(f(type, 1024)), '', `${type} within budget is accepted`);
+  }
+  assert.equal(imageFileRejection(f('image/jpeg', IMAGE_MAX_BYTES)), '', 'a file exactly at the byte cap is accepted');
+  // Reject scriptable and non-image types.
+  assert.match(imageFileRejection(f('image/svg+xml', 10, 'logo.svg')), /SVG images are not accepted/);
+  assert.match(imageFileRejection(f('text/html', 10, 'page.html')), /not an image\. Use PNG/);
+  assert.match(imageFileRejection(f('', 10)), /not an image\. Use PNG/);
+  // Reject oversized payloads.
+  assert.match(imageFileRejection(f('image/png', IMAGE_MAX_BYTES + 1, 'big.png')), /too large/);
+  // Pixel-decode cap: 1x1 is fine, over-budget dimensions are named in the rejection.
+  assert.equal(imagePixelsRejection(1, 1), '');
+  assert.equal(imagePixelsRejection(IMAGE_MAX_PIXELS / 4096, 4096), '', 'exactly at the pixel cap is accepted');
+  assert.match(imagePixelsRejection(IMAGE_MAX_PIXELS / 4096 + 1, 4096), /pixels exceeds/);
 });
 
 test('Image decision schema validation: reject bad specs and payloads', () => {
@@ -1512,11 +1535,15 @@ test('image lab: drop zone styles, CSP compliance, keyboard activation, and non-
     });
     assert.match(nonImageInputStatus, /test\.txt.*is not an image/i);
 
-    // Choosing a valid image clears the error
+    // Choosing a valid image clears the error (real PNG bytes: the lab decodes before accepting)
     await page.evaluate(() => {
       const input = document.querySelector('#image-file');
+      const bytes = Uint8Array.from(
+        atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='),
+        c => c.charCodeAt(0),
+      );
       const dt = new DataTransfer();
-      dt.items.add(new File(['fake-png-bytes'], 'valid.png', { type: 'image/png' }));
+      dt.items.add(new File([bytes], 'valid.png', { type: 'image/png' }));
       input.files = dt.files;
       input.dispatchEvent(new Event('change', { bubbles: true }));
     });

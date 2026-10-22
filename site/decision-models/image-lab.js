@@ -986,6 +986,34 @@ export function renderBenchTable(container, data) {
   container.append(table);
 }
 
+// tm-image-payload-unbounded: drop, picker and paste used to accept any image/* file (SVG
+// included) and read it whole into memory as a base64 data URL, with no size or decode
+// bound. The allowlist excludes scriptable formats, the byte cap bounds the payload, and
+// the decode probe bounds pixel dimensions before a payload is accepted.
+export const IMAGE_MIME_ALLOWLIST = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif']);
+export const IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+export const IMAGE_MAX_PIXELS = 4096 * 4096;
+
+/** User-facing rejection reason for a picked/dropped/pasted file, or '' when acceptable. */
+export function imageFileRejection(file) {
+  if (!IMAGE_MIME_ALLOWLIST.has(file?.type)) {
+    if (file?.type === 'image/svg+xml') return 'SVG images are not accepted. Use PNG, JPEG, WebP, GIF or AVIF.';
+    const name = file?.name ? `File "${file.name}"` : 'The file';
+    return `${name} is not an image. Use PNG, JPEG, WebP, GIF or AVIF.`;
+  }
+  if ((file?.size ?? 0) > IMAGE_MAX_BYTES) {
+    return `Image is too large: ${(file.size / (1024 * 1024)).toFixed(1)} MB exceeds the ${IMAGE_MAX_BYTES / (1024 * 1024)} MB budget.`;
+  }
+  return '';
+}
+
+/** User-facing rejection reason for decoded pixel dimensions, or '' when within budget. */
+export function imagePixelsRejection(width, height) {
+  return width * height > IMAGE_MAX_PIXELS
+    ? `Image rejected: ${width}×${height} pixels exceeds the ${IMAGE_MAX_PIXELS} pixel decode budget.`
+    : '';
+}
+
 /**
  * Initialize Image Lab Interactive Controller
  */
@@ -1019,12 +1047,27 @@ export function setupImageLab() {
   const offscreenCanvas = document.createElement('canvas');
 
   function loadImagePayload(dataUrl, infoText = 'Image loaded') {
-    currentImagePayload = dataUrl;
-    if (previewImg) previewImg.src = dataUrl;
-    if (imageMeta) {
-      const kb = Math.round(dataUrl.length * 0.75 / 1024);
-      imageMeta.textContent = `${infoText} (${kb} KB payload)`;
-    }
+    // Decode before accepting: a small file can decompress into a huge bitmap, and a corrupt
+    // one never decodes at all (tm-image-payload-unbounded). Only a decoded, in-budget image
+    // replaces the current payload — on rejection the previous image stays loaded and shown.
+    const probe = new Image();
+    probe.onload = () => {
+      const rejection = imagePixelsRejection(probe.naturalWidth, probe.naturalHeight);
+      if (rejection) {
+        if (statusEl) statusEl.textContent = rejection;
+        return;
+      }
+      currentImagePayload = dataUrl;
+      if (previewImg) previewImg.src = dataUrl;
+      if (imageMeta) {
+        const kb = Math.round(dataUrl.length * 0.75 / 1024);
+        imageMeta.textContent = `${infoText} (${kb} KB payload)`;
+      }
+    };
+    probe.onerror = () => {
+      if (statusEl) statusEl.textContent = 'Image rejected: the file could not be decoded as an image.';
+    };
+    probe.src = dataUrl;
   }
 
   function loadPreset(presetId) {
@@ -1068,17 +1111,17 @@ export function setupImageLab() {
     dropZone.addEventListener('drop', e => {
       const file = e.dataTransfer?.files?.[0];
       if (!file) return;
-      if (file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = ev => {
-          loadImagePayload(ev.target.result, `Dropped: ${file.name}`);
-          if (statusEl) statusEl.textContent = `Custom image dropped: ${file.name}.`;
-        };
-        reader.readAsDataURL(file);
-      } else {
-        const name = file.name ? `File "${file.name}"` : 'Selected file';
-        if (statusEl) statusEl.textContent = `${name} is not an image. Please select an image file.`;
+      const rejection = imageFileRejection(file);
+      if (rejection) {
+        if (statusEl) statusEl.textContent = rejection;
+        return;
       }
+      const reader = new FileReader();
+      reader.onload = ev => {
+        loadImagePayload(ev.target.result, `Dropped: ${file.name}`);
+        if (statusEl) statusEl.textContent = `Custom image dropped: ${file.name}.`;
+      };
+      reader.readAsDataURL(file);
     });
     dropZone.addEventListener('click', () => {
       fileInput?.click();
@@ -1096,18 +1139,18 @@ export function setupImageLab() {
     fileInput.addEventListener('change', () => {
       const file = fileInput.files?.[0];
       if (!file) return;
-      if (file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = ev => {
-          loadImagePayload(ev.target.result, `Selected: ${file.name}`);
-          if (statusEl) statusEl.textContent = `Image loaded from file: ${file.name}.`;
-        };
-        reader.readAsDataURL(file);
-      } else {
-        const name = file.name ? `File "${file.name}"` : 'Selected file';
-        if (statusEl) statusEl.textContent = `${name} is not an image. Please select an image file.`;
+      const rejection = imageFileRejection(file);
+      if (rejection) {
+        if (statusEl) statusEl.textContent = rejection;
         fileInput.value = '';
+        return;
       }
+      const reader = new FileReader();
+      reader.onload = ev => {
+        loadImagePayload(ev.target.result, `Selected: ${file.name}`);
+        if (statusEl) statusEl.textContent = `Image loaded from file: ${file.name}.`;
+      };
+      reader.readAsDataURL(file);
     });
   }
 
@@ -1118,6 +1161,11 @@ export function setupImageLab() {
     for (const item of items) {
       if (item.type.startsWith('image/')) {
         const file = item.getAsFile();
+        const rejection = file ? imageFileRejection(file) : 'The clipboard did not contain an image file.';
+        if (rejection) {
+          if (statusEl) statusEl.textContent = rejection;
+          break;
+        }
         if (file) {
           const reader = new FileReader();
           reader.onload = ev => {
