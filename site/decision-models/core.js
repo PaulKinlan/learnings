@@ -106,6 +106,15 @@ function providerURL(provider, settings, direct) {
   if(typeof location==='undefined'||!['127.0.0.1','localhost','[::1]'].includes(location.hostname)) fail('Relay is available only when serving this site locally.');
   return new URL('/api/'+provider,location.origin).href;
 }
+// The __MOCK_DECIDE__ seam exists for the local browser harness (tests/browser.mjs serves over
+// loopback). Shipped live it would let any injected script short-circuit engine dispatch and
+// bypass validateAnswers/validateSpec, so it is honoured only where the harness can run: on a
+// loopback-served page, same gate as the relay transport above, or outside a browser entirely
+// (node unit tests, where globalThis.location is undefined). On any other host it is dead code.
+export function mockDecide() {
+  if (typeof location !== 'undefined' && !['127.0.0.1','localhost','[::1]'].includes(location.hostname)) return null;
+  return globalThis.__MOCK_DECIDE__ ?? null;
+}
 export const PROVIDER_TIMEOUT_MS = 45000;
 export async function decide(spec, settings, signal=AbortSignal.timeout(PROVIDER_TIMEOUT_MS)) {
   const url=settings.provider==='jev'?providerURL('jev',settings,'https://api.typesafe.ai/v1/systemone'):loopbackEndpoint(settings.endpoint);

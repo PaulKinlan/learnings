@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {validateSpec,validateAnswers,gate,loopbackEndpoint,illustrative,trialMetrics,requestFor,decide,generate} from '../site/decision-models/core.js';
+import {validateSpec,validateAnswers,gate,loopbackEndpoint,illustrative,trialMetrics,requestFor,decide,generate,mockDecide} from '../site/decision-models/core.js';
 import {examples} from '../site/decision-models/examples.js';
 for(const [name,s] of Object.entries(examples))test(`schema and synthetic roundtrip: ${name}`,()=>{assert.deepEqual(validateSpec(s),s);validateAnswers(illustrative(s).data,s.questions);});
 test('generated executable fields and prototype IDs are refused',()=>{assert.throws(()=>validateSpec({...examples.tools,script:'alert(1)'}));assert.throws(()=>validateSpec({...examples.tools,questions:JSON.parse('{"__proto__":{"type":"noul","instructions":"test"}}')}));});
@@ -24,3 +24,22 @@ test('real decision adapters use correct host, key boundary and validation (mock
  try{await decide(examples.tools,{provider:'jev',key:'synthetic-test-only',model:'jev-1.13.0'});await decide(examples.tools,{provider:'kev',key:'must-not-send',endpoint:'http://localhost:8009/v1/systemone',model:'kev-latest'});assert.equal(calls[0].url,'https://api.typesafe.ai/v1/systemone');assert.equal(calls[0].options.headers.Authorization,'Bearer synthetic-test-only');assert.equal(calls[1].options.headers.Authorization,undefined);assert.equal(calls[0].options.redirect,'error');assert.equal(calls[0].options.credentials,'omit');}finally{globalThis.fetch=original;}
 });
 test('OpenAI and Claude generation validate JSON and reject code (mock transport)',async()=>{const original=globalThis.fetch,calls=[];globalThis.fetch=async(url,options)=>{calls.push({url,options});return {ok:true,json:async()=>url.includes('anthropic')?{content:[{type:'text',text:JSON.stringify(examples.tools)}]}:{choices:[{message:{content:JSON.stringify(examples.tools)}}]}};};try{for(const provider of ['openai','claude'])assert.deepEqual(await generate('test',{provider,key:'synthetic-test-only',model:'test'}),examples.tools);assert.equal(calls[1].options.headers['anthropic-dangerous-direct-browser-access'],'true');globalThis.fetch=async()=>({ok:true,json:async()=>({choices:[{message:{content:'<script>alert(1)</script>'}}]})});await assert.rejects(()=>generate('test',{provider:'openai',key:'synthetic',model:'test'}),/valid JSON/);}finally{globalThis.fetch=original;}});
+test('__MOCK_DECIDE__ seam is honoured on loopback and dead off-loopback (learnings-ebg)',()=>{
+ const seam=()=>({mocked:true});globalThis.__MOCK_DECIDE__=seam;const saved=Object.getOwnPropertyDescriptor(globalThis,'location');
+ try{
+  // No location (node harness): the harness owns the realm, so the seam works.
+  assert.equal(mockDecide(),seam);
+  for(const host of ['127.0.0.1','localhost','[::1]']){
+   Object.defineProperty(globalThis,'location',{configurable:true,value:{hostname:host}});
+   assert.equal(mockDecide(),seam,`${host}: the local harness keeps the seam`);
+  }
+  for(const host of ['paul.kinlan.me','localhost.evil.test','127.0.0.1.evil.test']){
+   Object.defineProperty(globalThis,'location',{configurable:true,value:{hostname:host}});
+   assert.equal(mockDecide(),null,`${host}: a deployed page must not honour the seam`);
+  }
+ }finally{
+  delete globalThis.__MOCK_DECIDE__;
+  if(saved)Object.defineProperty(globalThis,'location',saved);else delete globalThis.location;
+ }
+ assert.equal(mockDecide(),null,'no seam installed -> no mock');
+});

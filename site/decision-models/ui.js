@@ -1,4 +1,4 @@
-import { decide, gate } from './core.js';
+import { decide, gate, mockDecide } from './core.js';
 import { loadLaya } from './laya-engine.js';
 import { choiceConfidence } from './laya-pack.js';
 import { loadKev } from './kev-engine.js';
@@ -83,8 +83,9 @@ export async function runSpec(spec, signal, onProgress = null) {
   if (cfg.provider === 'jev' && !cfg.key?.trim()) {
     throw new Error('Enter a Jev API key first.');
   }
-  if (globalThis.__MOCK_DECIDE__) {
-    return globalThis.__MOCK_DECIDE__(spec, cfg);
+  const mock = mockDecide();
+  if (mock) {
+    return mock(spec, cfg);
   }
   if (cfg.provider === 'laya') {
     if (!layaSession) {
