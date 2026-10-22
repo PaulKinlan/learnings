@@ -46,6 +46,11 @@ export const MULTILINGUAL_MASK_STRING = "<mask>";
 const ML_REPO = "litert-community/Laya-Multilingual-LiteRT";
 const EN_REPO = "litert-community/laya-LiteRT";
 
+// Wall-clock bound for one artifact download (tm-download-no-timeout). Generous enough for
+// a multi-hundred-megabyte artifact on a slow link; the point is that a stalled hub fails
+// the download instead of hanging the decision lab forever.
+const LAYA_DOWNLOAD_TIMEOUT_MS = 300_000;
+
 const CHECKPOINTS = {
   multilingual: {
     repo: ML_REPO,
@@ -166,7 +171,7 @@ function explicitCap(value, label) {
  * streaming immediately if accumulated chunks exceed maxBytes before SHA-256 verification
  * (threat model tm-unbounded-download-buffer).
  */
-export async function fetchBytes(url, { onProgress = null, sha256, label = url, maxBytes = null } = {}) {
+export async function fetchBytes(url, { onProgress = null, sha256, label = url, maxBytes = null, timeoutMs = LAYA_DOWNLOAD_TIMEOUT_MS } = {}) {
   if (!sha256) throw new Error(`no pinned sha256 for ${label}`);
   const basename = String(url).split("/").pop()?.split("?")[0] ?? "";
   const labelBasename = String(label).split("/").pop()?.split("?")[0] ?? "";
@@ -177,6 +182,20 @@ export async function fetchBytes(url, { onProgress = null, sha256, label = url, 
     LAYA_DEFAULT_MAX_BYTES;
 
   const controller = new AbortController();
+  // The byte cap bounds size, not time (tm-download-no-timeout): a hub that accepts the
+  // connection and then stalls or trickles would hang the download — and the decision lab
+  // UI with it — forever. Arm a wall-clock deadline on the same signal and always disarm it.
+  const deadline = setTimeout(
+    () => controller.abort(new DOMException(`download failed for ${label}: no data within ${timeoutMs}ms`, "TimeoutError")),
+    timeoutMs,
+  );
+  try {
+    return await fetchVerifiedBytes();
+  } finally {
+    clearTimeout(deadline);
+  }
+
+  async function fetchVerifiedBytes() {
   const res = await fetch(url, artifactFetchOptions({ signal: controller.signal }));
   assertArtifactResponse(res, label, url);
   if (!res.ok) throw new Error(`download failed for ${label}: HTTP ${res.status}`);
@@ -215,6 +234,7 @@ export async function fetchBytes(url, { onProgress = null, sha256, label = url, 
   })();
   await verifySha256(bytes, sha256, label);
   return bytes;
+  }
 }
 
 function parseSha256Sums(text) {
