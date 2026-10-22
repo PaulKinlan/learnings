@@ -122,6 +122,45 @@ test('an untracked symlink is part of the measured tree, and a dangling one is d
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+// Regression for learnings-tuj: the walk used to stop at MAX_DEPTH=16, so a deep
+// file behind a directory link changed served bytes without moving the measured
+// tree. Mirror the reviewer's repro: site/assets -> external dir with visible.html
+// and d/…/d/deep.html, 17 nested directories down.
+test('a deep file behind a directory symlink is measured, not truncated', () => {
+  const dir = makeRepo();
+  const outside = mkdtempSync(join(tmpdir(), 'link-deep-'));
+  try {
+    let deep = outside;
+    for (let i = 0; i < 17; i += 1) {
+      deep = join(deep, 'd');
+      mkdirSync(deep);
+    }
+    const deepFile = join(deep, 'deep.html');
+    writeFileSync(join(outside, 'visible.html'), 'visible\n');
+    writeFileSync(deepFile, 'BEFORE\n');
+    mkdirSync(join(dir, 'site'));
+    symlinkSync(outside, join(dir, 'site', 'assets'));
+    const before = measureTree(dir);
+    assert.equal(readFileSync(join(dir, 'site', 'assets', 'd', ...Array(16).fill('d'), 'deep.html'), 'utf8'), 'BEFORE\n');
+    writeFileSync(deepFile, 'AFTER\n');
+    const after = measureTree(dir);
+    assert.notEqual(after.tree, before.tree, 'a change 17 directories deep must move the measured tree');
+  } finally { rmSync(dir, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); }
+});
+
+// The uncapped walk must fail loudly on a link loop instead of spinning forever.
+test('a link cycle is an explicit error, not a truncation or a hang', () => {
+  const dir = makeRepo();
+  const outside = mkdtempSync(join(tmpdir(), 'link-cycle-'));
+  try {
+    writeFileSync(join(outside, 'visible.html'), 'visible\n');
+    symlinkSync(outside, join(outside, 'loop'));
+    mkdirSync(join(dir, 'site'));
+    symlinkSync(outside, join(dir, 'site', 'assets'));
+    assert.throws(() => measureTree(dir), /gate-receipt: symlink cycle at site\/assets\/loop/);
+  } finally { rmSync(dir, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); }
+});
+
 // Wiring guard: the browser gate must pin the measured tree in its receipt and name
 // its evidence directory for that tree, so a PASS on a dirty worktree cannot be
 // mistaken for a PASS on HEAD (learnings-j38).

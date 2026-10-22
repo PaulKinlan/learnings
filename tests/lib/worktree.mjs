@@ -16,12 +16,17 @@
 // reports dirty even when untouched: the literal HEAD tree does not describe
 // the served bytes. The returned links manifest records what was resolved so a
 // receipt can show it.
+//
+// Nesting (learnings-tuj): a fixed depth cap silently dropped everything below it,
+// so a deep file behind a directory link changed served bytes without moving the
+// id. The walk is iterative and uncapped instead — depth is bounded only by the
+// filesystem — and a link cycle throws an explicit error rather than looping or
+// truncating, so the gate either measures every served file or fails loudly.
 import {execFileSync} from 'node:child_process';
 import {mkdtempSync,rmSync,readlinkSync,readdirSync,realpathSync,readFileSync,statSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
-const MAX_DEPTH=16;
 // Deterministic stand-in for a link a reader cannot resolve (dangling target,
 // unreadable file, non-regular target): retargeting or repairing it changes the id.
 const unreadable=target=>Buffer.from(`gate-receipt: link target not readable (${target})`);
@@ -34,28 +39,41 @@ function servedEntries(abs,path,target,real,kind){
   }
   if(kind!=='dir')return [entry(unreadable(target))];
   const entries=[];
-  const walk=(dir,rel,depth)=>{
-    if(depth>MAX_DEPTH)return; // pathological link nesting: bounded, deterministic truncation
+  // Iterative and uncapped (learnings-tuj): a fixed cap silently truncated deep
+  // directories. `ancestors` holds the realpaths on this branch, so a link that
+  // loops back is an explicit error instead of an endless walk.
+  const stack=[{dir:real,rel:'',ancestors:new Set([real])}];
+  while(stack.length){
+    const {dir,rel,ancestors}=stack.pop();
     let dirents;
-    try{dirents=readdirSync(dir,{withFileTypes:true});}catch{return;}
+    try{dirents=readdirSync(dir,{withFileTypes:true});}
+    catch(e){throw new Error(`gate-receipt: cannot read ${dir} reached through ${rel?`${path}/${rel}`:path} (${e.code??e.message})`);}
     dirents.sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0);
     for(const d of dirents){
       const childPath=rel?`${path}/${rel}/${d.name}`:`${path}/${d.name}`;
+      const childRel=rel?`${rel}/${d.name}`:d.name;
       const childAbs=join(dir,d.name);
       if(d.isSymbolicLink()){
         const childTarget=readlinkSync(childAbs);
         let childReal,childKind='unreadable';
         try{childReal=realpathSync(childAbs);childKind=statSync(childReal).isDirectory()?'dir':'file';}catch{childReal=null;}
-        if(childKind==='dir'){walk(childReal,rel?`${rel}/${d.name}`:d.name,depth+1);continue;}
+        if(childKind==='dir'){
+          if(ancestors.has(childReal))throw new Error(`gate-receipt: symlink cycle at ${childPath} -> ${childTarget}`);
+          stack.push({dir:childReal,rel:childRel,ancestors:new Set(ancestors).add(childReal)});
+          continue;
+        }
         try{entries.push({path:childPath,bytes:readFileSync(childReal??childAbs)});}
         catch{entries.push({path:childPath,bytes:unreadable(childTarget)});}
       }else if(d.isFile()){
         try{entries.push({path:childPath,bytes:readFileSync(childAbs)});}
         catch{entries.push({path:childPath,bytes:unreadable(childPath)});}
-      }else if(d.isDirectory())walk(childAbs,rel?`${rel}/${d.name}`:d.name,depth+1);
+      }else if(d.isDirectory()){
+        const childReal=realpathSync(childAbs);
+        if(ancestors.has(childReal))throw new Error(`gate-receipt: directory cycle at ${childPath}`);
+        stack.push({dir:childAbs,rel:childRel,ancestors:new Set(ancestors).add(childReal)});
+      }
     }
-  };
-  walk(real,'',0);
+  }
   return entries.length?entries:[entry(unreadable(target))]; // empty dir: no index entry would drop the link silently
 }
 
