@@ -14,16 +14,79 @@ export const QTYPE_ONEHOT = { choice: [1, 0, 0], score: [0, 1, 0], noul: [0, 0, 
 export const ENGLISH_MASK_STRING = "[MASK]";
 export const ENGLISH_SPECIAL_IDS = { cls: 50281, sep: 50282, pad: 50283, mask: 50284, unk: 50280 };
 
-// All special:true literals in the vendored en-tokenizer.json and ml-tokenizer.json
-// added_tokens tables. The selected checkpoint's mask is replaced first, as before.
-const READER_SPECIAL_STRINGS = [
+// Every special:true literal that has been seen in a tokenizer.json added_tokens table. This
+// is only a floor: it can never be the full set for a checkpoint that adds its own control
+// literals (<2mass>, [@BOS@], <unusedN>, [unusedN], …), so loaders pass what their own tokenizer
+// declares (tokenizerSpecials) and untrusted reader text cannot smuggle a control token past the
+// mask (learnings-xp4). The selected checkpoint's mask is replaced first, as section B of the host
+// contract requires.
+export const READER_SPECIAL_STRINGS = [
   "<|padding|>", "<|endoftext|>", "[UNK]", "[CLS]", "[SEP]", "[PAD]", "[MASK]",
   "<pad>", "<eos>", "<bos>", "<unk>", "<mask>", "<start_of_turn>", "<end_of_turn>",
 ];
 
-function neutralizeReaderText(text, maskString) {
-  let safe = String(text).replaceAll(maskString, " ");
-  for (const special of READER_SPECIAL_STRINGS) safe = safe.replaceAll(special, " ");
+/**
+ * What a tokenizer.json declares must never be reachable from reader text.
+ *
+ * - `literals`: special:true contents (plus the built-in floor), longest-first.
+ * - `normalizedLiterals`: the subset whose added token carries `normalized: true`. The tokenizer
+ *   normalizes input before matching those, so a literal match is not enough — `<CTRL>` declared
+ *   this way matches `<ctrl>` (learnings-gen).
+ * - `ids`: every declared special id, so buildSequence can drop one that survived tokenization.
+ *   This is the normalization-agnostic half of the defence: whatever a normalizer does to the
+ *   text (case folding, NFKC, Strip, Replace) the id it produces is the same one the checkpoint
+ *   treats as control.
+ *
+ * @param {unknown} tokenizerJson parsed tokenizer.json (added_tokens is optional)
+ * @returns {{literals: string[], normalizedLiterals: string[], ids: number[]}}
+ */
+export function tokenizerSpecials(tokenizerJson) {
+  const literals = new Set(READER_SPECIAL_STRINGS);
+  const normalized = new Set();
+  const ids = new Set();
+  const added = Array.isArray(tokenizerJson?.added_tokens) ? tokenizerJson.added_tokens : [];
+  for (const token of added) {
+    if (token?.special !== true) continue;
+    if (Number.isInteger(token.id)) ids.add(token.id);
+    if (typeof token.content !== "string" || !token.content) continue;
+    literals.add(token.content);
+    if (token.normalized === true) normalized.add(token.content);
+  }
+  const byLength = (a, b) => b.length - a.length;
+  return {
+    literals: [...literals].sort(byLength),
+    normalizedLiterals: [...normalized].sort(byLength),
+    ids: [...ids].sort((a, b) => a - b),
+  };
+}
+
+/** The literal list alone, for callers that only neutralize text. */
+export function specialLiteralsFromTokenizer(tokenizerJson) {
+  return tokenizerSpecials(tokenizerJson).literals;
+}
+
+const escapeLiteral = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Replace literal special tokens in reader text with one space (contract §B step 3).
+ * Literals a tokenizer marks `normalized: true` are matched case-insensitively and in their NFKC
+ * form as well, because the tokenizer normalizes the text before matching them. Normalizers that
+ * rewrite text in ways no literal match can predict (Strip, Replace) are caught downstream by the
+ * token-id filter, which does not care how the text changed. */
+function neutralizeReaderText(text, maskString, { literals = READER_SPECIAL_STRINGS, normalizedLiterals = [] } = {}) {
+  const foldedSet = new Set(normalizedLiterals);
+  const exact = [];
+  const folded = [];
+  const add = (value) => {
+    if (typeof value !== "string" || !value) return;
+    if (foldedSet.has(value)) folded.push(value, value.normalize("NFKC"));
+    else exact.push(value);
+  };
+  add(maskString);
+  for (const literal of literals) add(literal);
+  let safe = String(text);
+  for (const literal of [...new Set(exact)].sort((a, b) => b.length - a.length)) safe = safe.replaceAll(literal, " ");
+  for (const literal of [...new Set(folded)].filter(Boolean).sort((a, b) => b.length - a.length))
+    safe = safe.replace(new RegExp(escapeLiteral(literal), "giu"), " ");
   return safe;
 }
 
@@ -97,12 +160,34 @@ export function renderOptions(q) {
  * @param {number} arg.headMaxLen   the builder head budget (192 for English)
  * @param {{cls: number, sep: number, mask: number}} arg.ids
  * @param {string} arg.maskString   the checkpoint's literal mask token ("[MASK]" for English)
+ * @param {string[]} [arg.specialStrings] special:true literals from the loaded tokenizer
+ *   (tokenizerSpecials().literals); the built-in floor is used when omitted
+ * @param {string[]} [arg.normalizedSpecialStrings] the subset the tokenizer matches AFTER
+ *   normalization, matched case-insensitively (tokenizerSpecials().normalizedLiterals)
+ * @param {number[]} [arg.specialIds] every declared special id; any that survives tokenization is
+ *   dropped from the sequence (tokenizerSpecials().ids)
  * @param {number[]} [arg.optionOrder]  identity when omitted; duplicate orders are rejected
  * @returns {{ids: number[], markers: number[]}} marker positions are zero-based, pre-padding
  */
-export async function buildSequence({ tokenize, state, question, maxLen, headMaxLen, ids, maskString, optionOrder = null }) {
+export async function buildSequence({ tokenize, state, question, maxLen, headMaxLen, ids, maskString, specialStrings = READER_SPECIAL_STRINGS, normalizedSpecialStrings = [], specialIds = [], optionOrder = null }) {
   if (typeof tokenize !== "function") throw new Error("buildSequence needs a tokenize function");
   if (!Number.isInteger(maxLen) || !Number.isInteger(headMaxLen)) throw new Error("maxLen and headMaxLen are required integers");
+  if (!Array.isArray(specialStrings) || specialStrings.some((s) => typeof s !== "string" || !s))
+    throw new Error("specialStrings must be an array of non-empty strings");
+  if (!Array.isArray(normalizedSpecialStrings) || normalizedSpecialStrings.some((s) => typeof s !== "string" || !s))
+    throw new Error("normalizedSpecialStrings must be an array of non-empty strings");
+  if (!Array.isArray(specialIds) || specialIds.some((id) => !Number.isInteger(id)))
+    throw new Error("specialIds must be an array of integer token ids");
+  const specials = {
+    literals: [...new Set(specialStrings)].sort((a, b) => b.length - a.length),
+    normalizedLiterals: [...new Set(normalizedSpecialStrings)],
+  };
+  // The unknown-token id is exempt: an unmappable character legitimately becomes UNK, and it is
+  // the only declared special id that carries information rather than structure. Everything the
+  // builder inserts (CLS/SEP/MASK) is added after tokenization, so a text token carrying one of
+  // those ids came from the text itself.
+  const privileged = new Set(specialIds.filter((id) => id !== ids.unk));
+  const dropInjected = (tokens) => (privileged.size ? tokens.filter((id) => !privileged.has(id)) : tokens);
   const q = question;
   const opts = renderOptions(q);
   if (opts.length < 2) throw new Error("the inference contract needs at least two options");
@@ -111,14 +196,14 @@ export async function buildSequence({ tokenize, state, question, maxLen, headMax
     throw new Error("option_order must be a permutation of the options");
 
   // §B.3: literal mask strings become one space; all other special literals are also inert.
-  const ins = neutralizeReaderText(q.ins, maskString);
-  let headIds = await tokenize(`${q.t} question: ${ins}`);
+  const ins = neutralizeReaderText(q.ins, maskString, specials);
+  let headIds = dropInjected(await tokenize(`${q.t} question: ${ins}`));
 
   // §B.4: special literals -> space, ONE leading ASCII space, at most 48 text tokens per option,
   // with the integer mask id prepended (so an unsqueezed option occupies at most 49 slots).
   let optIds = [];
   for (const i of order) {
-    optIds.push([ids.mask, ...(await tokenize(" " + neutralizeReaderText(opts[i], maskString))).slice(0, 48)]);
+    optIds.push([ids.mask, ...dropInjected(await tokenize(" " + neutralizeReaderText(opts[i], maskString, specials))).slice(0, 48)]);
   }
 
   // §B.5: the squeezing rule — only when the head budget is blown.
@@ -141,7 +226,7 @@ export async function buildSequence({ tokenize, state, question, maxLen, headMax
   out.push(ids.sep);
 
   // §B.7: the state is serialized, special literals spaced, tokenized without special tokens.
-  const stateIds = await tokenize(neutralizeReaderText(serializeState(state), maskString));
+  const stateIds = dropInjected(await tokenize(neutralizeReaderText(serializeState(state), maskString, specials)));
 
   // §B.8: right-truncate the state to the remaining room, append the final [SEP], slice to N.
   const room = Math.max(0, maxLen - out.length - 1);
