@@ -51,3 +51,16 @@ Run from the repo root (each script serves `site/` itself):
    early runs were finding 2's animation delayed by VM scheduling).
 
 Follow-up beads: incremental race drawing; content-visibility for chapter sections.
+
+## Measurement caveat (2026-10-22, updated)
+
+Absolute numbers on this VM swing with fleet load: the same page measured
+presentTails of ~90–200ms in one run and caught a single 3.4s stall in another;
+an idle run of `architectures.html` once showed a 3.7s native long task with
+zero input and zero JS (pure CPU starvation). The decomposition (handlers cheap;
+gradient-descent animation frames expensive; load-time MathML layout; control
+page equal to chapter pages) was stable across runs — the magnitudes are not.
+Do not compare absolute ms across runs or gate quality calls on them. Related:
+the fast gate for 78534b7 once failed on `tests/cdp-cleanup.test.js` ("runner
+did not launch", 20s DevTools-endpoint timeout at load ~5.8; passes 3/3 in
+isolation — filed as learnings-gib).
