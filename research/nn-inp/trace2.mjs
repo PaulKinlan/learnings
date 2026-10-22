@@ -11,6 +11,9 @@ const profile = mkdtempSync(path.join(os.tmpdir(), 'trace-cdp-'));
 const child = spawn('/usr/bin/chromium', ['--headless=new', '--disable-gpu', '--no-first-run',
   '--no-default-browser-check', '--disable-dev-shm-usage', '--window-size=1000,800',
   `--user-data-dir=${profile}`, '--remote-debugging-port=0', 'about:blank'], {stdio: ['ignore', 'pipe', 'pipe'], detached: true});
+// The child is detached, so it outlives this process: any throw below would leak a browser
+// (one did, until the reaper killed it 46 minutes later). Everything runs inside try/finally.
+try {
 const wsUrl = await new Promise((resolve, reject) => {
   let buffer = '';
   const timer = setTimeout(() => reject(new Error('no devtools endpoint')), 20000);
@@ -68,3 +71,7 @@ for (const e of [...rows].sort((a, b) => b.dur - a.dur).slice(0, 10)) {
 child.kill('SIGKILL'); try { process.kill(-child.pid, 'SIGKILL'); } catch {}
 rmSync(profile, {recursive: true, force: true});
 await new Promise((resolve, reject) => local.server.close(err => err ? reject(err) : resolve()));
+} finally {
+  child.kill('SIGKILL'); try { process.kill(-child.pid, 'SIGKILL'); } catch {}
+  rmSync(profile, {recursive: true, force: true});
+}
