@@ -167,6 +167,19 @@ function explicitCap(value, label) {
 }
 
 /**
+ * Arm a wall-clock deadline on a download's AbortController (tm-download-no-timeout). The byte
+ * caps bound size, not time: a hub that accepts the connection and then stalls or trickles would
+ * otherwise hang the download — and the decision lab UI with it — forever. The caller disarms
+ * with clearTimeout in a finally, so a finished download never leaves a pending timer behind.
+ */
+function armDownloadDeadline(controller, failurePrefix, timeoutMs) {
+  return setTimeout(
+    () => controller.abort(new DOMException(`${failurePrefix}: no data within ${timeoutMs}ms`, "TimeoutError")),
+    timeoutMs,
+  );
+}
+
+/**
  * Fetch a URL into a Uint8Array with progress callbacks, bounded streaming via AbortController,
  * and a required sha256 check. Rejects early if Content-Length exceeds maxBytes, and aborts
  * streaming immediately if accumulated chunks exceed maxBytes before SHA-256 verification
@@ -183,13 +196,7 @@ export async function fetchBytes(url, { onProgress = null, sha256, label = url, 
     LAYA_DEFAULT_MAX_BYTES;
 
   const controller = new AbortController();
-  // The byte cap bounds size, not time (tm-download-no-timeout): a hub that accepts the
-  // connection and then stalls or trickles would hang the download — and the decision lab
-  // UI with it — forever. Arm a wall-clock deadline on the same signal and always disarm it.
-  const deadline = setTimeout(
-    () => controller.abort(new DOMException(`download failed for ${label}: no data within ${timeoutMs}ms`, "TimeoutError")),
-    timeoutMs,
-  );
+  const deadline = armDownloadDeadline(controller, `download failed for ${label}`, timeoutMs);
   try {
     return await fetchVerifiedBytes();
   } finally {
@@ -276,9 +283,10 @@ function fp16Lut() {
  * Load the engine. Nothing downloads until this is called — never on page load.
  * `onProgress(stage, received, total)` reports the weight downloads so a slow connection
  * shows progress. `urls` overrides individual asset URLs (used by tests to serve local
- * copies instead of re-downloading from the hub).
+ * copies instead of re-downloading from the hub). `timeoutMs` is the wall-clock deadline
+ * shared by the sums fetch and every artifact download (tm-download-no-timeout).
  */
-export async function loadLaya({ checkpoint = "multilingual", calibration = "fitted", window = null, onProgress = null, urls = {} } = {}) {
+export async function loadLaya({ checkpoint = "multilingual", calibration = "fitted", window = null, onProgress = null, urls = {}, timeoutMs = LAYA_DOWNLOAD_TIMEOUT_MS } = {}) {
   const baseSpec = CHECKPOINTS[checkpoint];
   const spec = window ? { ...baseSpec, window } : baseSpec;
   if (!spec) throw new Error(`unknown checkpoint '${checkpoint}' (known: ${Object.keys(CHECKPOINTS).join(", ")})`);
@@ -307,50 +315,60 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
   // The multilingual sums file itself is checked against the digest in laya-manifest.js.
   const sumsLimit = LAYA_MAX_BYTES.SHA256SUMS ?? 1024 * 1024;
   const sumsController = new AbortController();
-  const sumsResponse = await fetch(sumsUrl, artifactFetchOptions({ signal: sumsController.signal }));
-  assertArtifactResponse(sumsResponse, `SHA256SUMS ${spec.repo}@${spec.revision}`, sumsUrl);
-  if (!sumsResponse.ok) {
-    throw new Error(
-      `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: HTTP ${sumsResponse.status} (${sumsUrl})`,
-    );
-  }
-  const sumsTotal = Number(sumsResponse.headers.get("content-length")) || 0;
-  if (sumsLimit != null && sumsTotal > sumsLimit) {
-    sumsController.abort();
-    throw new Error(
-      `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: Content-Length ${sumsTotal} exceeds maximum allowed size ${sumsLimit} bytes`,
-    );
-  }
-  // The sums file is tiny but still arrives from the network, so the cap is enforced DURING
-  // streaming — not after arrayBuffer() has already buffered an unbounded body. An absent or
-  // lying Content-Length must abort before EOF and before digest (tm-unbounded-download-buffer).
-  const sumsReader = sumsResponse.body.getReader();
-  const sumsChunks = [];
-  let sumsReceived = 0;
-  for (;;) {
-    const { done, value } = await sumsReader.read();
-    if (done) break;
-    sumsReceived += value.length;
-    if (sumsLimit != null && sumsReceived > sumsLimit) {
-      sumsController.abort();
-      try { await sumsReader.cancel(); } catch {}
+  // The sums fetch is as exposed to a stalled hub as any artifact download: the size cap bounds
+  // bytes, not time (tm-download-no-timeout), so arm the same wall-clock deadline on its signal
+  // and always disarm it. Without it a hub that accepts the connection and then stalls would
+  // leave loadLaya pending forever.
+  const sumsDeadline = armDownloadDeadline(sumsController, `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}`, timeoutMs);
+  let sumsBytes;
+  try {
+    const sumsResponse = await fetch(sumsUrl, artifactFetchOptions({ signal: sumsController.signal }));
+    assertArtifactResponse(sumsResponse, `SHA256SUMS ${spec.repo}@${spec.revision}`, sumsUrl);
+    if (!sumsResponse.ok) {
       throw new Error(
-        `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: stream exceeded maximum allowed size ${sumsLimit} bytes (received ${sumsReceived} bytes)`,
+        `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: HTTP ${sumsResponse.status} (${sumsUrl})`,
       );
     }
-    sumsChunks.push(value);
+    const sumsTotal = Number(sumsResponse.headers.get("content-length")) || 0;
+    if (sumsLimit != null && sumsTotal > sumsLimit) {
+      sumsController.abort();
+      throw new Error(
+        `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: Content-Length ${sumsTotal} exceeds maximum allowed size ${sumsLimit} bytes`,
+      );
+    }
+    // The sums file is tiny but still arrives from the network, so the cap is enforced DURING
+    // streaming — not after arrayBuffer() has already buffered an unbounded body. An absent or
+    // lying Content-Length must abort before EOF and before digest (tm-unbounded-download-buffer).
+    const sumsReader = sumsResponse.body.getReader();
+    const sumsChunks = [];
+    let sumsReceived = 0;
+    for (;;) {
+      const { done, value } = await sumsReader.read();
+      if (done) break;
+      sumsReceived += value.length;
+      if (sumsLimit != null && sumsReceived > sumsLimit) {
+        sumsController.abort();
+        try { await sumsReader.cancel(); } catch {}
+        throw new Error(
+          `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: stream exceeded maximum allowed size ${sumsLimit} bytes (received ${sumsReceived} bytes)`,
+        );
+      }
+      sumsChunks.push(value);
+    }
+    sumsBytes = sumsChunks.length === 1
+      ? sumsChunks[0]
+      : (() => {
+          const b = new Uint8Array(sumsReceived);
+          let offset = 0;
+          for (const chunk of sumsChunks) {
+            b.set(chunk, offset);
+            offset += chunk.length;
+          }
+          return b;
+        })();
+  } finally {
+    clearTimeout(sumsDeadline);
   }
-  const sumsBytes = sumsChunks.length === 1
-    ? sumsChunks[0]
-    : (() => {
-        const b = new Uint8Array(sumsReceived);
-        let offset = 0;
-        for (const chunk of sumsChunks) {
-          b.set(chunk, offset);
-          offset += chunk.length;
-        }
-        return b;
-      })();
   await verifySha256(sumsBytes, LAYA_SHA256SUMS_SHA256[checkpoint], `${spec.repo}/SHA256SUMS`);
   const sums = parseSha256Sums(new TextDecoder().decode(sumsBytes));
 
@@ -381,6 +399,7 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
   const tokenizerJson = JSON.parse(new TextDecoder().decode(await fetchBytes(tokenizerUrl, {
     ...integrityFor("tokenizer", spec.files.tokenizer, tokenizerUrl),
     label: `${spec.repo}/${spec.files.tokenizer}`,
+    timeoutMs,
   })));
   const tokenizer = new Tokenizer(tokenizerJson, {});
   const specials = tokenizerSpecials(tokenizerJson);
@@ -391,10 +410,12 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
       onProgress: (received, total) => onProgress?.("weights", received, total),
       ...integrityFor("main", spec.files.main, mainUrl),
       label: `${spec.repo}/${spec.files.main}`,
+      timeoutMs,
     }),
     act: fetchBytes(actUrl, {
       ...integrityFor("act", spec.files.act, actUrl),
       label: `${spec.repo}/${spec.files.act}`,
+      timeoutMs,
     }),
   };
   if (spec.files.embeddings) {
@@ -403,6 +424,7 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
       onProgress: (received, total) => onProgress?.("embedding-table", received, total),
       ...integrityFor("embeddings", spec.files.embeddings, embUrl),
       label: `${spec.repo}/${spec.files.embeddings} (host-side token table)`,
+      timeoutMs,
     });
   }
   onProgress?.("weights", 0, 0);
@@ -435,6 +457,7 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
   const calibrationJson = JSON.parse(new TextDecoder().decode(await fetchBytes(calibrationUrl, {
     ...integrityFor("calibration", calibrationFile, calibrationUrl),
     label: `${spec.repo}/${calibrationFile}`,
+    timeoutMs,
   })));
   // The fitted calibration is the contract's production default. The publisher's saved
   // conversion GATES used the source config — all T=1, no buckets (ML-HOST_CONTRACT.md §D

@@ -5,7 +5,7 @@
  * and JevImageBench v0.1.5 explorer table.
  */
 
-import { gate, loopbackEndpoint, validateAnswers, PROVIDER_TIMEOUT_MS, validateSpec } from './core.js';
+import { gate, loopbackEndpoint, validateAnswers, PROVIDER_TIMEOUT_MS, validateSpec, mockDecide, PROVIDER_FETCH_OPTIONS } from './core.js';
 import {
   BENCHMARK_META,
   JEV_IMAGE_BENCH_DATA,
@@ -678,9 +678,10 @@ async function fetchVision(url, init, signal) {
 export async function decideImage({ spec, imagePayload, engine = 'client', endpoint = '', key = '', model = 'Imajev-4B' }, signal = AbortSignal.timeout(PROVIDER_TIMEOUT_MS)) {
   validateImageSpec(spec, imagePayload);
 
-  // Global mock interceptor for test suites
-  if (globalThis.__MOCK_DECIDE__) {
-    return globalThis.__MOCK_DECIDE__(spec, { engine, endpoint, key, model, imagePayload });
+  // Global mock interceptor for the local test harness only (gated to loopback in core.js)
+  const mock = mockDecide();
+  if (mock) {
+    return mock(spec, { engine, endpoint, key, model, imagePayload });
   }
 
   const start = performance.now();
@@ -823,7 +824,10 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
           'Authorization': `Bearer ${key.trim()}`
         },
         body: JSON.stringify(payload),
-        signal
+        signal,
+        // INV-FETCH-HYGIENE parity with core.js post(): a redirect must fail, not make the
+        // browser replay this POST (key, image, questions) at the redirect target.
+        ...PROVIDER_FETCH_OPTIONS
       }, signal);
     } catch (err) {
       // Transport failures (a rejected fetch or the abort timeout) surface here. The recipient is

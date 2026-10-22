@@ -10,6 +10,7 @@ import {
   assertArtifactResponse,
 } from "../site/decision-models/fetch-policy.mjs";
 import { fetchVerified } from "../site/decision-models/kev-engine.js";
+import { PROVIDER_FETCH_OPTIONS } from "../site/decision-models/core.js";
 import { fetchBytes } from "../site/decision-models/laya-engine.js";
 import { LAYA_SHA256SUMS_SHA256 } from "../site/decision-models/laya-manifest.js";
 import { serve } from "../scripts/serve.mjs";
@@ -51,6 +52,43 @@ test("a response that redirected off the artifact hosts is refused, and one that
 // learnings-0px: Laya vendors its SHA256SUMS, tokenizer, act head and calibration first-party
 // (site/decision-models/laya/), so the deployed page fetches them from its own origin. A
 // host-only check rejected them and Laya could not load in production.
+test("hosted provider calls carry redirect/credentials/referrer hardening (INV-FETCH-HYGIENE, learnings-hwi)", async () => {
+  // The policy has one source of truth.
+  assert.deepEqual(PROVIDER_FETCH_OPTIONS, {
+    redirect: "error",
+    credentials: "omit",
+    referrerPolicy: "no-referrer",
+  });
+  // image-lab's hosted TypeSafe call, exercised end to end with a stubbed transport.
+  let captured = null;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    captured = { url, init };
+    return { ok: true, json: async () => ({ answers: { tool: { type: "noul", noul: 0.9 } } }) };
+  };
+  try {
+    const { decideImage } = await import("../site/decision-models/image-lab.js");
+    await decideImage({
+      spec: { title: "t", description: "d", state: "s", questions: { tool: { type: "noul", instructions: "Is it?" } } },
+      imagePayload: "data:image/png;base64,AA==",
+      engine: "api",
+      key: "synthetic-test-only",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(captured.url, "https://api.typesafe.ai/v1/systemone");
+  for (const [option, value] of Object.entries(PROVIDER_FETCH_OPTIONS)) {
+    assert.equal(captured.init[option], value, `the hosted TypeSafe call carries ${option}: ${value}`);
+  }
+  // The playground's hosted Jev call is a page driver with no exportable boundary, so pin that
+  // the call site spreads the same shared policy instead of re-litigating three literals.
+  const playgroundSrc = readFileSync(new URL("../site/decision-models/playground.js", import.meta.url), "utf8");
+  const hostedCall = playgroundSrc.match(/fetch\("https:\/\/api\.typesafe\.ai\/v1\/systemone", \{[\s\S]*?\}\);/);
+  assert.ok(hostedCall, "the playground hosted fetch call site is still recognizable");
+  assert.match(hostedCall[0], /\.\.\.PROVIDER_FETCH_OPTIONS/, "the playground spreads the shared provider fetch policy");
+});
+
 test("a first-party vendored artifact is accepted while foreign redirects still fail", () => {
   const vendored = "https://paulkinlan.github.io/learnings/decision-models/laya/ml-SHA256SUMS";
   assert.doesNotThrow(() => assertArtifactResponse({ url: vendored }, "vendored sums", vendored),
