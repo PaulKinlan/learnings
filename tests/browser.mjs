@@ -1,15 +1,18 @@
 // A browser gate on a shared VM must clean up: an orphaned profile blocks the next lane.
 // The CDP launcher owns signal/exit cleanup as well as the normal finally below.
 import assert from 'node:assert/strict';
-import {execFileSync} from 'node:child_process';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {basename,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {launch} from './lib/cdp.mjs';
+import {measureTree} from './lib/worktree.mjs';
 import {serve} from '../scripts/serve.mjs';
 const repoRoot=fileURLToPath(new URL('..',import.meta.url));
-const commit=execFileSync('git',['rev-parse','--short=12','HEAD'],{cwd:repoRoot,encoding:'utf8'}).trim();
-const defaultEvidence=resolve(repoRoot,'..','cap-evidence','learnings',`${basename(repoRoot)}-${commit}`,'browser');
+// The receipt must identify the tree the run MEASURED: name the evidence directory for
+// the content-addressed worktree tree (HEAD^{tree} plus any uncommitted edits), not HEAD.
+const measured=measureTree(repoRoot);
+const commit=measured.commit;
+const defaultEvidence=resolve(repoRoot,'..','cap-evidence','learnings',`${basename(repoRoot)}-${measured.tree.slice(0,12)}`,'browser');
 const local=process.env.TEST_URL?null:await serve(),base=process.env.TEST_URL??local.url;
 const out=resolve(process.env.EVIDENCE_DIR??defaultEvidence);await mkdir(out,{recursive:true});
 const p=await launch({width:1440,height:1000}),checks=[];
@@ -304,5 +307,6 @@ try{
  await p.emulateViewport({width:390,height:844,mobile:true,scale:1});
  check('examples page no mobile horizontal overflow',await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth&&document.querySelector('main h1').textContent.length>0));
  await p.emulateViewport({width:1440,height:1000,mobile:false,scale:1});
- const receipt={at:new Date().toISOString(),commit,base,checks,resources,harnesses,qualification:'UI behavior and synthetic transport fixtures only. No paid model inference, local Kev weights, or training run.'};await writeFile(out+'/receipt.json',JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt,null,2));
+ check('receipt names the tree it measured (no source file changed mid-run)',measureTree(repoRoot).tree===measured.tree);
+ const receipt={at:new Date().toISOString(),commit,head:measured.head,headTree:measured.headTree,tree:measured.tree,dirty:measured.dirty,links:measured.links,base,checks,resources,harnesses,qualification:'UI behavior and synthetic transport fixtures only. No paid model inference, local Kev weights, or training run.'};await writeFile(out+'/receipt.json',JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt,null,2));
 }finally{await p.close();if(local)await new Promise(r=>local.server.close(r));}
