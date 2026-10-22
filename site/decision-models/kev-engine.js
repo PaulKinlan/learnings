@@ -31,6 +31,11 @@ const REPO = "onnx-community/kev-0.6b-ONNX";
 // The pin: a commit sha, not a branch, so the bytes behind every URL are immutable.
 const HUB_BASE = `https://huggingface.co/${REPO}/resolve/${KEV_REVISION}/`;
 
+// Wall-clock bound for one artifact download (tm-download-no-timeout). Generous enough for
+// a multi-megabyte artifact on a slow link; the point is that a stalled hub fails the
+// download instead of hanging the decision lab forever.
+const KEV_DOWNLOAD_TIMEOUT_MS = 300_000;
+
 /** The pinned URL for one artifact, by its path inside the repo. */
 export function kevArtifactUrl(file) {
   return `${HUB_BASE}${file}`;
@@ -86,7 +91,7 @@ function explicitCap(value, label) {
  * the caller, so a substituted or corrupted artifact fails here rather than executing.
  * The digest is required — an absent one throws instead of passing.
  */
-export async function fetchVerified(url, { onProgress = null, sha256, label = url, maxBytes = null } = {}) {
+export async function fetchVerified(url, { onProgress = null, sha256, label = url, maxBytes = null, timeoutMs = KEV_DOWNLOAD_TIMEOUT_MS } = {}) {
   if (!sha256) throw new Error(`no pinned sha256 for ${label}`);
   const basename = String(url).split("/").pop()?.split("?")[0] ?? "";
   const labelBasename = String(label).split("/").pop()?.split("?")[0] ?? "";
@@ -97,6 +102,20 @@ export async function fetchVerified(url, { onProgress = null, sha256, label = ur
     KEV_DEFAULT_MAX_BYTES;
 
   const controller = new AbortController();
+  // The byte cap bounds size, not time (tm-download-no-timeout): a hub that accepts the
+  // connection and then stalls or trickles would hang the download — and the decision lab
+  // UI with it — forever. Arm a wall-clock deadline on the same signal and always disarm it.
+  const deadline = setTimeout(
+    () => controller.abort(new DOMException(`download failed for ${label}: no data within ${timeoutMs}ms`, "TimeoutError")),
+    timeoutMs,
+  );
+  try {
+    return await fetchVerifiedBytes();
+  } finally {
+    clearTimeout(deadline);
+  }
+
+  async function fetchVerifiedBytes() {
   const res = await fetch(url, artifactFetchOptions({ signal: controller.signal }));
   assertArtifactResponse(res, label, url);
   if (!res.ok) throw new Error(`download failed for ${label}: HTTP ${res.status}`);
@@ -141,6 +160,7 @@ export async function fetchVerified(url, { onProgress = null, sha256, label = ur
     );
   }
   return bytes;
+  }
 }
 
 /**

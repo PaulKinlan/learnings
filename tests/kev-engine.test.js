@@ -78,6 +78,45 @@ test("Content-Length header exceeding maximum allowed size aborts before reading
   }
 });
 
+test("a hub that accepts the connection and then stalls fails within the wall-clock deadline (tm-download-no-timeout)", async () => {
+  const originalFetch = globalThis.fetch;
+  // The mock honours the signal it is handed: if the deadline is not actually wired to the
+  // request, the read below never rejects and this test fails by hanging.
+  let handedSignal = null;
+  const mockResponse = {
+    ok: true,
+    status: 200,
+    headers: new Headers({ "content-length": "10" }),
+    get body() {
+      return new ReadableStream({
+        start(controller) {
+          handedSignal?.addEventListener("abort", () => controller.error(handedSignal.reason));
+        },
+      });
+    },
+  };
+  globalThis.fetch = async (url, options) => {
+    handedSignal = options.signal;
+    return mockResponse;
+  };
+  try {
+    const t0 = Date.now();
+    await assert.rejects(
+      fetchVerified("https://fixture.invalid/tokenizer.json", {
+        sha256: "0".repeat(64),
+        label: "fixture",
+        timeoutMs: 25,
+      }),
+      /no data within 25ms/,
+    );
+    assert.ok(handedSignal, "the abort signal was passed to fetch");
+    assert.equal(handedSignal.reason?.name, "TimeoutError", "the deadline aborted with a TimeoutError");
+    assert.ok(Date.now() - t0 < 5000, "the stalled download failed fast instead of hanging forever");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("streamed chunks exceeding maximum allowed size abort streaming before full body is buffered", async () => {
   let streamCancelled = false;
   let chunksEnqueued = 0;
