@@ -51,7 +51,10 @@ test('SIGTERM interrupts a runner and removes its browser and profile', {skip: !
   let profile;
   try {
     profile = await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('runner did not launch')), 25000);
+      // 45s: launch() now retries a failed startup once (learnings-gib), so a slow-start box
+      // can legitimately take two 20s endpoint bounds before the runner reports its profile.
+      // A runner that is truly hung still trips this bound.
+      const timer = setTimeout(() => reject(new Error('runner did not launch')), 45000);
       let output = '';
       runner.stdout.on('data', (chunk) => {
         output += chunk;
