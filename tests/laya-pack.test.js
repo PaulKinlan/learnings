@@ -17,6 +17,8 @@ import {
   actFeatures,
   pyRound,
   decodeQuestion,
+  READER_SPECIAL_STRINGS,
+  specialLiteralsFromTokenizer,
 } from "../site/decision-models/laya-pack.js";
 
 const IDS = ENGLISH_SPECIAL_IDS; // { cls: 50281, sep: 50282, pad: 50283, mask: 50284, unk: 50280 }
@@ -136,6 +138,80 @@ test("reader text cannot inject any checkpoint special id into instructions, opt
       }
     }
   }
+});
+
+// learnings-xp4: the neutralizer used a fixed 14-literal list, so a checkpoint that declares
+// its own special literals left a way to place a control token in a sequence built from
+// untrusted reader text. The literals now come from the loaded tokenizer's added_tokens.
+test("specialLiteralsFromTokenizer takes every special:true literal and keeps the built-in floor", () => {
+  const literals = specialLiteralsFromTokenizer({
+    added_tokens: [
+      { content: "<2mass>", id: 1, special: true },
+      { content: "[@BOS@]", id: 2, special: true },
+      { content: "<unused7>", id: 3, special: true },
+      { content: "plainword", id: 4, special: false },
+      { content: "", id: 5, special: true },
+      { id: 6, special: true },
+    ],
+  });
+  for (const expected of ["<2mass>", "[@BOS@]", "<unused7>", ...READER_SPECIAL_STRINGS])
+    assert.ok(literals.includes(expected), `${expected} must be neutralized`);
+  assert.ok(!literals.includes("plainword"), "an ordinary added token is part of the text, not a control literal");
+  assert.ok(!literals.includes(""), "an empty literal would rewrite the whole string");
+  // Longest first, so a literal that contains another is replaced whole.
+  assert.deepEqual(literals, [...literals].sort((a, b) => b.length - a.length));
+  assert.deepEqual(specialLiteralsFromTokenizer({}), [...READER_SPECIAL_STRINGS].sort((a, b) => b.length - a.length),
+    "a tokenizer.json with no added_tokens still gets the built-in floor");
+  assert.deepEqual(specialLiteralsFromTokenizer(null), specialLiteralsFromTokenizer({}));
+});
+
+test("a checkpoint-declared special literal is neutralized in instructions, options and state", async () => {
+  const LITERAL = "<2mass>";
+  const INJECTED = 59999;
+  // A tokenize stub that emits a control id wherever the literal survives: the sentinel is
+  // what a real checkpoint tokenizer would do with its own special:true literal.
+  const tokenize = (text) => {
+    const out = [];
+    let rest = String(text);
+    while (rest.length) {
+      if (rest.startsWith(LITERAL)) { out.push(INJECTED); rest = rest.slice(LITERAL.length); continue; }
+      out.push(rest.codePointAt(0));
+      rest = rest.slice(1);
+    }
+    return out;
+  };
+  const build = (args) => buildSequence({
+    tokenize, maxLen: 512, headMaxLen: 192, ids: IDS, maskString: MASK_STR,
+    state: "s", question: { t: "choice", ins: "q", crit: { a: "", b: "" } },
+    ...args,
+  });
+  const declared = specialLiteralsFromTokenizer({ added_tokens: [{ content: LITERAL, special: true }] });
+
+  const leaking = await build({
+    state: `before ${LITERAL} after`,
+    question: { t: "choice", ins: `before ${LITERAL} after`, crit: { a: `before ${LITERAL} after`, b: "" } },
+  });
+  assert.ok(leaking.ids.includes(INJECTED), "sanity: the stub really injects the literal when nothing neutralizes it");
+
+  const neutralized = await build({
+    specialStrings: declared,
+    state: `before ${LITERAL} after`,
+    question: { t: "choice", ins: `before ${LITERAL} after`, crit: { a: `before ${LITERAL} after`, b: "" } },
+  });
+  assert.equal(neutralized.ids.filter((id) => id === INJECTED).length, 0,
+    "a literal the checkpoint declares special must never reach the sequence from reader text");
+
+  // The built-in floor still applies when a caller supplies no tokenizer literals.
+  await assert.rejects(build({ specialStrings: ["ok", ""] }), /specialStrings must be an array of non-empty strings/);
+});
+
+// Wiring guard (learnings-xp4): the engine must derive the literals from the tokenizer it
+// actually loaded, not fall back to the fixed list, and must pass them to buildSequence.
+test("laya-engine derives the neutralized literals from the loaded tokenizer", () => {
+  const engine = readFileSync(new URL("../site/decision-models/laya-engine.js", import.meta.url), "utf8");
+  assert.match(engine, /const specialStrings = specialLiteralsFromTokenizer\(tokenizerJson\);/);
+  assert.match(engine, /this\.specialStrings = specialStrings/);
+  assert.match(engine, /specialStrings: this\.specialStrings,/);
 });
 
 test("the state is right-truncated to the room left by head and options", async () => {

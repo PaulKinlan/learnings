@@ -30,6 +30,7 @@ import {
   actFeatures,
   buildSequence,
   decodeQuestion,
+  specialLiteralsFromTokenizer,
   softmax,
 } from "./laya-pack.js";
 import {
@@ -350,13 +351,14 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
 
   onProgress?.("tokenizer", 0, 0);
   const tokenizerUrl = urlFor("tokenizer", spec.files.tokenizer);
-  const tokenizer = new Tokenizer(
-    JSON.parse(new TextDecoder().decode(await fetchBytes(tokenizerUrl, {
-      ...integrityFor("tokenizer", spec.files.tokenizer, tokenizerUrl),
-      label: `${spec.repo}/${spec.files.tokenizer}`,
-    }))),
-    {},
-  );
+  // The literals this checkpoint declares as special are the ones that must be neutralized in
+  // untrusted reader text; a fixed list cannot know a checkpoint's own control tokens.
+  const tokenizerJson = JSON.parse(new TextDecoder().decode(await fetchBytes(tokenizerUrl, {
+    ...integrityFor("tokenizer", spec.files.tokenizer, tokenizerUrl),
+    label: `${spec.repo}/${spec.files.tokenizer}`,
+  })));
+  const tokenizer = new Tokenizer(tokenizerJson, {});
+  const specialStrings = specialLiteralsFromTokenizer(tokenizerJson);
   const mainUrl = urlFor("main", spec.files.main);
   const actUrl = urlFor("act", spec.files.act);
   const fetchJobs = {
@@ -421,11 +423,11 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
 
   const encode = (text) => tokenizer.encode(text, { add_special_tokens: false }).ids;
 
-  return new LayaSession({ spec, checkpoint, main, act, tokenizer, encode, config, embeddings });
+  return new LayaSession({ spec, checkpoint, main, act, tokenizer, encode, config, embeddings, specialStrings });
 }
 
 export class LayaSession {
-  constructor({ spec, checkpoint, main, act, tokenizer, encode, config, embeddings }) {
+  constructor({ spec, checkpoint, main, act, tokenizer, encode, config, embeddings, specialStrings }) {
     this.spec = spec;
     this.checkpointName = checkpoint;
     this.checkpoint = `${spec.repo} — ${spec.label}`;
@@ -435,6 +437,7 @@ export class LayaSession {
     this.encode = encode;
     this.config = config;
     this.embeddings = embeddings; // Uint16Array fp16, [256000,768] row-major, when external
+    this.specialStrings = specialStrings; // this checkpoint's special:true literals
     this.lut = embeddings ? fp16Lut() : null;
     this.window = spec.window;
     this.pooledDim = spec.pooledDim;
@@ -467,6 +470,7 @@ export class LayaSession {
       headMaxLen: this.spec.headMaxLen,
       ids: this.spec.ids,
       maskString: this.spec.maskString,
+      specialStrings: this.specialStrings,
     });
 
     const N = this.window;

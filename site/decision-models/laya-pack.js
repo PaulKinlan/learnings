@@ -14,16 +14,34 @@ export const QTYPE_ONEHOT = { choice: [1, 0, 0], score: [0, 1, 0], noul: [0, 0, 
 export const ENGLISH_MASK_STRING = "[MASK]";
 export const ENGLISH_SPECIAL_IDS = { cls: 50281, sep: 50282, pad: 50283, mask: 50284, unk: 50280 };
 
-// All special:true literals in the vendored en-tokenizer.json and ml-tokenizer.json
-// added_tokens tables. The selected checkpoint's mask is replaced first, as before.
-const READER_SPECIAL_STRINGS = [
+// Every special:true literal that has been seen in a tokenizer.json added_tokens table. This
+// is only a floor: it can never be the full set for a checkpoint that adds its own control
+// literals (<2mass>, [@BOS@], <unusedN>, [unusedN], …), so loaders pass the literals their own
+// tokenizer declares (specialLiteralsFromTokenizer) and untrusted reader text cannot smuggle a
+// control token past the mask (learnings-xp4). The selected checkpoint's mask is replaced
+// first, as section B of the host contract requires.
+export const READER_SPECIAL_STRINGS = [
   "<|padding|>", "<|endoftext|>", "[UNK]", "[CLS]", "[SEP]", "[PAD]", "[MASK]",
   "<pad>", "<eos>", "<bos>", "<unk>", "<mask>", "<start_of_turn>", "<end_of_turn>",
 ];
 
-function neutralizeReaderText(text, maskString) {
+/** Every special:true literal a tokenizer.json declares, unioned with the built-in floor and
+ * ordered longest-first so a literal containing another is neutralized whole.
+ * @param {unknown} tokenizerJson parsed tokenizer.json (added_tokens is optional)
+ * @returns {string[]} */
+export function specialLiteralsFromTokenizer(tokenizerJson) {
+  const literals = new Set(READER_SPECIAL_STRINGS);
+  const added = Array.isArray(tokenizerJson?.added_tokens) ? tokenizerJson.added_tokens : [];
+  for (const token of added) {
+    if (token?.special !== true) continue;
+    if (typeof token.content === "string" && token.content) literals.add(token.content);
+  }
+  return [...literals].sort((a, b) => b.length - a.length);
+}
+
+function neutralizeReaderText(text, maskString, literals = READER_SPECIAL_STRINGS) {
   let safe = String(text).replaceAll(maskString, " ");
-  for (const special of READER_SPECIAL_STRINGS) safe = safe.replaceAll(special, " ");
+  for (const special of literals) safe = safe.replaceAll(special, " ");
   return safe;
 }
 
@@ -97,12 +115,17 @@ export function renderOptions(q) {
  * @param {number} arg.headMaxLen   the builder head budget (192 for English)
  * @param {{cls: number, sep: number, mask: number}} arg.ids
  * @param {string} arg.maskString   the checkpoint's literal mask token ("[MASK]" for English)
+ * @param {string[]} [arg.specialStrings] special:true literals from the loaded tokenizer
+ *   (specialLiteralsFromTokenizer); the built-in floor is used when omitted
  * @param {number[]} [arg.optionOrder]  identity when omitted; duplicate orders are rejected
  * @returns {{ids: number[], markers: number[]}} marker positions are zero-based, pre-padding
  */
-export async function buildSequence({ tokenize, state, question, maxLen, headMaxLen, ids, maskString, optionOrder = null }) {
+export async function buildSequence({ tokenize, state, question, maxLen, headMaxLen, ids, maskString, specialStrings = READER_SPECIAL_STRINGS, optionOrder = null }) {
   if (typeof tokenize !== "function") throw new Error("buildSequence needs a tokenize function");
   if (!Number.isInteger(maxLen) || !Number.isInteger(headMaxLen)) throw new Error("maxLen and headMaxLen are required integers");
+  if (!Array.isArray(specialStrings) || specialStrings.some((s) => typeof s !== "string" || !s))
+    throw new Error("specialStrings must be an array of non-empty strings");
+  const specials = [...new Set(specialStrings)].sort((a, b) => b.length - a.length);
   const q = question;
   const opts = renderOptions(q);
   if (opts.length < 2) throw new Error("the inference contract needs at least two options");
@@ -111,14 +134,14 @@ export async function buildSequence({ tokenize, state, question, maxLen, headMax
     throw new Error("option_order must be a permutation of the options");
 
   // §B.3: literal mask strings become one space; all other special literals are also inert.
-  const ins = neutralizeReaderText(q.ins, maskString);
+  const ins = neutralizeReaderText(q.ins, maskString, specials);
   let headIds = await tokenize(`${q.t} question: ${ins}`);
 
   // §B.4: special literals -> space, ONE leading ASCII space, at most 48 text tokens per option,
   // with the integer mask id prepended (so an unsqueezed option occupies at most 49 slots).
   let optIds = [];
   for (const i of order) {
-    optIds.push([ids.mask, ...(await tokenize(" " + neutralizeReaderText(opts[i], maskString))).slice(0, 48)]);
+    optIds.push([ids.mask, ...(await tokenize(" " + neutralizeReaderText(opts[i], maskString, specials))).slice(0, 48)]);
   }
 
   // §B.5: the squeezing rule — only when the head budget is blown.
@@ -141,7 +164,7 @@ export async function buildSequence({ tokenize, state, question, maxLen, headMax
   out.push(ids.sep);
 
   // §B.7: the state is serialized, special literals spaced, tokenized without special tokens.
-  const stateIds = await tokenize(neutralizeReaderText(serializeState(state), maskString));
+  const stateIds = await tokenize(neutralizeReaderText(serializeState(state), maskString, specials));
 
   // §B.8: right-truncate the state to the remaining room, append the final [SEP], slice to N.
   const room = Math.max(0, maxLen - out.length - 1);
