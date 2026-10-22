@@ -98,7 +98,7 @@ export async function fetchVerified(url, { onProgress = null, sha256, label = ur
 
   const controller = new AbortController();
   const res = await fetch(url, artifactFetchOptions({ signal: controller.signal }));
-  assertArtifactResponse(res, label);
+  assertArtifactResponse(res, label, url);
   if (!res.ok) throw new Error(`download failed for ${label}: HTTP ${res.status}`);
   const total = Number(res.headers.get("content-length")) || 0;
   if (limit != null && total > limit) {
