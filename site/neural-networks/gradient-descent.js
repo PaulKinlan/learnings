@@ -68,19 +68,34 @@ function fromPx(px, py) {
   ];
 }
 
-/** The loss surface as a heat map on a log scale, with thin contour bands. Cached per surface. */
+/** The loss surface as a heat map on a log scale, with thin contour bands. Cached per surface.
+ *
+ * This is the single most expensive synchronous computation on the page: it evaluates the
+ * surface 480×480 = 230k times inside the first animation frame. Keep the loop
+ * allocation-free (scalars only, no per-pixel destructuring/arrays) — a per-pixel `fromPx()`
+ * array allocation measured ~600ms for this function on a loaded VM; the scalar form is the
+ * cheap part of keeping the first race frame from blocking the main thread for that long
+ * (learnings-am8). */
 function background() {
   if (backgrounds.has(state.surface)) return backgrounds.get(state.surface);
   const s = surface();
+  const f = s.f;
+  const d = s.domain;
   const { width: w, height: h } = map;
+  const x0 = d.x[0];
+  const xSpan = d.x[1] - d.x[0];
+  const y0 = d.y[0];
+  const ySpan = d.y[1] - d.y[0];
   const values = new Float64Array(w * h);
   let lo = Infinity;
   let hi = -Infinity;
   for (let py = 0; py < h; py++) {
+    const y = y0 + (1 - (py + 0.5) / h) * ySpan;
+    const row = py * w;
     for (let px = 0; px < w; px++) {
-      const [x, y] = fromPx(px + 0.5, py + 0.5);
-      const v = s.f(x, y);
-      values[py * w + px] = v;
+      const x = x0 + ((px + 0.5) / w) * xSpan;
+      const v = f(x, y);
+      values[row + px] = v;
       if (v < lo) lo = v;
       if (v > hi) hi = v;
     }
@@ -110,28 +125,35 @@ function ring(x, y, r, fill, stroke) {
   ctx.stroke();
 }
 
-function visiblePoints(run, progress) {
-  return run.path.slice(0, Math.max(1, Math.ceil(run.path.length * progress)));
-}
-
 function drawMap(progress) {
   ctx.putImageData(background(), 0, 0);
   const s = surface();
+  const d = s.domain;
+  const x0 = d.x[0];
+  const xSpan = d.x[1] - d.x[0];
+  const y0 = d.y[0];
+  const ySpan = d.y[1] - d.y[0];
   ctx.lineJoin = "round";
   for (const run of state.runs) {
-    const pts = visiblePoints(run, progress);
+    // The tick runs ~10× during the race; per-point toPx() arrays and a slice() of every
+    // path made each tick a garbage event (a 95ms GC tick measured on a loaded VM). Scalars
+    // and an index bound keep the tick allocation-free; the arithmetic is kept in the same
+    // order as toPx() so the rendered coordinates are bit-identical (learnings-am8).
+    const shown = Math.max(1, Math.ceil(run.path.length * progress));
     for (const [width, color] of [[5, "rgba(255,255,255,0.85)"], [2.2, run.color]]) {
       ctx.beginPath();
-      pts.forEach((p, i) => {
-        const [px, py] = toPx(p.x, p.y);
+      for (let i = 0; i < shown; i++) {
+        const p = run.path[i];
+        const px = (p.x - x0) / xSpan * map.width;
+        const py = (1 - (p.y - y0) / ySpan) * map.height;
         if (i) ctx.lineTo(px, py);
         else ctx.moveTo(px, py);
-      });
+      }
       ctx.lineWidth = width;
       ctx.strokeStyle = color;
       ctx.stroke();
     }
-    const last = pts.at(-1);
+    const last = run.path[shown - 1];
     ring(...toPx(last.x, last.y), 4.5, run.color, "#ffffff");
   }
   ring(...toPx(...s.minimum), 7, "#ffffff", "#0b1f33");
@@ -147,9 +169,19 @@ function drawChart(progress) {
   const fmin = s.f(...s.minimum);
   const gap = (v) => Math.log10(Math.max(v - fmin, 1e-12));
   const steps = Math.max(1, ...state.runs.map((r) => r.path.length - 1));
-  const all = state.runs.flatMap((r) => r.path.map((p) => gap(p.loss)));
-  const top = Math.min(8, Math.ceil(Math.max(1, ...all)));
-  const bottom = Math.max(-12, Math.floor(Math.min(top - 1, ...all)));
+  // Axes span the FULL paths (not the revealed prefix) so the scale is stable per race; a
+  // loop instead of flatMap keeps the per-tick garbage out (learnings-am8).
+  let maxGap = 1;
+  let minGap = Infinity;
+  for (const r of state.runs) {
+    for (const p of r.path) {
+      const g = gap(p.loss);
+      if (g > maxGap) maxGap = g;
+      if (g < minGap) minGap = g;
+    }
+  }
+  const top = Math.min(8, Math.ceil(maxGap));
+  const bottom = Math.max(-12, Math.floor(Math.min(top - 1, minGap)));
   const pad = { l: 48, r: 10, t: 10, b: 24 };
   const X = (i) => pad.l + (i / steps) * (w - pad.l - pad.r);
   const Y = (v) =>
@@ -168,12 +200,13 @@ function drawChart(progress) {
   }
   cctx.fillText(`step 0 → ${steps}`, pad.l, h - 6);
   for (const run of state.runs) {
-    const pts = visiblePoints(run, progress);
+    const shown = Math.max(1, Math.ceil(run.path.length * progress));
     cctx.beginPath();
-    pts.forEach((p, i) => {
+    for (let i = 0; i < shown; i++) {
+      const p = run.path[i];
       if (i) cctx.lineTo(X(i), Y(gap(p.loss)));
       else cctx.moveTo(X(i), Y(gap(p.loss)));
-    });
+    }
     cctx.lineWidth = 2;
     cctx.strokeStyle = run.color;
     cctx.stroke();
