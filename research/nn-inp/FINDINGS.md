@@ -36,6 +36,17 @@ Run from the repo root (each script serves `site/` itself):
    bit-exact rendering verified by canvas checksums; the residual stalls are GC and VM
    load, not page code.
 
+   **Corrected 2026-10-26 (learnings-uaz): the animation is not on-load only.** A click on
+   the contour map re-triggers it: the map `pointerdown` handler sets the start point and
+   calls `$("gd-run").click()` → `update()` → `animate()` (gradient-descent.js). Measured on
+   the same tree: after a 2s idle window with zero long tasks, ONE trusted click on the map
+   produced 8 long tasks totalling ~1.1s (191/202/100/202/100/99/101/102ms). The 1.3–10.4s
+   hover bucket in the original measurement therefore includes input-TRIGGERED animation
+   work, not only input arriving DURING the on-load animation — the on-load framing above
+   under-counts what interaction on this page costs. Whether a map click should re-run the
+   full animated race or settle for a cheaper redraw is a product question (filed as
+   learnings-eyz from the sweep batch).
+
 3. **Chapter documents are expensive to lay out once at load.** Trace on
    gradient-descent.html: `UpdateLayoutTree` 495ms + full-document `Layout` 497ms
    (1350 dirty objects) + `Paint` 92ms ≈ 1.1s of main thread before first paint settles —
@@ -49,6 +60,14 @@ Run from the repo root (each script serves `site/` itself):
    `(program)`). ~90–100ms is what one damaged-frame software raster costs on this loaded
    VM. On real hardware with GPU raster this is single-digit ms — do not gate quality
    decisions on these absolute numbers.
+
+   *Measurement note 2026-10-26 (learnings-e83): at the time of the original run,
+   control.mjs computed presentTail with a queue-INCLUSIVE formula
+   (`dur - (pe - ps)`) while measure.mjs used the queue-exclusive one
+   (`dur - (pe - start)`). The quoted comparison survives because the control page's
+   queue was measured at 0–1ms, but the columns were not like-for-like in general.
+   control.mjs now records `start` and prints the same queue-exclusive presentTail plus
+   the queue column, exactly like measure.mjs.*
 
 5. **Cleared hypotheses:** canvas backing stores are at 0.73–1.14× CSS size (fine); no
    continuous CSS invalidation exists (only one 0.3s one-shot keyframe, on architectures);
