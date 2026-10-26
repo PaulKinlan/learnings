@@ -20,8 +20,10 @@ async function read(target, label) {
   // (a restarted transition fails the second sample), and the snapshot is captured in the
   // same evaluation. A separate check-then-capture raced hover restarts under load — the
   // predicate saw the settled card and the snapshot then read mid-transition (gate 4b0e5490,
-  // learnings-93m).
-  return browser.waitFor(async (sel, want) => {
+  // learnings-93m). The predicate returns the OBSERVED sample plus a settled flag and selects
+  // on `until`, so a timeout message carries the computed styles the card actually showed
+  // instead of `last value null` (learnings-ft8).
+  return (await browser.waitFor(async (sel, want) => {
     const sample = () => {
       const li = document.querySelector(sel);
       const a = li.querySelector('h3 a');
@@ -38,11 +40,13 @@ async function read(target, label) {
     const settled = (s) => s.transform === want.transform && s.borderColor === want.borderColor &&
       s.boxShadow === want.boxShadow;
     const first = sample();
-    if (!settled(first)) return null;
+    if (!settled(first)) return { settled: false, observed: first };
     await new Promise((resolve) => setTimeout(resolve, 60));
     const second = sample();
-    return settled(second) ? second : null;
-  }, {args: [selector, target], timeout: 10000, label});
+    return settled(second)
+      ? { settled: true, observed: second }
+      : { settled: false, observed: second, restarted: true };
+  }, { args: [selector, target], timeout: 10000, label, until: (r) => r?.settled === true })).observed;
 }
 async function away() {
   await browser.send('Input.dispatchMouseEvent', {type: 'mouseMoved', x: 0, y: 0});
