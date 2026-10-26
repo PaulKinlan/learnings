@@ -68,20 +68,33 @@ test("hosted provider calls carry redirect/credentials/referrer hardening (INV-F
     captured = { url, init };
     return { ok: true, json: async () => ({ answers: { tool: { type: "noul", noul: 0.9 } } }) };
   };
+  const { decideImage } = await import("../site/decision-models/image-lab.js");
+  const imageSpec = { title: "t", description: "d", state: "s", questions: { tool: { type: "noul", instructions: "Is it?" } } };
+  const imagePayload = "data:image/png;base64,AA==";
   try {
-    const { decideImage } = await import("../site/decision-models/image-lab.js");
-    await decideImage({
-      spec: { title: "t", description: "d", state: "s", questions: { tool: { type: "noul", instructions: "Is it?" } } },
-      imagePayload: "data:image/png;base64,AA==",
-      engine: "api",
-      key: "synthetic-test-only",
-    });
+    await decideImage({ spec: imageSpec, imagePayload, engine: "api", key: "synthetic-test-only" });
   } finally {
     globalThis.fetch = originalFetch;
   }
   assert.equal(captured.url, "https://api.typesafe.ai/v1/systemone");
   for (const [option, value] of Object.entries(PROVIDER_FETCH_OPTIONS)) {
     assert.equal(captured.init[option], value, `the hosted TypeSafe call carries ${option}: ${value}`);
+  }
+  // learnings-dcp: the LOCAL loopback transport carries the same payload — the uploaded image
+  // and the reader's questions — so it is bound by the same policy, not just the hosted call.
+  captured = null;
+  globalThis.fetch = async (url, init) => {
+    captured = { url, init };
+    return { ok: true, json: async () => ({ answers: { tool: { type: "noul", noul: 0.9 } } }) };
+  };
+  try {
+    await decideImage({ spec: imageSpec, imagePayload, engine: "local", endpoint: "http://127.0.0.1:9/v1/systemone" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(captured.url, "http://127.0.0.1:9/v1/systemone");
+  for (const [option, value] of Object.entries(PROVIDER_FETCH_OPTIONS)) {
+    assert.equal(captured.init[option], value, `the local loopback call carries ${option}: ${value}`);
   }
   // The playground's hosted Jev call is a page driver with no exportable boundary, so pin that
   // the call site spreads the same shared policy instead of re-litigating three literals.
