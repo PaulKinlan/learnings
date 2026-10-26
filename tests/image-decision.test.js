@@ -1564,6 +1564,52 @@ test('image lab: drop zone styles, CSP compliance, keyboard activation, and non-
     });
     assert.match(nonImageDropStatus, /doc\.pdf.*is not an image/i);
 
+    // learnings-6hr: the PASTE path must run the same SVG/byte-cap guard as the picker and the
+    // drop path — deleting the imageFileRejection() call from the paste handler must turn red.
+    const pasteSvgStatus = await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.items.add(new File(['<svg xmlns="http://www.w3.org/2000/svg"></svg>'], 'evil.svg', { type: 'image/svg+xml' }));
+      const paste = new Event('paste');
+      paste.clipboardData = dt;
+      window.dispatchEvent(paste);
+      return document.querySelector('#status').textContent;
+    });
+    assert.match(pasteSvgStatus, /SVG images are not accepted/i);
+
+    const pasteOversizeStatus = await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([new Uint8Array(8 * 1024 * 1024 + 1)], 'big.png', { type: 'image/png' }));
+      const paste = new Event('paste');
+      paste.clipboardData = dt;
+      window.dispatchEvent(paste);
+      return document.querySelector('#status').textContent;
+    });
+    assert.match(pasteOversizeStatus, /Image is too large/i);
+
+    // learnings-6hr: dropping undecodable bytes LABELLED image/png is refused by the decode
+    // check, and the previously loaded preview survives the rejection.
+    const previewBefore = await page.evaluate(() => document.querySelector('#preview-image').src);
+    await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([new Uint8Array([0x00, 0x01, 0x02, 0x03])], 'fake.png', { type: 'image/png' }));
+      const dropEvent = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt });
+      document.querySelector('#drop-zone').dispatchEvent(dropEvent);
+    });
+    await page.waitFor(() => document.querySelector('#status').textContent.includes('could not be decoded'),
+      { timeout: 5000, label: 'undecodable drop rejection' });
+    assert.equal(await page.evaluate(src => document.querySelector('#preview-image').src === src, previewBefore),
+      true, 'the previous preview must survive a rejected drop');
+
+    // learnings-6hr: the DROP path enforces the byte cap too.
+    const dropOversizeStatus = await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([new Uint8Array(8 * 1024 * 1024 + 1)], 'big.png', { type: 'image/png' }));
+      const dropEvent = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt });
+      document.querySelector('#drop-zone').dispatchEvent(dropEvent);
+      return document.querySelector('#status').textContent;
+    });
+    assert.match(dropOversizeStatus, /Image is too large/i);
+
     // Presets clear the error
     await page.click('#preset-ui');
     const presetStatus = await page.evaluate(() => document.querySelector('#status').textContent);

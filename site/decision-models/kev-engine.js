@@ -25,22 +25,16 @@ import {
   readAnswers,
 } from "./kev-pack.js";
 import { KEV_REVISION, KEV_SHA256, KEV_MAX_BYTES, KEV_DEFAULT_MAX_BYTES } from "./kev-manifest.js";
-import { artifactFetchOptions, assertArtifactResponse } from "./fetch-policy.mjs";
+import { ARTIFACT_DOWNLOAD_TIMEOUT_MS, fetchArtifactBytes } from "./fetch-policy.mjs";
 
 const REPO = "onnx-community/kev-0.6b-ONNX";
 // The pin: a commit sha, not a branch, so the bytes behind every URL are immutable.
 const HUB_BASE = `https://huggingface.co/${REPO}/resolve/${KEV_REVISION}/`;
 
-// Wall-clock bound for one artifact download (tm-download-no-timeout). Generous enough for
-// a multi-megabyte artifact on a slow link; the point is that a stalled hub fails the
-// download instead of hanging the decision lab forever.
-const KEV_DOWNLOAD_TIMEOUT_MS = 300_000;
-
 /** The pinned URL for one artifact, by its path inside the repo. */
 export function kevArtifactUrl(file) {
   return `${HUB_BASE}${file}`;
 }
-
 const VENDOR = new URL("../vendor/", import.meta.url).href;
 ort.env.wasm.wasmPaths = {
   mjs: new URL("ort-wasm-simd-threaded.jsep.mjs", VENDOR).href,
@@ -51,116 +45,20 @@ ort.env.logLevel = "warning";
 const SPECIAL_TOKEN_FILES = ["special_tokens_map.json", "added_tokens.json"];
 
 /**
- * Prototype-safe own-property lookup for a manifest size cap. The frozen MAX_BYTES maps inherit
- * Object.prototype, so a plain `map[filename]` resolves `constructor`, `__proto__`, `toString` and
- * friends to Object members — non-number values that make `total > limit` / `received > limit`
- * compare NaN (always false) and silently disable the bounded fallback. Only an own key whose
- * value is a finite positive number is trusted; anything else falls through the cap chain to
- * KEV_DEFAULT_MAX_BYTES, so every artifact gets a bounded cap (tm-unbounded-download-buffer).
- */
-function ownCap(caps, key) {
-  const value = Object.hasOwn(caps, key) ? caps[key] : undefined;
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
-}
-
-/**
- * Resolve an explicit maxBytes override at the helper's API boundary. Unlike a manifest lookup
- * (ownCap, which falls through to CAP_DEFAULT), an explicit override is a caller-supplied value,
- * so an invalid one is a bug that must fail loudly instead of silently unbinding the download:
- * NaN, ±Infinity, 0, negatives and non-numeric strings would otherwise make `total > limit` /
- * `received > limit` compare false (or always true) and either accept an oversized body or
- * reject every byte. A missing override (null/undefined) returns undefined so the cap chain
- * continues into the manifest lookup and CAP_DEFAULT (tm-unbounded-download-buffer).
- */
-function explicitCap(value, label) {
-  if (value == null) return undefined;
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    throw new Error(
-      `invalid maxBytes for ${label}: expected a finite positive number of bytes, got ${String(value)}`,
-    );
-  }
-  return value;
-}
-
-/**
  * Fetch one artifact into bytes, reporting progress, and refuse bytes whose SHA-256 does not
- * match the pinned digest. Downloads are strictly bounded by a maximum byte cap enforced
- * via AbortController while streaming (and checked against Content-Length before streaming begins)
- * to prevent memory exhaustion from unbounded responses (tm-unbounded-download-buffer).
- * There is deliberately no path that skips the check: the trust decision never depends on
- * the caller, so a substituted or corrupted artifact fails here rather than executing.
- * The digest is required — an absent one throws instead of passing.
+ * match the pinned digest. The policy, the byte caps, the idle deadline and the verification all
+ * live in fetch-policy.mjs (learnings-0ef) so kev and laya cannot drift; this wrapper pins the
+ * Kev manifest as the cap chain and keeps the historical name for callers and tests.
+ * `timeoutMs` bounds a STALL (idle with no progress), not the total transfer time, and must be a
+ * finite positive number — anything else throws instead of silently aborting every download.
  */
-export async function fetchVerified(url, { onProgress = null, sha256, label = url, maxBytes = null, timeoutMs = KEV_DOWNLOAD_TIMEOUT_MS } = {}) {
-  if (!sha256) throw new Error(`no pinned sha256 for ${label}`);
-  const basename = String(url).split("/").pop()?.split("?")[0] ?? "";
-  const labelBasename = String(label).split("/").pop()?.split("?")[0] ?? "";
-  const limit =
-    explicitCap(maxBytes, label) ??
-    ownCap(KEV_MAX_BYTES, labelBasename) ??
-    ownCap(KEV_MAX_BYTES, basename) ??
-    KEV_DEFAULT_MAX_BYTES;
-
-  const controller = new AbortController();
-  // The byte cap bounds size, not time (tm-download-no-timeout): a hub that accepts the
-  // connection and then stalls or trickles would hang the download — and the decision lab
-  // UI with it — forever. Arm a wall-clock deadline on the same signal and always disarm it.
-  const deadline = setTimeout(
-    () => controller.abort(new DOMException(`download failed for ${label}: no data within ${timeoutMs}ms`, "TimeoutError")),
-    timeoutMs,
-  );
-  try {
-    return await fetchVerifiedBytes();
-  } finally {
-    clearTimeout(deadline);
-  }
-
-  async function fetchVerifiedBytes() {
-  const res = await fetch(url, artifactFetchOptions({ signal: controller.signal }));
-  assertArtifactResponse(res, label, url);
-  if (!res.ok) throw new Error(`download failed for ${label}: HTTP ${res.status}`);
-  const total = Number(res.headers.get("content-length")) || 0;
-  if (limit != null && total > limit) {
-    controller.abort();
-    throw new Error(
-      `download failed for ${label}: Content-Length ${total} exceeds maximum allowed size ${limit} bytes`,
-    );
-  }
-  const reader = res.body.getReader();
-  const chunks = [];
-  let received = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    received += value.length;
-    if (limit != null && received > limit) {
-      controller.abort();
-      try { await reader.cancel(); } catch {}
-      throw new Error(
-        `download failed for ${label}: stream exceeded maximum allowed size ${limit} bytes (received ${received} bytes)`,
-      );
-    }
-    chunks.push(value);
-    onProgress?.(received, total);
-  }
-  const bytes = chunks.length === 1 ? chunks[0] : (() => {
-    const b = new Uint8Array(received);
-    let offset = 0;
-    for (const chunk of chunks) {
-      b.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return b;
-  })();
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-  if (hex !== sha256.toLowerCase()) {
-    throw new Error(
-      `integrity check failed for ${label}: sha256 ${hex.slice(0, 16)}… does not match the pinned ${sha256.slice(0, 16)}…`,
-    );
-  }
-  return bytes;
-  }
+export function fetchVerified(url, options = {}) {
+  return fetchArtifactBytes(url, {
+    timeoutMs: ARTIFACT_DOWNLOAD_TIMEOUT_MS,
+    caps: KEV_MAX_BYTES,
+    defaultMaxBytes: KEV_DEFAULT_MAX_BYTES,
+    ...options,
+  });
 }
 
 /**
@@ -168,8 +66,10 @@ export async function fetchVerified(url, { onProgress = null, sha256, label = ur
  * `onProgress(stage, received, total)` reports the weight download. `urls` overrides asset
  * URLs (tests serve local copies instead of re-downloading); it does not change the check, so
  * a local copy is still verified against the pinned digest of the artifact it stands in for.
+ * `timeoutMs` is the idle deadline shared by every artifact download (tm-download-no-timeout):
+ * it bounds a stalled hub, not the total transfer time, and must be finite and positive.
  */
-export async function loadKev({ onProgress = null, urls = {} } = {}) {
+export async function loadKev({ onProgress = null, urls = {}, timeoutMs = ARTIFACT_DOWNLOAD_TIMEOUT_MS } = {}) {
   const urlFor = (file) => urls[file] ?? kevArtifactUrl(file);
   const notify = (stage, loaded = 0, total = 0, file = stage) => {
     onProgress?.({ stage, file, loaded, total, received: loaded }, loaded, total, file);
@@ -181,11 +81,13 @@ export async function loadKev({ onProgress = null, urls = {} } = {}) {
       sha256: KEV_SHA256["tokenizer.json"],
       label: `${REPO}/tokenizer.json`,
       maxBytes: KEV_MAX_BYTES["tokenizer.json"],
+      timeoutMs,
     }),
     fetchVerified(urlFor("config.json"), {
       sha256: KEV_SHA256["config.json"],
       label: `${REPO}/config.json`,
       maxBytes: KEV_MAX_BYTES["config.json"],
+      timeoutMs,
     }),
   ]);
   const tokenizer = new Tokenizer(JSON.parse(new TextDecoder().decode(tokenizerBytes)), {});
@@ -199,11 +101,13 @@ export async function loadKev({ onProgress = null, urls = {} } = {}) {
       sha256: KEV_SHA256["onnx/model_q4.onnx"],
       label: `${REPO}/onnx/model_q4.onnx`,
       maxBytes: KEV_MAX_BYTES["onnx/model_q4.onnx"],
+      timeoutMs,
     }),
     fetchVerified(urlFor("onnx/model_q4.onnx_data"), {
       sha256: KEV_SHA256["onnx/model_q4.onnx_data"],
       label: `${REPO}/onnx/model_q4.onnx_data`,
       maxBytes: KEV_MAX_BYTES["onnx/model_q4.onnx_data"],
+      timeoutMs,
       onProgress: (received, total) => notify("weights", received, total, "onnx/model_q4.onnx_data"),
     }),
   ]);

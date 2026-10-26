@@ -1,20 +1,35 @@
-import { test } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { measureTree } from './lib/worktree.mjs';
 
 const git = (dir, ...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+
+// learnings-kcu: the fixture repo is init+committed ONCE; every test copies it (a plain
+// filesystem copy costs milliseconds and no git subprocesses, where an init/add/commit cycle
+// costs ~0.3s each). Copies keep the tests independent: each starts from the same clean commit
+// (objects, index, working tree and identity config), and a test's edits and commits stay
+// inside its own throwaway checkout.
+let template = null;
+before(() => {
+  template = mkdtempSync(join(tmpdir(), 'worktree-template-'));
+  git(template, 'init', '-q');
+  git(template, 'config', 'user.email', 'gate@example.com');
+  git(template, 'config', 'user.name', 'gate');
+  writeFileSync(join(template, 'tracked.txt'), 'one\n');
+  git(template, 'add', '-A');
+  git(template, 'commit', '-q', '-m', 'init');
+});
+after(() => {
+  if (template) rmSync(template, { recursive: true, force: true });
+});
+
 const makeRepo = () => {
   const dir = mkdtempSync(join(tmpdir(), 'worktree-measure-'));
-  git(dir, 'init', '-q');
-  git(dir, 'config', 'user.email', 'gate@example.com');
-  git(dir, 'config', 'user.name', 'gate');
-  writeFileSync(join(dir, 'tracked.txt'), 'one\n');
-  git(dir, 'add', '-A');
-  git(dir, 'commit', '-q', '-m', 'init');
+  cpSync(template, dir, { recursive: true });
   return dir;
 };
 

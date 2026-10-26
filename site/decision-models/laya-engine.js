@@ -22,7 +22,13 @@
 // in laya-pack.js, pinned id-for-id against the publisher's gate captures.
 
 import { loadLiteRt, loadAndCompile, Tensor } from "../vendor/litert/index.js";
-import { artifactFetchOptions, assertArtifactResponse } from "./fetch-policy.mjs";
+import {
+  ARTIFACT_DOWNLOAD_TIMEOUT_MS,
+  boundedArtifactRead,
+  fetchArtifactBytes,
+  ownCap,
+  verifyArtifactSha256,
+} from "./fetch-policy.mjs";
 import { Tokenizer } from "../vendor/tokenizers.min.mjs";
 import {
   ENGLISH_MASK_STRING,
@@ -46,11 +52,6 @@ export const MULTILINGUAL_MASK_STRING = "<mask>";
 
 const ML_REPO = "litert-community/Laya-Multilingual-LiteRT";
 const EN_REPO = "litert-community/laya-LiteRT";
-
-// Wall-clock bound for one artifact download (tm-download-no-timeout). Generous enough for
-// a multi-hundred-megabyte artifact on a slow link; the point is that a stalled hub fails
-// the download instead of hanging the decision lab forever.
-const LAYA_DOWNLOAD_TIMEOUT_MS = 300_000;
 
 const CHECKPOINTS = {
   multilingual: {
@@ -123,126 +124,20 @@ function litert() {
   return litertPromise;
 }
 
-async function verifySha256(bytes, sha256, label) {
-  if (!sha256) throw new Error(`no pinned sha256 for ${label}`);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-  if (hex !== sha256.toLowerCase()) {
-    throw new Error(
-      `integrity check failed for ${label}: sha256 ${hex.slice(0, 16)}… does not match the publisher's ${sha256.slice(0, 16)}…`,
-    );
-  }
-}
-
 /**
- * Prototype-safe own-property lookup for a manifest size cap. The frozen MAX_BYTES maps inherit
- * Object.prototype, so a plain `map[filename]` resolves `constructor`, `__proto__`, `toString` and
- * friends to Object members — non-number values that make `total > limit` / `received > limit`
- * compare NaN (always false) and silently disable the bounded fallback. Only an own key whose
- * value is a finite positive number is trusted; anything else falls through the cap chain to
- * LAYA_DEFAULT_MAX_BYTES, so every artifact gets a bounded cap (tm-unbounded-download-buffer).
+ * Fetch a URL into a Uint8Array with progress callbacks and a required sha256 check. The request
+ * policy, the bounded streaming, the idle deadline and the digest verification are the ONE
+ * shared implementation in fetch-policy.mjs (learnings-0ef): kev-engine.js and the SHA256SUMS
+ * fetch below use the same path, so the bounds cannot drift apart again. `timeoutMs` bounds a
+ * STALL (idle with no progress), not the total transfer time, and must be finite and positive.
  */
-function ownCap(caps, key) {
-  const value = Object.hasOwn(caps, key) ? caps[key] : undefined;
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
-}
-
-/**
- * Resolve an explicit maxBytes override at the helper's API boundary. Unlike a manifest lookup
- * (ownCap, which falls through to CAP_DEFAULT), an explicit override is a caller-supplied value,
- * so an invalid one is a bug that must fail loudly instead of silently unbinding the download:
- * NaN, ±Infinity, 0, negatives and non-numeric strings would otherwise make `total > limit` /
- * `received > limit` compare false (or always true) and either accept an oversized body or
- * reject every byte. A missing override (null/undefined) returns undefined so the cap chain
- * continues into the manifest lookup and CAP_DEFAULT (tm-unbounded-download-buffer).
- */
-function explicitCap(value, label) {
-  if (value == null) return undefined;
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    throw new Error(
-      `invalid maxBytes for ${label}: expected a finite positive number of bytes, got ${String(value)}`,
-    );
-  }
-  return value;
-}
-
-/**
- * Arm a wall-clock deadline on a download's AbortController (tm-download-no-timeout). The byte
- * caps bound size, not time: a hub that accepts the connection and then stalls or trickles would
- * otherwise hang the download — and the decision lab UI with it — forever. The caller disarms
- * with clearTimeout in a finally, so a finished download never leaves a pending timer behind.
- */
-function armDownloadDeadline(controller, failurePrefix, timeoutMs) {
-  return setTimeout(
-    () => controller.abort(new DOMException(`${failurePrefix}: no data within ${timeoutMs}ms`, "TimeoutError")),
-    timeoutMs,
-  );
-}
-
-/**
- * Fetch a URL into a Uint8Array with progress callbacks, bounded streaming via AbortController,
- * and a required sha256 check. Rejects early if Content-Length exceeds maxBytes, and aborts
- * streaming immediately if accumulated chunks exceed maxBytes before SHA-256 verification
- * (threat model tm-unbounded-download-buffer).
- */
-export async function fetchBytes(url, { onProgress = null, sha256, label = url, maxBytes = null, timeoutMs = LAYA_DOWNLOAD_TIMEOUT_MS } = {}) {
-  if (!sha256) throw new Error(`no pinned sha256 for ${label}`);
-  const basename = String(url).split("/").pop()?.split("?")[0] ?? "";
-  const labelBasename = String(label).split("/").pop()?.split("?")[0] ?? "";
-  const limit =
-    explicitCap(maxBytes, label) ??
-    ownCap(LAYA_MAX_BYTES, labelBasename) ??
-    ownCap(LAYA_MAX_BYTES, basename) ??
-    LAYA_DEFAULT_MAX_BYTES;
-
-  const controller = new AbortController();
-  const deadline = armDownloadDeadline(controller, `download failed for ${label}`, timeoutMs);
-  try {
-    return await fetchVerifiedBytes();
-  } finally {
-    clearTimeout(deadline);
-  }
-
-  async function fetchVerifiedBytes() {
-  const res = await fetch(url, artifactFetchOptions({ signal: controller.signal }));
-  assertArtifactResponse(res, label, url);
-  if (!res.ok) throw new Error(`download failed for ${label}: HTTP ${res.status}`);
-  const total = Number(res.headers.get("content-length")) || 0;
-  if (limit != null && total > limit) {
-    controller.abort();
-    throw new Error(
-      `download failed for ${label}: Content-Length ${total} exceeds maximum allowed size ${limit} bytes`,
-    );
-  }
-  const reader = res.body.getReader();
-  const chunks = [];
-  let received = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    received += value.length;
-    if (limit != null && received > limit) {
-      controller.abort();
-      try { await reader.cancel(); } catch {}
-      throw new Error(
-        `download failed for ${label}: stream exceeded maximum allowed size ${limit} bytes (received ${received} bytes)`,
-      );
-    }
-    chunks.push(value);
-    onProgress?.(received, total);
-  }
-  const bytes = chunks.length === 1 ? chunks[0] : (() => {
-    const b = new Uint8Array(received);
-    let offset = 0;
-    for (const chunk of chunks) {
-      b.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return b;
-  })();
-  await verifySha256(bytes, sha256, label);
-  return bytes;
-  }
+export function fetchBytes(url, options = {}) {
+  return fetchArtifactBytes(url, {
+    timeoutMs: ARTIFACT_DOWNLOAD_TIMEOUT_MS,
+    caps: LAYA_MAX_BYTES,
+    defaultMaxBytes: LAYA_DEFAULT_MAX_BYTES,
+    ...options,
+  });
 }
 
 function parseSha256Sums(text) {
@@ -286,7 +181,7 @@ function fp16Lut() {
  * copies instead of re-downloading from the hub). `timeoutMs` is the wall-clock deadline
  * shared by the sums fetch and every artifact download (tm-download-no-timeout).
  */
-export async function loadLaya({ checkpoint = "multilingual", calibration = "fitted", window = null, onProgress = null, urls = {}, timeoutMs = LAYA_DOWNLOAD_TIMEOUT_MS } = {}) {
+export async function loadLaya({ checkpoint = "multilingual", calibration = "fitted", window = null, onProgress = null, urls = {}, timeoutMs = ARTIFACT_DOWNLOAD_TIMEOUT_MS } = {}) {
   const baseSpec = CHECKPOINTS[checkpoint];
   const spec = window ? { ...baseSpec, window } : baseSpec;
   if (!spec) throw new Error(`unknown checkpoint '${checkpoint}' (known: ${Object.keys(CHECKPOINTS).join(", ")})`);
@@ -313,63 +208,19 @@ export async function loadLaya({ checkpoint = "multilingual", calibration = "fit
   // A sums file that does not arrive is a hard failure, on purpose: an empty digest table would
   // turn every check below into no check at all, which is the silent fallback this refuses.
   // The multilingual sums file itself is checked against the digest in laya-manifest.js.
-  const sumsLimit = LAYA_MAX_BYTES.SHA256SUMS ?? 1024 * 1024;
-  const sumsController = new AbortController();
-  // The sums fetch is as exposed to a stalled hub as any artifact download: the size cap bounds
-  // bytes, not time (tm-download-no-timeout), so arm the same wall-clock deadline on its signal
-  // and always disarm it. Without it a hub that accepts the connection and then stalls would
-  // leave loadLaya pending forever.
-  const sumsDeadline = armDownloadDeadline(sumsController, `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}`, timeoutMs);
-  let sumsBytes;
-  try {
-    const sumsResponse = await fetch(sumsUrl, artifactFetchOptions({ signal: sumsController.signal }));
-    assertArtifactResponse(sumsResponse, `SHA256SUMS ${spec.repo}@${spec.revision}`, sumsUrl);
-    if (!sumsResponse.ok) {
-      throw new Error(
-        `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: HTTP ${sumsResponse.status} (${sumsUrl})`,
-      );
-    }
-    const sumsTotal = Number(sumsResponse.headers.get("content-length")) || 0;
-    if (sumsLimit != null && sumsTotal > sumsLimit) {
-      sumsController.abort();
-      throw new Error(
-        `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: Content-Length ${sumsTotal} exceeds maximum allowed size ${sumsLimit} bytes`,
-      );
-    }
-    // The sums file is tiny but still arrives from the network, so the cap is enforced DURING
-    // streaming — not after arrayBuffer() has already buffered an unbounded body. An absent or
-    // lying Content-Length must abort before EOF and before digest (tm-unbounded-download-buffer).
-    const sumsReader = sumsResponse.body.getReader();
-    const sumsChunks = [];
-    let sumsReceived = 0;
-    for (;;) {
-      const { done, value } = await sumsReader.read();
-      if (done) break;
-      sumsReceived += value.length;
-      if (sumsLimit != null && sumsReceived > sumsLimit) {
-        sumsController.abort();
-        try { await sumsReader.cancel(); } catch {}
-        throw new Error(
-          `SHA256SUMS unavailable for ${spec.repo}@${spec.revision}: stream exceeded maximum allowed size ${sumsLimit} bytes (received ${sumsReceived} bytes)`,
-        );
-      }
-      sumsChunks.push(value);
-    }
-    sumsBytes = sumsChunks.length === 1
-      ? sumsChunks[0]
-      : (() => {
-          const b = new Uint8Array(sumsReceived);
-          let offset = 0;
-          for (const chunk of sumsChunks) {
-            b.set(chunk, offset);
-            offset += chunk.length;
-          }
-          return b;
-        })();
-  } finally {
-    clearTimeout(sumsDeadline);
-  }
-  await verifySha256(sumsBytes, LAYA_SHA256SUMS_SHA256[checkpoint], `${spec.repo}/SHA256SUMS`);
+  // The sums fetch is as exposed to a stalled hub as any artifact download, so it goes through
+  // the SAME shared bounded reader as every artifact (learnings-0ef): the artifact request
+  // policy, the during-streaming size cap (tm-unbounded-download-buffer) and the idle deadline
+  // (tm-download-no-timeout). Its failure prefix names the sums file and carries the URL, so a
+  // missing or stalling sums file says what did not arrive instead of a fake artifact download.
+  const sumsLabel = `SHA256SUMS ${spec.repo}@${spec.revision}`;
+  const sumsBytes = await boundedArtifactRead(sumsUrl, {
+    label: sumsLabel,
+    maxBytes: ownCap(LAYA_MAX_BYTES, "SHA256SUMS") ?? 1024 * 1024,
+    timeoutMs,
+    failurePrefix: `SHA256SUMS unavailable for ${spec.repo}@${spec.revision} (${sumsUrl})`,
+  });
+  await verifyArtifactSha256(sumsBytes, LAYA_SHA256SUMS_SHA256[checkpoint], `${spec.repo}/SHA256SUMS`);
   const sums = parseSha256Sums(new TextDecoder().decode(sumsBytes));
 
   // Overrides use their final URL's filename when pinned. Vendored filenames may differ

@@ -1,5 +1,14 @@
-// Opt-in, heavy real-browser acceptance: downloads ~650 MB of pinned Laya artifacts.
-// Not part of the fast gate. EVIDENCE_DIR controls where the receipt and screenshot land.
+// Opt-in, heavy real-browser acceptance for the Laya playground: downloads ~650 MB of pinned
+// Laya artifacts from the hub and compiles the graphs in a real Chromium. NOT part of `npm
+// test` or the fast gate — run it explicitly when the playground, classifier sharing or the
+// Laya load path changes:
+//
+//   npm run test:laya-playground
+//
+// TEST_URL overrides the served base (an already-running `npm run serve`), and EVIDENCE_DIR
+// controls where the receipt (laya-playground.json) and screenshot land (default: research/).
+// An unrun harness looks like coverage; this one is a named, documented opt-in instead
+// (learnings-v92).
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";

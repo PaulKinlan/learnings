@@ -415,18 +415,25 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
   };
 
   /**
-   * Poll the page until `fn` returns something truthy.
+   * Poll the page until `fn` returns something truthy, or until the optional `until` predicate
+   * (run in node, not the page) accepts the returned value.
    *
    * `args` exists because the function is stringified and run in the page: a closure over the
    * test's own variables is not there when it arrives, and the failure it produces is a timeout
    * with no error in it — the worst kind of test bug.
+   *
+   * `until` exists because a boolean predicate collapses every non-matching state into `false`,
+   * so the timeout message could not distinguish 'stuck mid-transition' from 'lifted to a
+   * different value' (learnings-ft8). Return the observed state and select on it: the timeout
+   * then names what the page actually showed.
    */
-  page.waitFor = async (fn, { timeout = 15000, label = "condition", args = [] } = {}) => {
+  page.waitFor = async (fn, { timeout = 15000, label = "condition", args = [], until = null } = {}) => {
+    const done = until ?? ((value) => Boolean(value));
     const deadline = Date.now() + timeout;
     let last;
     while (Date.now() < deadline) {
       last = await page.evaluate(fn, ...args);
-      if (last) return last;
+      if (done(last)) return last;
       await sleep(120);
     }
     throw new Error(`timed out waiting for ${label}; last value ${JSON.stringify(last)}`);

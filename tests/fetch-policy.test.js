@@ -2,6 +2,8 @@
 // (learnings-902), plus the redirect check that runs before a byte is consumed.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import {
   ARTIFACT_HOST_SUFFIXES,
@@ -9,7 +11,7 @@ import {
   artifactHostAllowed,
   assertArtifactResponse,
 } from "../site/decision-models/fetch-policy.mjs";
-import { fetchVerified } from "../site/decision-models/kev-engine.js";
+import { fetchVerified, loadKev } from "../site/decision-models/kev-engine.js";
 import { PROVIDER_FETCH_OPTIONS } from "../site/decision-models/core.js";
 import { fetchBytes } from "../site/decision-models/laya-engine.js";
 import { LAYA_SHA256SUMS_SHA256 } from "../site/decision-models/laya-manifest.js";
@@ -66,20 +68,33 @@ test("hosted provider calls carry redirect/credentials/referrer hardening (INV-F
     captured = { url, init };
     return { ok: true, json: async () => ({ answers: { tool: { type: "noul", noul: 0.9 } } }) };
   };
+  const { decideImage } = await import("../site/decision-models/image-lab.js");
+  const imageSpec = { title: "t", description: "d", state: "s", questions: { tool: { type: "noul", instructions: "Is it?" } } };
+  const imagePayload = "data:image/png;base64,AA==";
   try {
-    const { decideImage } = await import("../site/decision-models/image-lab.js");
-    await decideImage({
-      spec: { title: "t", description: "d", state: "s", questions: { tool: { type: "noul", instructions: "Is it?" } } },
-      imagePayload: "data:image/png;base64,AA==",
-      engine: "api",
-      key: "synthetic-test-only",
-    });
+    await decideImage({ spec: imageSpec, imagePayload, engine: "api", key: "synthetic-test-only" });
   } finally {
     globalThis.fetch = originalFetch;
   }
   assert.equal(captured.url, "https://api.typesafe.ai/v1/systemone");
   for (const [option, value] of Object.entries(PROVIDER_FETCH_OPTIONS)) {
     assert.equal(captured.init[option], value, `the hosted TypeSafe call carries ${option}: ${value}`);
+  }
+  // learnings-dcp: the LOCAL loopback transport carries the same payload — the uploaded image
+  // and the reader's questions — so it is bound by the same policy, not just the hosted call.
+  captured = null;
+  globalThis.fetch = async (url, init) => {
+    captured = { url, init };
+    return { ok: true, json: async () => ({ answers: { tool: { type: "noul", noul: 0.9 } } }) };
+  };
+  try {
+    await decideImage({ spec: imageSpec, imagePayload, engine: "local", endpoint: "http://127.0.0.1:9/v1/systemone" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(captured.url, "http://127.0.0.1:9/v1/systemone");
+  for (const [option, value] of Object.entries(PROVIDER_FETCH_OPTIONS)) {
+    assert.equal(captured.init[option], value, `the local loopback call carries ${option}: ${value}`);
   }
   // The playground's hosted Jev call is a page driver with no exportable boundary, so pin that
   // the call site spreads the same shared policy instead of re-litigating three literals.
@@ -123,14 +138,22 @@ test("fetchVerified sends the artifact policy and rejects an off-host redirect",
   }
 });
 
-test("both artifact engines route their downloads through the policy", () => {
-  for (const file of ["kev-engine.js", "laya-engine.js"]) {
+test("both engines route their downloads through the one shared bounded fetch (learnings-0ef)", () => {
+  const expectations = {
+    "kev-engine.js": ["fetchArtifactBytes"],
+    "laya-engine.js": ["boundedArtifactRead", "fetchArtifactBytes", "ownCap", "verifyArtifactSha256"],
+  };
+  for (const [file, helpers] of Object.entries(expectations)) {
     const source = readFileSync(new URL(`../site/decision-models/${file}`, import.meta.url), "utf8");
-    assert.match(source, /import \{ artifactFetchOptions, assertArtifactResponse \} from "\.\/fetch-policy\.mjs";/, `${file} must import the policy`);
-    const fetches = source.match(/await fetch\(/g) ?? [];
-    const hardened = source.match(/await fetch\([^;]*artifactFetchOptions\(/g) ?? [];
-    assert.equal(hardened.length, fetches.length, `${file}: every fetch must carry the artifact policy`);
-    assert.equal((source.match(/assertArtifactResponse\(/g) ?? []).length, fetches.length, `${file}: every response must be validated`);
+    assert.match(source, /import \{[^}]*\} from "\.\/fetch-policy\.mjs";/, `${file} must import the shared policy`);
+    for (const helper of helpers) {
+      assert.match(source, new RegExp(`\\b${helper}\\b`), `${file} must use the shared ${helper}`);
+    }
+    // The deadline is the policy module's too: no per-engine timeout constants left to drift.
+    assert.match(source, /ARTIFACT_DOWNLOAD_TIMEOUT_MS/, `${file} must share the artifact deadline`);
+    assert.doesNotMatch(source, /_DOWNLOAD_TIMEOUT_MS\s*=/, `${file} must not define its own timeout constant`);
+    assert.equal((source.match(/await fetch\(/g) ?? []).length, 0, `${file}: no direct fetch may remain outside the policy`);
+    assert.equal((source.match(/assertArtifactResponse\(/g) ?? []).length, 0, `${file}: response validation lives in the policy now`);
   }
 });
 
@@ -157,5 +180,116 @@ test("the default vendored SHA256SUMS fetches through the hardened path over rea
     }
   } finally {
     await new Promise((resolve) => local.server.close(resolve));
+  }
+});
+
+// learnings-rzp: the sibling of the explicitCap fail-closed check. An invalid deadline reaches
+// setTimeout, where NaN/0 fire immediately and abort EVERY download at once — a silent total
+// outage of the download path instead of a loud bug.
+test("an invalid timeoutMs fails loudly instead of aborting every download (learnings-rzp)", async () => {
+  for (const bad of [NaN, Infinity, 0, -1, "500"]) {
+    await assert.rejects(
+      fetchVerified("data:text/plain,x", { sha256: "0".repeat(64), label: "t", timeoutMs: bad }),
+      /invalid timeoutMs for t/,
+      `timeoutMs=${String(bad)} must be refused at the boundary`,
+    );
+    await assert.rejects(
+      fetchBytes("data:text/plain,x", { sha256: "0".repeat(64), label: "t", timeoutMs: bad }),
+      /invalid timeoutMs for t/,
+      `fetchBytes: timeoutMs=${String(bad)} must be refused at the boundary`,
+    );
+  }
+});
+
+// learnings-q61: the deadline is an IDLE bound, so a download that keeps moving is never killed
+// even when its total transfer time exceeds timeoutMs many times over.
+test("a slow-but-progressing download survives a deadline its total time exceeds (learnings-q61)", async () => {
+  const bytes = new Uint8Array(40).map((_, i) => i);
+  const good = createHash("sha256").update(bytes).digest("hex");
+  let trickle = null;
+  const stream = new ReadableStream({
+    start(controller) {
+      let sent = 0;
+      const tick = () => {
+        if (sent >= bytes.length) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(bytes.subarray(sent, sent + 5));
+        sent += 5;
+        trickle = setTimeout(tick, 40); // 5 bytes every 40ms: 160ms total for a 100ms deadline
+      };
+      tick();
+    },
+    cancel() {
+      clearTimeout(trickle);
+    },
+  });
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response(stream);
+  try {
+    const seen = [];
+    const received = await fetchVerified("https://fixture.invalid/trickle.bin", {
+      sha256: good,
+      label: "trickle",
+      timeoutMs: 100,
+      onProgress: (n) => seen.push(n),
+    });
+    assert.deepEqual(Buffer.from(received), Buffer.from(bytes), "the whole slow body arrived");
+    assert.ok(seen.at(-1) === 40 && seen.length >= 4, "progress was reported for every chunk");
+  } finally {
+    clearTimeout(trickle);
+    globalThis.fetch = original;
+  }
+});
+
+// learnings-q61: a download that goes quiet MID-STREAM must not claim "no data": the message
+// names the bytes that had already arrived, so a stalled CDN is distinguishable from a dead one.
+test("a download that stalls mid-stream fails naming the bytes it received (learnings-q61)", async () => {
+  const original = globalThis.fetch;
+  let handedSignal = null;
+  globalThis.fetch = async (_url, options) => {
+    handedSignal = options.signal;
+    return new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(5));
+        // ...and then silence. The mock honours the signal: the pending read rejects on abort.
+        handedSignal?.addEventListener("abort", () => controller.error(handedSignal.reason));
+      },
+    }));
+  };
+  try {
+    await assert.rejects(
+      fetchVerified("https://fixture.invalid/stall.bin", { sha256: "0".repeat(64), label: "stall", timeoutMs: 50 }),
+      (error) => error.name === "TimeoutError" &&
+        /stalled: nothing further within 50ms after 5 bytes/.test(error.message),
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+// learnings-604: loadKev now threads its timeoutMs to every artifact download, like loadLaya.
+test("loadKev threads its timeoutMs to the artifact downloads (learnings-604)", async () => {
+  const stalled = createServer((_req, res) => {
+    res.writeHead(200, { "content-length": "100" });
+    // and then nothing: the connection is up, the body never comes.
+  });
+  await new Promise((resolve) => stalled.listen(0, "127.0.0.1", resolve));
+  try {
+    const base = `http://127.0.0.1:${stalled.address().port}/`;
+    const urls = Object.fromEntries(
+      ["tokenizer.json", "config.json", "onnx/model_q4.onnx", "onnx/model_q4.onnx_data"].map((f) => [f, base + f]),
+    );
+    const t0 = Date.now();
+    await assert.rejects(
+      loadKev({ timeoutMs: 50, urls }),
+      /no data within 50ms/,
+      "the caller's deadline must reach the downloads instead of the hardcoded default",
+    );
+    assert.ok(Date.now() - t0 < 5000, "the stalled load failed fast instead of hanging");
+  } finally {
+    stalled.closeAllConnections?.();
+    stalled.close();
   }
 });

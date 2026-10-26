@@ -33,9 +33,13 @@ const send = (method, params = {}) => new Promise((resolve, reject) => { const i
   pending.set(id, {resolve, reject}); socket.send(JSON.stringify({id, method, params})); });
 const {targetId} = await send('Target.createTarget', {url: 'about:blank'});
 const {sessionId} = await send('Target.attachToTarget', {targetId, flatten: true});
-const sendP = (method, params = {}) => send(method, params, sessionId).catch(() => {});
+// Flat-session commands must carry the sessionId IN THE MESSAGE BODY (learnings-z8f); the old
+// sendP forwarded it to send() as a third argument, which send() does not take, so the session
+// id was silently dropped and a future caller got a browser-level command instead of a
+// page-level one. It is now a fire-and-forget wrapper over s2, which addresses the body.
 const s2 = (method, params = {}) => new Promise((resolve, reject) => { const id = nextId++;
   pending.set(id, {resolve, reject}); socket.send(JSON.stringify({id, method, params, sessionId})); });
+const sendP = (method, params = {}) => s2(method, params).catch(() => {});
 const evalJs = async expression => (await s2('Runtime.evaluate', {expression, returnByValue: true})).result?.value;
 
 await s2('Page.enable');

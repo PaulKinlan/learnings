@@ -787,7 +787,12 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-      signal
+      signal,
+      // INV-FETCH-HYGIENE parity with the hosted call below (learnings-dcp): this loopback POST
+      // carries the uploaded image and the reader's questions, so a redirect must fail instead of
+      // making the browser replay the body at the redirect target, and no ambient credentials or
+      // Referer may ride along.
+      ...PROVIDER_FETCH_OPTIONS
     }, signal);
     if (!res.ok) {
       throw new Error(`Local vision server returned HTTP ${res.status}.`);

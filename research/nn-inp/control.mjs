@@ -12,7 +12,7 @@ try {
     document.addEventListener('click', event => { event.preventDefault(); event.stopImmediatePropagation(); }, {capture: true});
     window.__events = [];
     new PerformanceObserver(list => { for (const e of list.getEntries()) window.__events.push(
-      {name: e.name, dur: Math.round(e.duration), ps: Math.round(e.processingStart), pe: Math.round(e.processingEnd)});
+      {name: e.name, dur: Math.round(e.duration), start: Math.round(e.startTime), ps: Math.round(e.processingStart), pe: Math.round(e.processingEnd)});
     }).observe({type: 'event', durationThreshold: 8});
   });
   const at = await browser.evaluate(sel => {
@@ -34,9 +34,13 @@ try {
   await sleep(1500);
   const ev = await browser.evaluate(() => window.__events);
   console.log(`index.html (hub, light DOM, no canvas) trusted input: ev=${JSON.stringify(ev)?.slice(0, 60)}`);
+  // One formula per column name, the same as measure.mjs (learnings-e83): presentTail is
+  // queue-exclusive (dur - (processingEnd - startTime)); the queue wait is printed beside it
+  // so the two probes' columns are directly comparable.
   for (const e of ev) {
-    const present = e.dur - (e.pe - e.ps);
-    console.log(`  ${e.name.padEnd(12)} dur=${String(e.dur).padStart(5)}ms  presentTail=${String(present).padStart(5)}ms`);
+    const wait = e.ps - e.start;             // queued behind a busy main thread
+    const present = e.dur - (e.pe - e.start); // render/present tail, excludes queue time
+    console.log(`  ${e.name.padEnd(12)} dur=${String(e.dur).padStart(5)}ms  queue=${String(wait).padStart(5)}ms  presentTail=${String(present).padStart(5)}ms`);
   }
 } finally {
   await browser.close();

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {execFileSync, spawn} from 'node:child_process';
-import {existsSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {test} from 'node:test';
@@ -119,6 +119,31 @@ test('a launch that fails once is retried, and both attempts are reported (learn
       launch({candidates: [stub], endpointTimeoutMs: 1000}),
       (error) => /failed to launch twice: chromium exited early \(0\) \(first attempt: chromium exited early \(0\)\)/.test(error.message),
     );
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('a launch whose retry SUCCEEDS recovers: the second attempt endpoint is used (learnings-gib, learnings-25a)', {skip: !binary}, async () => {
+  // The recovery branch of the retry: invocation 1 exits 1 (the slow-start failure); invocation
+  // 2 prints a devtools endpoint — port 1 refuses connections, so launch() must take wsUrl from
+  // attempt 2 and fail LATER, at the websocket step, never with 'failed to launch twice'. The
+  // counter file proves attempt 2 actually ran and its endpoint was the one taken.
+  const dir = mkdtempSync(join(tmpdir(), 'cdp-stub-'));
+  const stub = join(dir, 'chromium-stub');
+  const counter = join(dir, 'attempts');
+  writeFileSync(stub, '#!/bin/sh\n' +
+    `n=$(( \$(cat '${counter}' 2>/dev/null || echo 0) + 1 ))\n` +
+    `echo $n > '${counter}'\n` +
+    'if [ $n -eq 1 ]; then exit 1; fi\n' +
+    "echo 'ws://127.0.0.1:1/devtools/browser/00000000-0000-0000-0000-000000000000'\n" +
+    'sleep 300\n', {mode: 0o755});
+  try {
+    await assert.rejects(
+      launch({candidates: [stub], endpointTimeoutMs: 2000}),
+      (error) => /devtools websocket failed/.test(error.message) && !/failed to launch twice/.test(error.message),
+    );
+    assert.equal(readFileSync(counter, 'utf8').trim(), '2', 'the recovered launch must have run exactly two attempts');
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }
