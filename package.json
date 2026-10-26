@@ -7,6 +7,7 @@
     "test:changed": "node scripts/test-changed.mjs --run",
     "test:browser": "node tests/browser.mjs",
     "test:kev-parity": "node --test tests/kev-parity.test.js",
+    "test:laya-playground": "node tests/laya-playground.mjs",
     "fetch:kev": "node scripts/fetch-kev-fixtures.mjs",
     "serve": "node scripts/serve.mjs"
   },
