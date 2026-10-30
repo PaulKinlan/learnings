@@ -243,6 +243,56 @@ test("a slow-but-progressing download survives a deadline its total time exceeds
   }
 });
 
+// learnings-qxtn: header arrival is progress too — fetch-policy.mjs re-arms the idle deadline
+// when the response headers land. Without that reset, a hub that is slow to RESPOND but then
+// streams healthily is aborted even though it never went idle: the exact regression class the
+// chunk-reset test above cannot catch, because there the first chunk arrives before the
+// original deadline expires.
+test("slow response headers reset the idle deadline before the first body byte (learnings-qxtn)", async () => {
+  const bytes = new Uint8Array(16).map((_, i) => i);
+  const good = createHash("sha256").update(bytes).digest("hex");
+  const timers = [];
+  let handedSignal = null;
+  const original = globalThis.fetch;
+  globalThis.fetch = (_url, options) => {
+    handedSignal = options.signal;
+    return new Promise((resolve) => {
+      // Headers land at ~120ms of the 200ms deadline armed at t=0: past halfway, so the
+      // header-arrival reset is the only thing that keeps the download alive.
+      timers.push(setTimeout(() => {
+        resolve(new Response(new ReadableStream({
+          start(controller) {
+            // The mock honours the signal: if the deadline fires, the pending read rejects
+            // instead of hanging (or silently passing an un-aborted stream).
+            handedSignal?.addEventListener("abort", () => controller.error(handedSignal.reason));
+            // First chunk at ~140ms AFTER the headers (t≈260) — past the ORIGINAL deadline,
+            // within the re-armed one. Second chunk 80ms later, then close: the stream never
+            // goes idle for 200ms, so total time (~340ms) exceeds timeoutMs and only a
+            // working header-arrival reset lets it finish.
+            timers.push(setTimeout(() => controller.enqueue(bytes.subarray(0, 8)), 140));
+            timers.push(setTimeout(() => {
+              controller.enqueue(bytes.subarray(8));
+              controller.close();
+            }, 220));
+          },
+        })));
+      }, 120));
+    });
+  };
+  try {
+    const received = await fetchVerified("https://fixture.invalid/slow-headers.bin", {
+      sha256: good,
+      label: "slow-headers",
+      timeoutMs: 200,
+    });
+    assert.deepEqual(Buffer.from(received), Buffer.from(bytes),
+      "a download whose HEADERS took longer than half the idle deadline still completed: header arrival re-armed it");
+  } finally {
+    for (const t of timers) clearTimeout(t);
+    globalThis.fetch = original;
+  }
+});
+
 // learnings-q61: a download that goes quiet MID-STREAM must not claim "no data": the message
 // names the bytes that had already arrived, so a stalled CDN is distinguishable from a dead one.
 test("a download that stalls mid-stream fails naming the bytes it received (learnings-q61)", async () => {
