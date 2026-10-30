@@ -295,7 +295,7 @@ test("SHA256SUMS stream is bounded: aborts before EOF with absent/lying Content-
   }
 });
 
-test("SHA256SUMS fetch is bounded by the wall-clock deadline: a stalled hub fails fast (tm-download-no-timeout)", async () => {
+test("SHA256SUMS fetch is bounded by the idle deadline: a stalled hub fails fast (tm-download-no-timeout)", async () => {
   // The mock honours the signal it is handed: if the deadline is not actually wired to the sums
   // request, the read below never rejects and this test fails by hanging.
   let handedSignal = null;
@@ -323,7 +323,7 @@ test("SHA256SUMS fetch is bounded by the wall-clock deadline: a stalled hub fail
     await assert.rejects(
       loadLaya({ urls: { SHA256SUMS: "https://fixture.invalid/SHA256SUMS" }, timeoutMs: 25 }),
       /SHA256SUMS unavailable for .*: no data within 25ms/,
-      "a stalled sums hub must fail within the wall-clock deadline instead of hanging loadLaya forever",
+      "a stalled sums hub must fail within the idle deadline instead of hanging loadLaya forever",
     );
     assert.ok(handedSignal, "the abort signal was passed to the sums fetch");
     assert.equal(handedSignal.reason?.name, "TimeoutError", "the deadline aborted with a TimeoutError");

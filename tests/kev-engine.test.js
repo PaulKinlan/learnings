@@ -78,7 +78,7 @@ test("Content-Length header exceeding maximum allowed size aborts before reading
   }
 });
 
-test("a hub that accepts the connection and then stalls fails within the wall-clock deadline (tm-download-no-timeout)", async () => {
+test("a hub that accepts the connection and then stalls fails within the idle deadline (tm-download-no-timeout)", async () => {
   const originalFetch = globalThis.fetch;
   // The mock honours the signal it is handed: if the deadline is not actually wired to the
   // request, the read below never rejects and this test fails by hanging.
