@@ -643,11 +643,14 @@ export const PRESETS = {
  * Image decisions validate questions and rubrics using core.js validateSpec,
  * preserving image-specific requirements: imagePayload must be a valid data URL or blob,
  * and text state is optional since the visual payload supplies context.
+ * The payload budget — MIME allowlist and byte cap — is enforced HERE, at the single choke
+ * point every caller passes through, not only in the drop/picker/paste listeners
+ * (tm-image-payload-budget-not-at-validator, learnings-hmg). Pixel dimensions can only be
+ * known by decoding; decideImage runs that probe.
  */
 export function validateImageSpec(spec, imagePayload) {
-  if (!imagePayload || typeof imagePayload !== 'string' || (!imagePayload.startsWith('data:image/') && !imagePayload.startsWith('blob:'))) {
-    throw new Error('A valid image (data URL or blob) must be loaded.');
-  }
+  const payloadRejection = imagePayloadRejection(imagePayload);
+  if (payloadRejection) throw new Error(payloadRejection);
   if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
     return validateSpec(spec);
   }
@@ -683,6 +686,15 @@ export async function decideImage({ spec, imagePayload, engine = 'client', endpo
   if (mock) {
     return mock(spec, { engine, endpoint, key, model, imagePayload });
   }
+
+  // The budget lives at the choke point, not only in the UI listeners
+  // (tm-image-payload-budget-not-at-validator): validateImageSpec enforced the MIME allowlist
+  // and the byte cap synchronously above; pixel dimensions (and a blob: URL's byte count) can
+  // only be known by decoding, which every runtime that CAN decode now does before an engine
+  // is reached. A node harness has no Image and decompresses nothing, so the probe is a no-op
+  // there and the sync caps stand alone.
+  const probeRejection = await imagePayloadProbe(imagePayload);
+  if (probeRejection) throw new Error(probeRejection);
 
   const start = performance.now();
 
@@ -999,21 +1011,34 @@ export function renderBenchTable(container, data) {
 // included) and read it whole into memory as a base64 data URL, with no size or decode
 // bound. The allowlist excludes scriptable formats, the byte cap bounds the payload, and
 // the decode probe bounds pixel dimensions before a payload is accepted.
+// tm-image-payload-budget-not-at-validator (learnings-hmg): those caps lived only in the
+// listeners, so any other caller of the exported validateImageSpec/decideImage could pass an
+// unbounded payload straight through. They are now enforced in ONE choke point — the helpers
+// below — shared by the validator, decideImage and the listeners, so the paths cannot drift.
 export const IMAGE_MIME_ALLOWLIST = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif']);
 export const IMAGE_MAX_BYTES = 8 * 1024 * 1024;
 export const IMAGE_MAX_PIXELS = 4096 * 4096;
 
+/** Rejection reason for a MIME outside the allowlist, or '' when allowed. `subject` names the
+ * thing being rejected in the user-facing message ('File "x.png"', 'Image type "image/tiff"'). */
+export function imageMimeRejection(mime, subject = 'The file') {
+  if (IMAGE_MIME_ALLOWLIST.has(mime)) return '';
+  if (mime === 'image/svg+xml') return 'SVG images are not accepted. Use PNG, JPEG, WebP, GIF or AVIF.';
+  return `${subject} is not an image. Use PNG, JPEG, WebP, GIF or AVIF.`;
+}
+
+/** Rejection reason for a byte count over budget, or '' when within budget. */
+export function imageBytesRejection(bytes) {
+  return bytes > IMAGE_MAX_BYTES
+    ? `Image is too large: ${(bytes / (1024 * 1024)).toFixed(1)} MB exceeds the ${IMAGE_MAX_BYTES / (1024 * 1024)} MB budget.`
+    : '';
+}
+
 /** User-facing rejection reason for a picked/dropped/pasted file, or '' when acceptable. */
 export function imageFileRejection(file) {
-  if (!IMAGE_MIME_ALLOWLIST.has(file?.type)) {
-    if (file?.type === 'image/svg+xml') return 'SVG images are not accepted. Use PNG, JPEG, WebP, GIF or AVIF.';
-    const name = file?.name ? `File "${file.name}"` : 'The file';
-    return `${name} is not an image. Use PNG, JPEG, WebP, GIF or AVIF.`;
-  }
-  if ((file?.size ?? 0) > IMAGE_MAX_BYTES) {
-    return `Image is too large: ${(file.size / (1024 * 1024)).toFixed(1)} MB exceeds the ${IMAGE_MAX_BYTES / (1024 * 1024)} MB budget.`;
-  }
-  return '';
+  const mimeRejection = imageMimeRejection(file?.type, file?.name ? `File "${file.name}"` : 'The file');
+  if (mimeRejection) return mimeRejection;
+  return imageBytesRejection(file?.size ?? 0);
 }
 
 /** User-facing rejection reason for decoded pixel dimensions, or '' when within budget. */
@@ -1021,6 +1046,58 @@ export function imagePixelsRejection(width, height) {
   return width * height > IMAGE_MAX_PIXELS
     ? `Image rejected: ${width}×${height} pixels exceeds the ${IMAGE_MAX_PIXELS} pixel decode budget.`
     : '';
+}
+
+/**
+ * The sync half of the payload choke point (learnings-hmg): shape, MIME allowlist and byte cap
+ * applied to the payload STRING itself, so every caller of validateImageSpec/decideImage is
+ * bound — not only the drop/picker/paste listeners. A data: URL's MIME is parsed from its
+ * header and its base64 body measured (a non-base64 body's decoded size cannot exceed its
+ * encoded length, so the string length is the bound). A blob: URL is opaque to sync
+ * inspection: imagePayloadProbe measures and decodes it wherever a runtime can.
+ * @returns {string} rejection reason, or '' when acceptable
+ */
+export function imagePayloadRejection(imagePayload) {
+  if (!imagePayload || typeof imagePayload !== 'string' ||
+      (!imagePayload.startsWith('data:image/') && !imagePayload.startsWith('blob:'))) {
+    return 'A valid image (data URL or blob) must be loaded.';
+  }
+  if (imagePayload.startsWith('blob:')) return '';
+  const comma = imagePayload.indexOf(',');
+  if (comma === -1) return 'A valid image (data URL or blob) must be loaded.';
+  const meta = imagePayload.slice('data:'.length, comma);
+  const mime = meta.split(';')[0].toLowerCase();
+  const mimeRejection = imageMimeRejection(mime, `Image type "${mime || 'unknown'}"`);
+  if (mimeRejection) return mimeRejection;
+  const body = imagePayload.slice(comma + 1);
+  const bytes = /;base64$/i.test(meta) ? Math.floor(body.length * 3 / 4) : body.length;
+  return imageBytesRejection(bytes);
+}
+
+/**
+ * The async half of the choke point: pixel dimensions can only be known by decoding, and a
+ * blob: URL's byte count only by reading it. Runs wherever a runtime can decode (a browser);
+ * a node harness has no Image and decompresses nothing, so the sync caps stand alone there.
+ * @returns {Promise<string>} rejection reason, or '' when acceptable
+ */
+export async function imagePayloadProbe(imagePayload) {
+  if (typeof Image === 'undefined') return '';
+  if (String(imagePayload).startsWith('blob:')) {
+    let size;
+    try {
+      size = (await (await fetch(imagePayload)).blob()).size;
+    } catch {
+      return 'Image rejected: the blob URL could not be read.';
+    }
+    const bytesRejection = imageBytesRejection(size);
+    if (bytesRejection) return bytesRejection;
+  }
+  return await new Promise((resolve) => {
+    const probe = new Image();
+    probe.onload = () => resolve(imagePixelsRejection(probe.naturalWidth, probe.naturalHeight));
+    probe.onerror = () => resolve('Image rejected: the file could not be decoded as an image.');
+    probe.src = imagePayload;
+  });
 }
 
 /**
@@ -1059,9 +1136,14 @@ export function setupImageLab() {
     // Decode before accepting: a small file can decompress into a huge bitmap, and a corrupt
     // one never decodes at all (tm-image-payload-unbounded). Only a decoded, in-budget image
     // replaces the current payload — on rejection the previous image stays loaded and shown.
-    const probe = new Image();
-    probe.onload = () => {
-      const rejection = imagePixelsRejection(probe.naturalWidth, probe.naturalHeight);
+    // The SAME choke point decideImage enforces (learnings-hmg): sync budget first, decode
+    // probe second — the listener path and the API path cannot drift apart again.
+    const budgetRejection = imagePayloadRejection(dataUrl);
+    if (budgetRejection) {
+      if (statusEl) statusEl.textContent = budgetRejection;
+      return;
+    }
+    imagePayloadProbe(dataUrl).then((rejection) => {
       if (rejection) {
         if (statusEl) statusEl.textContent = rejection;
         return;
@@ -1072,11 +1154,7 @@ export function setupImageLab() {
         const kb = Math.round(dataUrl.length * 0.75 / 1024);
         imageMeta.textContent = `${infoText} (${kb} KB payload)`;
       }
-    };
-    probe.onerror = () => {
-      if (statusEl) statusEl.textContent = 'Image rejected: the file could not be decoded as an image.';
-    };
-    probe.src = dataUrl;
+    });
   }
 
   function loadPreset(presetId) {
