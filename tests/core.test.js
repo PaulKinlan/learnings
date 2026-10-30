@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {validateSpec,validateAnswers,gate,loopbackEndpoint,illustrative,trialMetrics,requestFor,decide,generate,mockDecide} from '../site/decision-models/core.js';
+import {validateSpec,validateAnswers,gate,loopbackEndpoint,illustrative,trialMetrics,requestFor,decide,generate,mockDecide,PROVIDER_FETCH_OPTIONS} from '../site/decision-models/core.js';
 import {examples} from '../site/decision-models/examples.js';
 for(const [name,s] of Object.entries(examples))test(`schema and synthetic roundtrip: ${name}`,()=>{assert.deepEqual(validateSpec(s),s);validateAnswers(illustrative(s).data,s.questions);});
 test('generated executable fields and prototype IDs are refused',()=>{assert.throws(()=>validateSpec({...examples.tools,script:'alert(1)'}));assert.throws(()=>validateSpec({...examples.tools,questions:JSON.parse('{"__proto__":{"type":"noul","instructions":"test"}}')}));});
@@ -21,7 +21,11 @@ test('illustration ignores text and discloses synthetic provenance',()=>{const a
 test('request excludes keys and generator fields',()=>{const r=requestFor(examples.tools,'jev-1.13.0');assert.deepEqual(Object.keys(r),['model','state','questions']);});
 test('real decision adapters use correct host, key boundary and validation (mock transport)',async()=>{
  const original=globalThis.fetch,calls=[];globalThis.fetch=async(url,options)=>{calls.push({url,options});return {ok:true,json:async()=>illustrative(examples.tools).data};};
- try{await decide(examples.tools,{provider:'jev',key:'synthetic-test-only',model:'jev-1.13.0'});await decide(examples.tools,{provider:'kev',key:'must-not-send',endpoint:'http://localhost:8009/v1/systemone',model:'kev-latest'});assert.equal(calls[0].url,'https://api.typesafe.ai/v1/systemone');assert.equal(calls[0].options.headers.Authorization,'Bearer synthetic-test-only');assert.equal(calls[1].options.headers.Authorization,undefined);assert.equal(calls[0].options.redirect,'error');assert.equal(calls[0].options.credentials,'omit');}finally{globalThis.fetch=original;}
+ try{await decide(examples.tools,{provider:'jev',key:'synthetic-test-only',model:'jev-1.13.0'});await decide(examples.tools,{provider:'kev',key:'must-not-send',endpoint:'http://localhost:8009/v1/systemone',model:'kev-latest'});assert.equal(calls[0].url,'https://api.typesafe.ai/v1/systemone');assert.equal(calls[0].options.headers.Authorization,'Bearer synthetic-test-only');assert.equal(calls[1].options.headers.Authorization,undefined);assert.equal(calls[0].options.redirect,'error');assert.equal(calls[0].options.credentials,'omit');
+ // learnings-pv9s: the Kev loopback transport is core.js's shared postJSON too, so it must carry
+ // the same hardening as the hosted call - pin it here so a sibling refactor cannot drop it.
+ assert.equal(calls[1].url,'http://localhost:8009/v1/systemone');
+ for(const [option,value] of Object.entries(PROVIDER_FETCH_OPTIONS))assert.equal(calls[1].options[option],value,`the kev loopback call carries ${option}: ${value}`);}finally{globalThis.fetch=original;}
 });
 test('OpenAI and Claude generation validate JSON and reject code (mock transport)',async()=>{const original=globalThis.fetch,calls=[];globalThis.fetch=async(url,options)=>{calls.push({url,options});return {ok:true,json:async()=>url.includes('anthropic')?{content:[{type:'text',text:JSON.stringify(examples.tools)}]}:{choices:[{message:{content:JSON.stringify(examples.tools)}}]}};};try{for(const provider of ['openai','claude'])assert.deepEqual(await generate('test',{provider,key:'synthetic-test-only',model:'test'}),examples.tools);assert.equal(calls[1].options.headers['anthropic-dangerous-direct-browser-access'],'true');globalThis.fetch=async()=>({ok:true,json:async()=>({choices:[{message:{content:'<script>alert(1)</script>'}}]})});await assert.rejects(()=>generate('test',{provider:'openai',key:'synthetic',model:'test'}),/valid JSON/);}finally{globalThis.fetch=original;}});
 test('__MOCK_DECIDE__ seam is honoured on loopback and dead off-loopback (learnings-ebg)',()=>{

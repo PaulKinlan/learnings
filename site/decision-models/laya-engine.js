@@ -178,8 +178,9 @@ function fp16Lut() {
  * Load the engine. Nothing downloads until this is called — never on page load.
  * `onProgress(stage, received, total)` reports the weight downloads so a slow connection
  * shows progress. `urls` overrides individual asset URLs (used by tests to serve local
- * copies instead of re-downloading from the hub). `timeoutMs` is the wall-clock deadline
- * shared by the sums fetch and every artifact download (tm-download-no-timeout).
+ * copies instead of re-downloading from the hub). `timeoutMs` is the idle deadline shared by
+ * the sums fetch and every artifact download (tm-download-no-timeout): it bounds a stalled
+ * hub, not the total transfer time, and must be finite and positive.
  */
 export async function loadLaya({ checkpoint = "multilingual", calibration = "fitted", window = null, onProgress = null, urls = {}, timeoutMs = ARTIFACT_DOWNLOAD_TIMEOUT_MS } = {}) {
   const baseSpec = CHECKPOINTS[checkpoint];
