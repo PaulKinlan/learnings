@@ -112,13 +112,22 @@ function providerURL(provider, settings, direct) {
   if(typeof location==='undefined'||!['127.0.0.1','localhost','[::1]'].includes(location.hostname)) fail('Relay is available only when serving this site locally.');
   return new URL('/api/'+provider,location.origin).href;
 }
+/** True when this script runs on a loopback-served page, or outside a browser entirely (node
+ * harnesses, where `location` is undefined). EVERY test seam is honoured only here: the
+ * __MOCK_DECIDE__ dispatch seam below, and the __LAYA_URLS/__KEV_URLS asset overrides in the
+ * engine drivers (learnings-dkd, tm-test-seam-ungated). Shipped live, a seam would let any
+ * injected script on the published origin short-circuit engine dispatch or point the 375-680 MB
+ * artifact downloads at arbitrary endpoints and stall the tab; on any other host they are dead
+ * code. Same gate as the relay transport above. */
+export function onLoopback() {
+  return typeof location === 'undefined' || ['127.0.0.1','localhost','[::1]'].includes(location.hostname);
+}
+
 // The __MOCK_DECIDE__ seam exists for the local browser harness (tests/browser.mjs serves over
-// loopback). Shipped live it would let any injected script short-circuit engine dispatch and
-// bypass validateAnswers/validateSpec, so it is honoured only where the harness can run: on a
-// loopback-served page, same gate as the relay transport above, or outside a browser entirely
-// (node unit tests, where globalThis.location is undefined). On any other host it is dead code.
+// loopback). It short-circuits engine dispatch, bypassing validateAnswers/validateSpec, so it
+// lives only where the harness can run: see onLoopback.
 export function mockDecide() {
-  if (typeof location !== 'undefined' && !['127.0.0.1','localhost','[::1]'].includes(location.hostname)) return null;
+  if (!onLoopback()) return null;
   return globalThis.__MOCK_DECIDE__ ?? null;
 }
 export const PROVIDER_TIMEOUT_MS = 45000;
