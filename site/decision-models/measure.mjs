@@ -1,5 +1,6 @@
 import { loadLaya } from './laya-engine.js';
 import { loadKev } from './kev-engine.js';
+import { onLoopback } from './core.js';
 
 const MB = (n) => (n / 1048576).toFixed(1);
 const heap = () => performance.memory ? performance.memory.usedJSHeapSize : null;
@@ -52,7 +53,7 @@ async function measureKev() {
   const before = heap();
   const t0 = performance.now();
   const session = await loadKev({
-    ...(globalThis.__KEV_URLS ? { urls: globalThis.__KEV_URLS } : {}),
+    ...(onLoopback() && globalThis.__KEV_URLS ? { urls: globalThis.__KEV_URLS } : {}),
   });
   const loadMs = performance.now() - t0;
   const afterLoad = heap();

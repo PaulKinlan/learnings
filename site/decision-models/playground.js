@@ -8,7 +8,7 @@
 
 import { Classifier, loadSharedLaya } from "./classifier-api.js";
 import { loadKev, KevSession } from "./kev-engine.js";
-import { validateAnswers, PROVIDER_TIMEOUT_MS, PROVIDER_FETCH_OPTIONS } from "./core.js";
+import { validateAnswers, PROVIDER_TIMEOUT_MS, PROVIDER_FETCH_OPTIONS, onLoopback } from "./core.js";
 import { renderOptions, choiceConfidence } from "./laya-pack.js";
 import {
   choose as kevChoose,
@@ -26,10 +26,12 @@ const engines = {
     label: "Laya",
     checkpointNote: "multilingual mmBERT on LiteRT.js (WASM/XNNPack), ~680 MB of verified downloads",
     // window.__LAYA_URLS is a test seam: when set (by a smoke driver), the shared loader
-    // uses those asset URLs instead of the hub's. Unset in normal use.
+    // uses those asset URLs instead of the hub's. Honoured only on loopback (learnings-dkd,
+    // tm-test-seam-ungated): on the published origin an injected script could otherwise
+    // point the ~680 MB of verified downloads at arbitrary endpoints and stall the tab.
     load: (onProgress) => loadSharedLaya({
       onProgress: (stage, received, total) => onProgress(stage, received, total),
-      ...(globalThis.__LAYA_URLS ? { urls: globalThis.__LAYA_URLS } : {}),
+      ...(onLoopback() && globalThis.__LAYA_URLS ? { urls: globalThis.__LAYA_URLS } : {}),
     }),
   },
   kev: {
@@ -37,7 +39,7 @@ const engines = {
     checkpointNote: "0.6 B decision model on ONNX Runtime Web (CPU), ~375 MB download",
     load: (onProgress) => loadKev({
       onProgress: ({ stage, file, loaded, total }) => onProgress(stage || "weights", loaded, total, file),
-      ...(globalThis.__KEV_URLS ? { urls: globalThis.__KEV_URLS } : {}),
+      ...(onLoopback() && globalThis.__KEV_URLS ? { urls: globalThis.__KEV_URLS } : {}),
     }),
   },
   jev: {

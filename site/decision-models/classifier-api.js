@@ -15,6 +15,7 @@
 //   - 'ordinal' (or 'score'): returns winning label, expectedScore, probabilities, confidence
 
 import { loadLaya } from "./laya-engine.js";
+import { onLoopback } from "./core.js";
 
 let cachedLayaSession = null;
 let loadingLayaPromise = null;
@@ -26,7 +27,7 @@ export async function loadSharedLaya({ onProgress, urls } = {}) {
   if (!loadingLayaPromise) {
     loadingLayaPromise = loadLaya({
       onProgress,
-      urls: urls ?? (globalThis.__LAYA_URLS || {}),
+      urls: urls ?? ((onLoopback() && globalThis.__LAYA_URLS) || {}),
     })
       .then((session) => {
         cachedLayaSession = session;

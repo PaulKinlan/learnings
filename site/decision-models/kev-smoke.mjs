@@ -1,5 +1,6 @@
 import { loadKev } from './kev-engine.js';
 import { choose, expectedLevel, noulProbability, verdict } from './kev-pack.js';
+import { onLoopback } from './core.js';
 const ROUTE = [
   "billing: Charges, refunds, invoices",
   "technical support: Bugs, outages, login problems",
@@ -59,7 +60,7 @@ window.__kev = { done: false, results: [], error: null, stage: 'starting', passe
   try {
     window.__kev.stage = 'loading';
     const session = await loadKev({
-      ...(globalThis.__KEV_URLS ? { urls: globalThis.__KEV_URLS } : {}),
+      ...(onLoopback() && globalThis.__KEV_URLS ? { urls: globalThis.__KEV_URLS } : {}),
       onProgress: ({ file, loaded, total }) => {
         window.__kev.stage = `weights ${(loaded / 1048576).toFixed(0)} of ${(total / 1048576).toFixed(0)} MB · ${file}`;
       },

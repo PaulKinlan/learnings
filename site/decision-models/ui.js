@@ -1,4 +1,4 @@
-import { decide, gate, mockDecide } from './core.js';
+import { decide, gate, mockDecide, onLoopback } from './core.js';
 import { loadLaya } from './laya-engine.js';
 import { choiceConfidence } from './laya-pack.js';
 import { loadKev } from './kev-engine.js';
@@ -91,7 +91,7 @@ export async function runSpec(spec, signal, onProgress = null) {
     if (!layaSession) {
       layaSession = await loadLaya({
         onProgress: (stage, received, total) => onProgress?.(stage, received, total),
-        ...(globalThis.__LAYA_URLS ? { urls: globalThis.__LAYA_URLS } : {})
+        ...(onLoopback() && globalThis.__LAYA_URLS ? { urls: globalThis.__LAYA_URLS } : {})
       });
     }
     const started = performance.now();
@@ -123,7 +123,7 @@ export async function runSpec(spec, signal, onProgress = null) {
     if (!kevSession) {
       kevSession = await loadKev({
         onProgress: (info) => onProgress?.(info?.stage || 'weights', info?.loaded || 0, info?.total || 0),
-        ...(globalThis.__KEV_URLS ? { urls: globalThis.__KEV_URLS } : {})
+        ...(onLoopback() && globalThis.__KEV_URLS ? { urls: globalThis.__KEV_URLS } : {})
       });
     }
     const started = performance.now();
