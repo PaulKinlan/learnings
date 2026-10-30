@@ -18,6 +18,8 @@ import {
   renderImageAnswers,
   imageFileRejection,
   imagePixelsRejection,
+  imagePayloadRejection,
+  imagePayloadProbe,
   IMAGE_MAX_BYTES,
   IMAGE_MAX_PIXELS
 } from '../site/decision-models/image-lab.js';
@@ -432,6 +434,56 @@ test('Image Lab input guards: MIME allowlist, byte cap and pixel-decode cap (tm-
   assert.equal(imagePixelsRejection(1, 1), '');
   assert.equal(imagePixelsRejection(IMAGE_MAX_PIXELS / 4096, 4096), '', 'exactly at the pixel cap is accepted');
   assert.match(imagePixelsRejection(IMAGE_MAX_PIXELS / 4096 + 1, 4096), /pixels exceeds/);
+});
+
+// learnings-hmg (tm-image-payload-budget-not-at-validator): the allowlist/byte/pixel caps lived
+// only in the drop/picker/paste listeners, while validateImageSpec/decideImage are exported —
+// any other caller could pass an unbounded MIME/size payload straight through to a provider
+// POST. The budget now sits in the single choke point every caller passes.
+test('the payload budget binds validateImageSpec and decideImage, not only the listeners (learnings-hmg)', async () => {
+  const spec = { title: 't', questions: { q1: { type: 'noul', instructions: 'Is it?' } } };
+  const png1x1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const svg = 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=';
+
+  // The sync choke point: shape, MIME allowlist, byte cap — on the payload string itself.
+  assert.equal(imagePayloadRejection(png1x1), '', 'an allowlisted in-budget data URL passes');
+  assert.equal(imagePayloadRejection('blob:https://example.test/1'), '', 'a blob URL is opaque to sync inspection; the decode probe measures it');
+  assert.match(imagePayloadRejection(svg), /SVG images are not accepted/, 'the scriptable format is refused at the validator, not just the picker');
+  assert.match(imagePayloadRejection('data:image/tiff;base64,AA=='), /Image type "image\/tiff" is not an image/);
+  assert.match(imagePayloadRejection('data:image/png'), /valid image/i, 'a data URL with no comma is malformed');
+  const atCap = 'data:image/png;base64,' + 'A'.repeat(Math.ceil(IMAGE_MAX_BYTES * 4 / 3));
+  assert.equal(imagePayloadRejection(atCap), '', 'a payload exactly at the byte cap is accepted, same semantics as imageFileRejection');
+  const oversize = 'data:image/png;base64,' + 'A'.repeat(Math.ceil((IMAGE_MAX_BYTES + 4) * 4 / 3));
+  assert.match(imagePayloadRejection(oversize), /Image is too large/, 'the byte cap binds the payload string, not just Files');
+
+  // validateImageSpec is the choke point every caller passes.
+  assert.throws(() => validateImageSpec(spec, svg), /SVG images are not accepted/);
+  assert.throws(() => validateImageSpec(spec, oversize), /too large/);
+  assert.doesNotThrow(() => validateImageSpec(spec, png1x1));
+
+  // And decideImage rejects before ANY engine is reached: the stubbed transport must never
+  // see an out-of-budget payload.
+  const originalFetch = globalThis.fetch;
+  let fetched = null;
+  globalThis.fetch = async (url, init) => {
+    fetched = { url, init };
+    return { ok: true, json: async () => ({ answers: { q1: { type: 'noul', noul: 0.9 } } }) };
+  };
+  try {
+    await assert.rejects(decideImage({ spec, imagePayload: svg, engine: 'api', key: 'synthetic-test-only' }), /SVG images are not accepted/);
+    await assert.rejects(decideImage({ spec, imagePayload: oversize, engine: 'api', key: 'synthetic-test-only' }), /too large/);
+    assert.equal(fetched, null, 'no out-of-budget payload ever reaches the provider transport');
+    await decideImage({ spec, imagePayload: png1x1, engine: 'api', key: 'synthetic-test-only' });
+    assert.equal(fetched?.url, 'https://api.typesafe.ai/v1/systemone', 'an in-budget payload still reaches the hosted adapter');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // The pixel half needs a decoder: node has no Image, so the probe is a documented no-op here
+  // (in a browser it decodes and applies imagePixelsRejection; the browser-driven section below
+  // exercises that path through the real page). The sync MIME/byte caps apply in every runtime.
+  assert.equal(typeof globalThis.Image, 'undefined', 'sanity: node cannot decode');
+  assert.equal(await imagePayloadProbe(png1x1), '');
 });
 
 test('Image decision schema validation: reject bad specs and payloads', () => {
