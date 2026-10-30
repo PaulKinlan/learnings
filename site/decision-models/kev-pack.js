@@ -4,8 +4,13 @@
 // sequence, and the readout is a comparison between hidden states at particular tokens. This
 // module is pure: it takes a tokenize function and the delimiter ids as data, so the index
 // arithmetic can be checked without loading a model.
+import { neutralizeReaderText } from "./tokenizer-specials.mjs";
 
-/** Caller text can never produce a delimiter: <|name|> becomes <¦name¦> before tokenizing. */
+/** Caller text can never produce a delimiter: <|name|> becomes <¦name¦> before tokenizing.
+ * One layer of three (learnings-iif): packDecision additionally neutralizes the loaded
+ * tokenizer's declared special literals — including the case-folded/NFKC aliases of
+ * `normalized: true` tokens that this shape-regex cannot see — and drops every privileged id
+ * that still survives tokenization. */
 export const escapeUserText = (text) => String(text).replace(/<\|([A-Za-z0-9_]+)\|>/g, "<\u00a6$1\u00a6>");
 
 /** The five delimiter ids. From the model's own config.json under `kev.delimiter_ids`. */
@@ -43,25 +48,56 @@ export function readDelimiterIds(kevConfig) {
  * block-causal rule — each question sees the state and its own branch but not the others — is
  * not something the caller implements here. All the caller supplies is ids and a mask of ones.
  *
+ * @param {string[]} [arg.specialStrings] special:true literals from the loaded tokenizer
+ *   (tokenizerSpecials().literals). No floor list is applied when omitted: Kev's structural
+ *   guarantee is the id drop below, and the engine always passes its tokenizer's own set.
+ * @param {string[]} [arg.normalizedSpecialStrings] the subset the tokenizer matches AFTER
+ *   normalization, matched case-insensitively and in NFKC form (tokenizerSpecials().normalizedLiterals)
+ * @param {number[]} [arg.specialIds] every declared special id; any that survives tokenization
+ *   is dropped from the sequence (tokenizerSpecials().ids)
  * @returns {{inputIds: number[], ends: number[][], questionSpans: Array<[number, number]>}}
  *   `ends[q][o]` is the index in inputIds of the token scored for option o of question q.
  */
-export function packDecision({ ids, tokenize, state, questions }) {
+export function packDecision({ ids, tokenize, state, questions, specialStrings = [], normalizedSpecialStrings = [], specialIds = [] }) {
   if (!ids || !tokenize) throw new Error("packDecision needs delimiter ids and a tokenize function.");
   if (typeof state !== "string" || !state.trim()) throw new Error("The state must be non-empty text.");
   if (!questions.length) throw new Error("At least one question is required.");
   for (const key of DELIMITER_KEYS) if (!Number.isInteger(ids[key])) throw new Error(`Delimiter id ${key} is missing.`);
+  if (!Array.isArray(specialStrings) || specialStrings.some((s) => typeof s !== "string" || !s))
+    throw new Error("specialStrings must be an array of non-empty strings");
+  if (!Array.isArray(normalizedSpecialStrings) || normalizedSpecialStrings.some((s) => typeof s !== "string" || !s))
+    throw new Error("normalizedSpecialStrings must be an array of non-empty strings");
+  if (!Array.isArray(specialIds) || specialIds.some((id) => !Number.isInteger(id)))
+    throw new Error("specialIds must be an array of integer token ids");
+  const specials = {
+    literals: [...new Set(specialStrings)].sort((a, b) => b.length - a.length),
+    normalizedLiterals: [...new Set(normalizedSpecialStrings)],
+  };
+  // The three-part hardening Laya already has (learnings-xp4, learnings-gen), ported for
+  // tm-kev-delimiter-token-id-filter-missing (learnings-iif). The five delimiter ids are ALWAYS
+  // privileged: the graph derives segments, positions and the block-causal mask from the
+  // delimiter ids themselves, so one delimiter id arriving from reader text inserts an extra
+  // segment boundary and shifts which token is read as an option's score. Unlike Laya there is
+  // no UNK exemption: Kev's byte-fallback vocabulary has no information-bearing UNK id, so
+  // every declared special id is structure, not content.
+  const privileged = new Set([...specialIds, ...DELIMITER_KEYS.map((key) => ids[key])]);
+  const dropInjected = (tokens) => tokens.filter((id) => !privileged.has(id));
+  // Text-level half: declared specials — including case-folded/NFKC aliases the tokenizer
+  // matches after normalizing, which escapeUserText's shape-regex cannot see — become one
+  // space. The id filter above is the normalization-agnostic half: whatever a normalizer did
+  // to the text, a privileged id coming out is dropped.
+  const neutralize = (text) => neutralizeReaderText(text, null, specials);
 
-  const inputIds = [ids.state, ...tokenize(state)];
+  const inputIds = [ids.state, ...dropInjected(tokenize(neutralize(state)))];
   const ends = [];
   const questionSpans = [];
 
   for (const q of questions) {
-    const instruction = tokenize(q.instruction);
+    const instruction = dropInjected(tokenize(neutralize(q.instruction)));
     if (!instruction.length) throw new Error("A question instruction must be non-empty text.");
     if (!q.options || q.options.length < 2)
       throw new Error("A question needs at least two options, or there is nothing to choose between.");
-    const spans = q.options.map((option) => [ids.option_start, ...tokenize(option), ids.option_end]);
+    const spans = q.options.map((option) => [ids.option_start, ...dropInjected(tokenize(neutralize(option))), ids.option_end]);
 
     const base = inputIds.length;
     const questionAt = base;

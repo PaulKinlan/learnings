@@ -24,6 +24,7 @@ import {
   packDecision,
   readAnswers,
 } from "./kev-pack.js";
+import { tokenizerSpecials } from "./tokenizer-specials.mjs";
 import { KEV_REVISION, KEV_SHA256, KEV_MAX_BYTES, KEV_DEFAULT_MAX_BYTES } from "./kev-manifest.js";
 import { ARTIFACT_DOWNLOAD_TIMEOUT_MS, fetchArtifactBytes } from "./fetch-policy.mjs";
 
@@ -90,9 +91,16 @@ export async function loadKev({ onProgress = null, urls = {}, timeoutMs = ARTIFA
       timeoutMs,
     }),
   ]);
-  const tokenizer = new Tokenizer(JSON.parse(new TextDecoder().decode(tokenizerBytes)), {});
+  const tokenizerJson = JSON.parse(new TextDecoder().decode(tokenizerBytes));
+  const tokenizer = new Tokenizer(tokenizerJson, {});
   const config = JSON.parse(new TextDecoder().decode(configBytes));
   const ids = readDelimiterIds(config?.kev);
+  // What this checkpoint declares special is what must be neutralized in untrusted reader text:
+  // a fixed list cannot know a checkpoint's own control tokens, and a literal match alone cannot
+  // see a `normalized: true` alias (the tokenizer folds the text before matching it) — so
+  // packDecision also drops any declared special id, and every delimiter id, that still comes
+  // out of the tokenizer (learnings-iif, mirroring the Laya loader since learnings-xp4/gen).
+  const specials = tokenizerSpecials(tokenizerJson);
 
   notify("weights", 0, 0, "onnx/model_q4.onnx_data");
   const t0 = performance.now();
@@ -124,16 +132,18 @@ export async function loadKev({ onProgress = null, urls = {}, timeoutMs = ARTIFA
     tokenizer,
     session,
     ids,
+    specials,
     checkpoint: `${REPO} (q4 weights, CPU/ONNX Runtime Web jsep)`,
     loadMs: performance.now() - t0,
   });
 }
 
 export class KevSession {
-  constructor({ tokenizer, session, ids, checkpoint, loadMs }) {
+  constructor({ tokenizer, session, ids, checkpoint, loadMs, specials = null }) {
     this.tokenizer = tokenizer;
     this.session = session;
     this.ids = ids;
+    this.specials = specials; // this checkpoint's special literals, normalized aliases and ids
     this.checkpoint = checkpoint;
     this.loadMs = loadMs;
     this.cache = new Map();
@@ -163,6 +173,9 @@ export class KevSession {
       tokenize,
       state,
       questions,
+      specialStrings: this.specials?.literals,
+      normalizedSpecialStrings: this.specials?.normalizedLiterals,
+      specialIds: this.specials?.ids,
     });
 
     const started = performance.now();
