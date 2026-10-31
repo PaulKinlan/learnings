@@ -53,11 +53,47 @@ export function assertNotSymlink(path, label = path) {
 export function ensureSafeDir(dirPath, label = dirPath) {
   const stat = assertNotSymlink(dirPath, label);
   if (!stat) {
-    mkdirSync(dirPath, { recursive: true });
-    assertNotSymlink(dirPath, label);
-  } else if (!stat.isDirectory()) {
+    // Created private (0700) and owned by us, so nothing else can plant an artifact between
+    // the write and the tests that consume it. A looser umask cannot widen this; see (learnings-cfp).
+    mkdirSync(dirPath, { recursive: true, mode: 0o700 });
+    const created = assertNotSymlink(dirPath, label);
+    if (!created?.isDirectory()) {
+      throw new Error(`Expected directory at ${label}: ${dirPath}`);
+    }
+    return assertPrivateDir(dirPath, label, created);
+  }
+  if (!stat.isDirectory()) {
     throw new Error(`Expected directory at ${label}: ${dirPath}`);
   }
+  return assertPrivateDir(dirPath, label, stat);
+}
+
+/**
+ * A directory this process may safely write artifacts into: ours, and not group- or world-writable.
+ *
+ * The default target is a shared, predictable path (`/tmp/kev-files`), so surviving that path is
+ * not the same as owning it: a local account can pre-create it — with `/tmp`’s sticky bit this is
+ * allowed, since the name is free — as a plain 0777 directory, and every downloaded artifact then
+ * lands somewhere that account can swap underneath the tests (learnings-cfp). Symlink and
+ * file-type checks alone cannot see that. Rejection beats repair here: an unexpected owner or a
+ * writable mode means someone else had the path first, and we do not know what else they arranged.
+ */
+export function assertPrivateDir(dirPath, label = dirPath, stat = lstatSync(dirPath)) {
+  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  if (uid !== null && stat.uid !== uid) {
+    throw new Error(
+      `Refusing to use ${label} at ${dirPath}: owned by uid ${stat.uid}, not ${uid}. ` +
+      `Point KEV_FILES_DIR at a directory this user owns.`
+    );
+  }
+  const writable = stat.mode & 0o022;
+  if (writable !== 0) {
+    throw new Error(
+      `Refusing to use group- or world-writable ${label} at ${dirPath} ` +
+      `(mode ${(stat.mode & 0o777).toString(8)}); chmod go-w it, or point KEV_FILES_DIR elsewhere.`
+    );
+  }
+  return stat;
 }
 
 export async function hashFile(filePath) {
