@@ -198,10 +198,35 @@ function lintTree(root, exts = SCAN_EXTENSIONS) {
   return failures;
 }
 
+// learnings-19b8: the walk covered only ./site, so the committed research/ and scripts/ trees —
+// code that runs on the VM and, for the probes, drives a browser — were outside every static gate
+// in the repo (csp.test.js also walks site/ only). Both are scanned now, and a root that loses its
+// coverage fails the explicit check below rather than silently scanning nothing.
+const SOURCE_ROOTS = ['./site', './research', './scripts'];
+
 test('no innerHTML with template sinks', () => {
-  const failures = lintTree('./site');
+  const failures = SOURCE_ROOTS.flatMap(root => lintTree(root));
   if (failures.length > 0) {
     assert.fail('Found innerHTML sinks:\n' + failures.join('\n'));
+  }
+});
+
+test('the gate walks research/ and scripts/, not just site/', () => {
+  // A root that quietly stopped matching would make the scan above pass without scanning these,
+  // so the coverage itself is the assertion: real .mjs files from each tree are in the walk.
+  const walked = SOURCE_ROOTS.flatMap(root => findFiles(root, SCAN_EXTENSIONS));
+  for (const expected of ['research/nn-inp/trace2.mjs', 'scripts/serve.mjs', 'site/decision-models/image-lab.js']) {
+    assert.ok(walked.includes(expected), `${expected} is scanned by the DOM-sink gate`);
+  }
+  // And a sink planted in a research-shaped path is still caught, so this is a scan and not a
+  // filename allowlist.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), '19b8-lint-'));
+  try {
+    fs.mkdirSync(path.join(tmp, 'research'));
+    fs.writeFileSync(path.join(tmp, 'research', 'probe.mjs'), 'function bad(el) { el.innerHTML = `<b>${x}</b>`; }\n');
+    assert.strictEqual(lintTree(path.join(tmp, 'research')).length, 1);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
 

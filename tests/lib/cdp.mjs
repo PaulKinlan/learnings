@@ -186,6 +186,15 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
     socket.addEventListener("error", () => reject(new Error("devtools websocket failed")), { once: true });
   });
 
+  // Opt-in CDP event delivery, for probes that need a stream rather than a reply
+  // (Tracing.dataCollected, Log.entryAdded, Inspector.detached). Handlers only see events
+  // addressed to THIS page's session — a browser-level event or another target's traffic must not
+  // be mistaken for the page's own, which is how a trace probe ends up counting someone else's
+  // Layout. `currentSession` is assigned after the attach below, so the filter is null-safe for
+  // the Target.* events that arrive first. (learnings-19b8)
+  const listeners = new Map();
+  let currentSession = null;
+
   socket.addEventListener("message", (event) => {
     const data = JSON.parse(String(event.data));
     if (data.id && pending.has(data.id)) {
@@ -195,6 +204,17 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
       else resolve(data.result);
     } else if (data.method) {
       events.push(data);
+      const handlers = listeners.get(data.method);
+      const session = data.sessionId ?? currentSession;
+      if (handlers?.size && session === currentSession) {
+        // A probe's handler must not be able to wedge the driver: a throw here would escape the
+        // socket listener as an uncaught exception and take reply routing (every pending send)
+        // with it. The handler's own bug is reported as a warning, and the stream continues.
+        for (const handler of handlers) {
+          try { handler(data.params, data); }
+          catch (error) { process.emitWarning(`cdp event handler for ${data.method} threw: ${error.message}`); }
+        }
+      }
     }
   });
 
@@ -207,6 +227,7 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
 
   const { targetId } = await send("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await send("Target.attachToTarget", { targetId, flatten: true });
+  currentSession = sessionId;
   await send("Page.enable", {}, sessionId);
   await send("Runtime.enable", {}, sessionId);
 
@@ -214,6 +235,22 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
     profile,
     sessionId,
     send: (method, params) => send(method, params, sessionId),
+    /**
+     * Subscribe to one CDP event method; returns an unsubscribe function.
+     *
+     * `page.on('Tracing.dataCollected', params => chunks.push(...params.value))` is the reason it
+     * exists: a probe that drives the Tracing domain needs the streamed chunks, and there is no
+     * one-shot `send()` reply to read them from.
+     */
+    on: (method, handler) => {
+      const handlers = listeners.get(method) ?? new Set();
+      handlers.add(handler);
+      listeners.set(method, handlers);
+      return () => {
+        handlers.delete(handler);
+        if (handlers.size === 0) listeners.delete(method);
+      };
+    },
     close,
   };
 
