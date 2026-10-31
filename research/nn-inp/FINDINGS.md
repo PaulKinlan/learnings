@@ -13,7 +13,9 @@ Run from the repo root (each script serves `site/` itself):
 - `node research/nn-inp/measure.mjs` — Event Timing + longtask + rAF probe on architectures + gradient-descent
 - `node research/nn-inp/control.mjs` — same probe on the hub page (index.html) as a control
 - `node research/nn-inp/idle.mjs <page> <ms>` — idle longtask census, no input
-- `node research/nn-inp/cpu.mjs` — CDP CPU profiles (idle + click phase)
+- `node research/nn-inp/cpu.mjs` — CDP CPU profiles (idle + click phase). It prints the private
+  per-run directory it writes them to (`mkdtemp` under the OS temp dir, mode 0700, files 0600; the
+  old fixed `/tmp/nn-inp/` path was a predictable-name temp write, learnings-ilrx)
 - `node research/nn-inp/trace2.mjs` — devtools.timeline trace of load + idle window
 
 ## Findings
