@@ -242,3 +242,96 @@ test("explicit non-finite or non-positive maxBytes fails closed instead of accep
     }
   }
 });
+
+// learnings-rk51: the tokenizer hardening was guarded only by a source-text regex in
+// kev-pack.test.js ("the engine must pass specialStrings: this.specials?.literals"), so a refactor
+// could keep every string and still stop threading the value. This drives the real KevSession:
+// loader-derived specials in, planted control tokens out. The unwired control below is the point —
+// the same text leaks when the session carries no specials, so the assertions above are testing
+// the wiring and not the tokenizer stand-in.
+test("a KevSession carrying its tokenizer's specials drops planted control tokens at runtime", async () => {
+  const { KevSession } = await import("../site/decision-models/kev-engine.js");
+  const { tokenizerSpecials } = await import("../site/decision-models/tokenizer-specials.mjs");
+  const ort = await import("../site/vendor/ort.bundle.min.mjs");
+
+  const delimiterIds = { state: 1, question: 2, option_start: 3, option_end: 4, decide: 5 };
+  const LITERAL = "<|endoftext|>"; // declared special:true, so the text-level neutralizer removes it
+  const FOLDED = 901; // declared special id the tokenizer can produce from text no literal match sees
+  const tokenizerJson = {
+    added_tokens: [
+      { id: 900, content: LITERAL, special: true },
+      { id: FOLDED, content: "<CTRL>", special: true, normalized: true },
+      { id: 902, content: "<notspecial>", special: false },
+    ],
+  };
+  // What loadKev derives from the tokenizer it loaded (the loader half is regex-guarded above).
+  const specials = tokenizerSpecials(tokenizerJson);
+  assert.deepEqual(specials.ids, [900, FOLDED], "specials come from special:true added tokens only");
+
+  // A tokenizer stand-in with the two behaviours that matter: it emits the declared literal's id,
+  // and it produces the declared control id from ordinary-looking reader text ("control"), the way
+  // a Strip/Replace normalizer could.
+  const tokenize = (text) => {
+    const out = [];
+    let rest = String(text);
+    while (rest) {
+      if (rest.startsWith(LITERAL)) { out.push(900); rest = rest.slice(LITERAL.length); continue; }
+      if (rest.startsWith("control")) { out.push(FOLDED); rest = rest.slice("control".length); continue; }
+      const [ch] = Array.from(rest);
+      if (!/\s/.test(ch)) out.push(ch.codePointAt(0) + 100);
+      rest = rest.slice(ch.length);
+    }
+    return out;
+  };
+
+  const build = (threaded) => {
+    const seen = [];
+    const session = {
+      run: async (feeds) => {
+        const packed = Array.from(feeds.input_ids.data, Number);
+        seen.push(packed);
+        const data = new Float32Array(packed.length).fill(0);
+        data[packed.length - 1] = 3; // make the last option_end win, deterministically
+        return { logits: new ort.Tensor("float32", data, [1, packed.length]) };
+      },
+    };
+    return {
+      seen,
+      kev: new KevSession({
+        tokenizer: { encode: (text) => ({ ids: tokenize(text) }) },
+        session,
+        ids: delimiterIds,
+        specials: threaded ? specials : null,
+        checkpoint: "fixture",
+        loadMs: 0,
+      }),
+    };
+  };
+
+  const state = `before ${LITERAL} control after`;
+  const questions = [{ instruction: "is it safe", options: ["no", "yes"] }];
+
+  const wired = build(true);
+  const wiredResult = await wired.kev.decidePacked(state, questions);
+  const packed = wired.seen.at(-1);
+  assert.equal(packed.includes(900), false, "the declared literal's id never reaches the sequence");
+  assert.equal(packed.includes(FOLDED), false, "the declared control id the tokenizer produced is dropped");
+  assert.equal(packed[0], delimiterIds.state, "the state delimiter is still the first token");
+  assert.ok(packed.includes("b".codePointAt(0) + 100) && packed.includes("a".codePointAt(0) + 100),
+    "reader text either side of the planted token survives (over-neutralization guard)");
+  assert.equal(wiredResult.distributions.length, 1, "one question, one distribution");
+  assert.equal(wiredResult.distributions[0].length, 2, "read over the option delimiters");
+  assert.ok(Math.abs(wiredResult.distributions[0].reduce((sum, p) => sum + p, 0) - 1) < 1e-9, "a distribution sums to 1");
+  assert.equal(wiredResult.tokens, packed.length, "the reported token count is the packed length");
+  assert.equal(wiredResult.flat, false, "two different scores are not a flat distribution");
+
+  // CONTROL: the shape escape (layer 1 of the three) already rewrites `<|endoftext|>` to
+  // `<¦endoftext¦>` before the tokenizer sees it, so the literal alone proves nothing about the
+  // declared-specials wiring. The normalized id is the half ONLY the wiring can stop: with no
+  // specials threaded it leaks, which is what a source regex cannot show.
+  const unwired = build(false);
+  await unwired.kev.decidePacked(state, questions);
+  const leaky = unwired.seen.at(-1);
+  assert.ok(leaky.includes(FOLDED), "unwired: the declared control id the tokenizer produces leaks");
+  assert.equal(leaky.includes(900), false, "the shape escape already handled the literal with no specials at all");
+});
