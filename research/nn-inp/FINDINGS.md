@@ -43,9 +43,15 @@ Run from the repo root (each script serves `site/` itself):
    produced 8 long tasks totalling ~1.1s (191/202/100/202/100/99/101/102ms). The 1.3–10.4s
    hover bucket in the original measurement therefore includes input-TRIGGERED animation
    work, not only input arriving DURING the on-load animation — the on-load framing above
-   under-counts what interaction on this page costs. Whether a map click should re-run the
-   full animated race or settle for a cheaper redraw is a product question (filed as
-   learnings-eyz from the sweep batch).
+   under-counts what interaction on this page costs. **Decided 2026-10-31 (Paul, via hub;
+   learnings-eyz, option A): the re-run is intentional and stays.** A map click deliberately
+   re-drops the start point and re-runs the `Run one` animation, because the point of the map
+   is to place a start and watch the optimiser walk down from it — a still redraw would hide
+   the behaviour the reader came to see. The ~1.1s is the known price of that affordance on a
+   loaded VM, not a defect: do not re-file it as one, and do not "optimise" the click into a
+   cheaper redraw without a new ruling. The race widget's intro paragraph on
+   `gradient-descent.html` now states the re-run is deliberate and why, and
+   `gradient-descent.js` carries the same note at the `pointerdown` handler.
 
 3. **Chapter documents are expensive to lay out once at load.** Trace on
    gradient-descent.html: `UpdateLayoutTree` 495ms + full-document `Layout` 497ms
