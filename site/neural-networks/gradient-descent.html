@@ -159,7 +159,10 @@
           <p class="small">
             <strong>Race all six</strong> runs every optimiser from the same start, each with a learning
             rate chosen for that landscape. <strong>Run one</strong> uses your own settings. Click or tap
-            the map to move the start and run again.
+            the map to move the start and run again: every click deliberately re-runs the animation from
+            the new start rather than just settling the new state, because the point of the map is to
+            drop a start somewhere and watch the optimiser walk down from it. That re-run is about a
+            second of work on a slow machine, and it is intended.
           </p>
           <div class="controls">
             <label>Landscape

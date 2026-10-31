@@ -37,6 +37,14 @@ async function boundedText(body,limit){
  return Buffer.concat(chunks.map(chunk=>Buffer.from(chunk))).toString('utf8');
 }
 
+// Every relay response carries these, matching the static branch (learnings-wzt6). The relay
+// pipes a provider's body through verbatim, so a browser must never content-sniff it into
+// something else: nosniff is the same guarantee the static files already get, and the bead's
+// optional Cross-Origin-Resource-Policy was left out deliberately - these responses carry no
+// Access-Control-Allow-Origin and the route only accepts same-origin POSTs from the loopback
+// host, so there is no cross-origin read for CORP to add to (and JSON cannot be embedded the
+// way no-CORP images or scripts can).
+const RELAY_HEADERS={'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
 export async function serve({root:servedRoot}={}){
  const root=servedRoot??fileURLToPath(new URL('../site/',import.meta.url));
  // Containment is checked against the resolved root and the resolved file, so a
@@ -58,10 +66,10 @@ export async function serve({root:servedRoot}={}){
     const declared=Number(upstream.headers.get('content-length'));
     if(Number.isFinite(declared)&&declared>MAX_UPSTREAM_BYTES)throw new RangeError('Upstream response too large');
     const text=await boundedText(upstream.body,MAX_UPSTREAM_BYTES);
-    res.writeHead(upstream.status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(text);
+    res.writeHead(upstream.status,{...RELAY_HEADERS});res.end(text);
    }catch(error){
     if(res.headersSent){res.destroy();return;}
-    res.writeHead(502,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify({error:error instanceof RangeError?'Upstream response too large':'Upstream request failed'}));
+    res.writeHead(502,{...RELAY_HEADERS});res.end(JSON.stringify({error:error instanceof RangeError?'Upstream response too large':'Upstream request failed'}));
    }
    return;
   }

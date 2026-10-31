@@ -1,9 +1,13 @@
 // CPU-profile probe: idle profile for gradient-descent, click-phase profile for architectures.
 import {launch} from '../../tests/lib/cdp.mjs';
 import {serve} from '../../scripts/serve.mjs';
-import {writeFileSync} from 'node:fs';
+import {createArtifactDir, writeArtifact} from './artifacts.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Artifacts land in a fresh 0700 directory whose name nobody can predict (learnings-ilrx); the
+// path is printed so a reader can find the profiles.
+const artifacts = createArtifactDir('nn-inp-cpu-');
+console.log(`artifacts: ${artifacts}`);
 const local = await serve();
 const browser = await launch({candidates: ['/usr/bin/chromium']});
 
@@ -14,7 +18,7 @@ async function profile(page, seconds, outFile, drive) {
   if (drive) await drive();
   await sleep(seconds * 1000);
   const {profile: p} = await browser.send('Profiler.stop');
-  writeFileSync(outFile, JSON.stringify(p));
+  writeArtifact(artifacts, outFile, p);
   // Summarise self time per function.
   const {nodes, samples = [], timeDeltas = []} = p;
   const byId = new Map(nodes.map(n => [n.id, n]));
@@ -50,12 +54,12 @@ try {
   await browser.goto(local.url + 'neural-networks/gradient-descent.html');
   await browser.waitFor(() => Boolean(document.querySelector('canvas')));
   await sleep(500);
-  await profile('gradient-descent idle', 6, '/tmp/nn-inp/gd-idle.json');
+  await profile('gradient-descent idle', 6, 'gd-idle.json');
 
   await browser.goto(local.url + 'neural-networks/architectures.html');
   await browser.waitFor(() => Boolean(document.querySelector('canvas')));
   await sleep(500);
-  await profile('architectures canvas clicks', 4, '/tmp/nn-inp/arch-clicks.json',
+  await profile('architectures canvas clicks', 4, 'arch-clicks.json',
     () => clickCanvas('canvas'));
 } finally {
   await browser.close();

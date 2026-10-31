@@ -16,6 +16,8 @@ import {
   statSync,
   lstatSync,
   readdirSync,
+  chmodSync,
+  mkdirSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -26,6 +28,7 @@ import {
   hashFile,
   assertNotSymlink,
   ensureSafeDir,
+  assertPrivateDir,
 } from "../scripts/fetch-kev-fixtures.mjs";
 
 function makeReadableStream(chunks, onCancel = null) {
@@ -399,6 +402,108 @@ test("stale file with hash mismatch is detected and safely re-downloaded", async
     await downloadArtifact(art, targetDir, tempDir, mockFetch);
     assert.equal(downloadCount, 1, "fetch was invoked to replace stale file");
     assert.deepEqual(readFileSync(dest), Buffer.from(newPayload), "destination content replaced with verified bytes");
+  } finally {
+    rmSync(targetDir, { recursive: true, force: true });
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+// learnings-cfp: the default target is a shared, predictable path (/tmp/kev-files), so a local
+// account can pre-create it as a plain 0777 directory. Symlink and file-type checks cannot see
+// that, so the directory must also be ours and not group/world-writable before anything is
+// downloaded into it.
+
+test("a directory we create is private (0700), not merely symlink-free", () => {
+  const parent = mkdtempSync(join(tmpdir(), "kev-test-parent-"));
+  const dir = join(parent, "kev-files");
+  try {
+    ensureSafeDir(dir, "target directory");
+    assert.equal(statSync(dir).mode & 0o777, 0o700, "created directory is 0700");
+    // and a second call on the directory it just made is still accepted
+    ensureSafeDir(dir, "target directory");
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("a pre-existing 0755 directory we own is still accepted (the real /tmp/kev-files case)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kev-test-target-"));
+  try {
+    chmodSync(dir, 0o755);
+    assert.equal(ensureSafeDir(dir, "target directory").isDirectory(), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a group-writable or world-writable directory is refused, and nothing is downloaded into it", async () => {
+  for (const mode of [0o775, 0o777]) {
+    const dir = mkdtempSync(join(tmpdir(), "kev-test-target-"));
+    try {
+      chmodSync(dir, mode);
+      assert.throws(
+        () => ensureSafeDir(dir, "target directory"),
+        /group- or world-writable/,
+        `mode ${mode.toString(8)} refused`,
+      );
+      let fetched = 0;
+      const art = { file: "config.json", url: "https://mock.invalid/config.json", sha: "0".repeat(64), maxBytes: 1024 };
+      await assert.rejects(
+        fetchKevFixtures({ targetDir: dir, artifacts: [art], fetchFn: async () => { fetched++; return new Response("x"); } }),
+        /group- or world-writable/,
+        `fetchKevFixtures refuses a mode ${mode.toString(8)} target`,
+      );
+      assert.equal(fetched, 0, "no request is made into a directory someone else can write");
+      assert.deepEqual(readdirSync(dir), [], "the directory is left empty");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+test("a directory owned by another uid is refused", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kev-test-target-"));
+  try {
+    // Fabricated stat: the check is on uid, and this account cannot create a foreign-owned dir.
+    const foreign = { ...lstatSync(dir), uid: (typeof process.getuid === "function" ? process.getuid() : 0) + 1 };
+    assert.throws(
+      () => assertPrivateDir(dir, "target directory", foreign),
+      /owned by uid \d+, not \d+/,
+    );
+    // Sanity: the same stat with our own uid passes, so the failure above is the ownership check.
+    assert.ok(assertPrivateDir(dir, "target directory"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a world-writable onnx subdirectory inside our own target is refused too", () => {
+  // The target can be private while the subdirectory every onnx artifact lands in is not; each
+  // directory that receives a write is checked, not just the top one.
+  const dir = mkdtempSync(join(tmpdir(), "kev-test-target-"));
+  try {
+    ensureSafeDir(dir, "target directory");
+    const onnx = join(dir, "onnx");
+    mkdirSync(onnx);
+    chmodSync(onnx, 0o777);
+    assert.throws(() => ensureSafeDir(onnx, "onnx directory"), /group- or world-writable/);
+    chmodSync(onnx, 0o700);
+    assert.equal(ensureSafeDir(onnx, "onnx directory").isDirectory(), true, "private onnx is accepted");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("downloadArtifact creates its destination subdirectory private (0700)", async () => {
+  const targetDir = mkdtempSync(join(tmpdir(), "kev-test-target-"));
+  const tempDir = mkdtempSync(join(tmpdir(), "kev-test-temp-"));
+  const bytes = new Uint8Array([7, 8, 9]);
+  const sha = createHash("sha256").update(bytes).digest("hex");
+  const art = { file: "onnx/model_q4.onnx", url: "https://mock.invalid/model_q4.onnx", sha, maxBytes: 1024 };
+  try {
+    await downloadArtifact(art, targetDir, tempDir, async () => new Response(bytes));
+    assert.equal(statSync(join(targetDir, "onnx")).mode & 0o777, 0o700, "subdirectory is 0700");
+    assert.deepEqual(readFileSync(join(targetDir, "onnx/model_q4.onnx")), Buffer.from(bytes));
   } finally {
     rmSync(targetDir, { recursive: true, force: true });
     rmSync(tempDir, { recursive: true, force: true });

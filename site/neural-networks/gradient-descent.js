@@ -377,6 +377,11 @@ $("gd-compare").addEventListener("click", () => {
     runOne("sgd", 0.21, { steps: 300, label: "SGD, η = 0.21", colorKey: "alt" }),
   ]);
 });
+// A map click deliberately re-drops the start AND re-runs the "Run one" animation below
+// (learnings-eyz; ruling 2026-10-31, option A: keep it). Watching the optimiser walk down
+// from a start you chose is the teaching affordance here, so the re-run is not a defect and
+// is not to be swapped for a still redraw: it costs ~1s of main-thread work on a loaded VM,
+// which is the price of the animation, not a bug (research/nn-inp/FINDINGS.md, finding 2).
 map.addEventListener("pointerdown", (e) => {
   const rect = map.getBoundingClientRect();
   state.start = fromPx(
