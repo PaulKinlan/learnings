@@ -75,3 +75,27 @@ test('a symlink under the served root cannot read outside it',async()=>{
   assert.equal((await fetch(local.url+'..%2f..%2fetc%2fhostname')).status,404);
  }finally{await new Promise(r=>local.server.close(r));rmSync(outside,{recursive:true,force:true});rmSync(root,{recursive:true,force:true});}
 });
+
+// learnings-wzt6: the relay branch wrote only Content-Type and Cache-Control while the static
+// branch also sent X-Content-Type-Options, so a relayed provider body had no sniffing protection.
+// Both outcomes are checked (relayed 200 and the 502 the server writes itself), because the fix
+// is only as good as the branch that forgot it.
+test('relay responses carry X-Content-Type-Options: nosniff like the static branch',async()=>{
+ const original=globalThis.fetch,local=await serve();
+ try{
+  globalThis.fetch=async()=>new Response('{"fixture":true}',{status:200,headers:{'Content-Type':'application/json'}});
+  const relayed=await original(local.url+'api/jev',{method:'POST',headers:{Origin:local.url.slice(0,-1),'Content-Type':'application/json'},body:'{}'});
+  assert.equal(relayed.status,200);
+  assert.equal(relayed.headers.get('x-content-type-options'),'nosniff');
+  assert.equal(relayed.headers.get('content-type'),'application/json');
+  assert.equal(relayed.headers.get('cache-control'),'no-store');
+
+  globalThis.fetch=async()=>{throw new Error('upstream unreachable');};
+  const failed=await original(local.url+'api/jev',{method:'POST',headers:{Origin:local.url.slice(0,-1),'Content-Type':'application/json'},body:'{}'});
+  assert.equal(failed.status,502);
+  assert.equal(failed.headers.get('x-content-type-options'),'nosniff','the server-written 502 carries it too');
+
+  const page=await original(local.url+'decision-models/');
+  assert.equal(page.headers.get('x-content-type-options'),'nosniff','static branch keeps nosniff');
+ }finally{globalThis.fetch=original;await new Promise(r=>local.server.close(r));}
+});
