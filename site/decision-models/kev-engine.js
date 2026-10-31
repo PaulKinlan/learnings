@@ -27,6 +27,7 @@ import {
 import { tokenizerSpecials } from "./tokenizer-specials.mjs";
 import { KEV_REVISION, KEV_SHA256, KEV_MAX_BYTES, KEV_DEFAULT_MAX_BYTES } from "./kev-manifest.js";
 import { ARTIFACT_DOWNLOAD_TIMEOUT_MS, fetchArtifactBytes } from "./fetch-policy.mjs";
+import { seamValue } from "./core.js";
 
 const REPO = "onnx-community/kev-0.6b-ONNX";
 // The pin: a commit sha, not a branch, so the bytes behind every URL are immutable.
@@ -70,7 +71,15 @@ export function fetchVerified(url, options = {}) {
  * `timeoutMs` is the idle deadline shared by every artifact download (tm-download-no-timeout):
  * it bounds a stalled hub, not the total transfer time, and must be finite and positive.
  */
-export async function loadKev({ onProgress = null, urls = {}, timeoutMs = ARTIFACT_DOWNLOAD_TIMEOUT_MS } = {}) {
+export async function loadKev({
+  onProgress = null,
+  // The DEFAULT resolves through core.js's one gate (learnings-2b5r), so a caller that omits
+  // `urls` cannot enable the seam off-loopback by leaving it to the engine, and the seam read
+  // happens in a single tested place. An explicit `urls` argument is trusted as given: it is
+  // code, not injectable page state — the threat is the seam global a page script can set.
+  urls = seamValue("__KEV_URLS") ?? {},
+  timeoutMs = ARTIFACT_DOWNLOAD_TIMEOUT_MS,
+} = {}) {
   const urlFor = (file) => urls[file] ?? kevArtifactUrl(file);
   const notify = (stage, loaded = 0, total = 0, file = stage) => {
     onProgress?.({ stage, file, loaded, total, received: loaded }, loaded, total, file);
