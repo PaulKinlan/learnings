@@ -4,7 +4,7 @@ import {existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {test} from 'node:test';
-import {assertNoBrowserOrphans, launch, resolveBinary} from './lib/cdp.mjs';
+import {assertNoBrowserOrphans, isPageEvent, launch, resolveBinary} from './lib/cdp.mjs';
 
 const binary = resolveBinary();
 const waitForExit = (child) => new Promise((resolve, reject) => {
@@ -180,5 +180,22 @@ test('a launch whose retry SUCCEEDS recovers: the second attempt endpoint is use
     assert.equal(readFileSync(counter, 'utf8').trim(), '2', 'the recovered launch must have run exactly two attempts');
   } finally {
     rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+// learnings-0i3y: the first cut of page.on() fell back to the current session when an event
+// carried no id, so browser-level Target.*/Browser.* traffic was delivered to page handlers while
+// the comment promised it was not. The rule is a pure function now, and this is its direct test:
+// a browser test cannot produce a sessionId-less event (the driver's own send() always attaches
+// one, so the browser attributes the reply events to that session too — measured: the browser
+// version of this check passed against the buggy fallback).
+test('isPageEvent delivers this session only: not browser-level, not another target, not pre-attach', () => {
+  const mine = 'SESSION-A';
+  assert.equal(isPageEvent({ method: 'Tracing.dataCollected', sessionId: mine }, mine), true, 'the page\'s own event');
+  assert.equal(isPageEvent({ method: 'Target.targetCreated' }, mine), false, 'a sessionId-less browser event is not the page\'s');
+  assert.equal(isPageEvent({ method: 'Tracing.dataCollected', sessionId: 'SESSION-B' }, mine), false, 'another target\'s event');
+  assert.equal(isPageEvent({ method: 'Runtime.consoleAPICalled', sessionId: mine }, null), false, 'nothing before the attach');
+  for (const current of [undefined, '']) {
+    assert.equal(isPageEvent({ method: 'Runtime.consoleAPICalled', sessionId: mine }, current), false, `no session (${String(current)}) delivers nothing`);
   }
 });
