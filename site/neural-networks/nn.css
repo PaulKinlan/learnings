@@ -344,7 +344,7 @@
   border-radius: 1px;
   background: #1e293b;
   color: #f8fafc;
-  font-size: 0.62rem;
+  font-size: 0.75rem;
   display: grid;
   place-items: center;
 }
@@ -600,7 +600,7 @@
 
 .stepper-phase-badge {
   font-family: ui-monospace, monospace;
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   font-weight: 800;
   padding: 0.22rem 0.6rem;
   border-radius: 4px;
@@ -786,7 +786,7 @@
 }
 
 .inspector-kpi-label {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 
@@ -945,7 +945,7 @@
 
 .hyperparam-badge {
   font-family: ui-monospace, monospace;
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
   background: #e0f2fe;
@@ -1043,10 +1043,10 @@
   .grad-row {
     grid-template-columns: minmax(85px, 1.1fr) minmax(50px, 1fr) auto;
     gap: 0.4rem;
-    font-size: 0.72rem;
+    font-size: 0.75rem;
   }
   .grad-row .number {
-    font-size: 0.72rem;
+    font-size: 0.75rem;
   }
 }
 
