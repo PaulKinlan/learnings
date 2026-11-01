@@ -5,8 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 // Extensions the walk scans. Pinned by the 'file walk reaches .mjs sinks' test:
-// dropping '.mjs' here fails the suite.
-const SCAN_EXTENSIONS = ['.js', '.mjs'];
+// dropping '.mjs' here fails the suite. '.html' is scanned through the inline-script masker
+// below, not as raw markup (learnings-0ob).
+const SCAN_EXTENSIONS = ['.js', '.mjs', '.html'];
 
 // Property names whose COMPUTED form (`el['name'] = x`) is a sink: kept verbatim by the blanking
 // pass so the computed patterns below can see them (learnings-blv).
@@ -193,12 +194,93 @@ function sinkConstruct(line, commentStrippedLine) {
   return null;
 }
 
+// Script `type` values a browser executes as JavaScript. Anything else (speculationrules,
+// importmap, application/ld+json, application/json, text/template, ...) is a data block, not
+// code: the published pages ship such blocks (site/celld/index.html pins its speculationrules
+// JSON by CSP sha256), and scanning them as JS would be meaningless. A missing or empty type
+// is JavaScript. Deliberately a small explicit set: a type the browser will not execute cannot
+// inject anything, and an exotic executable type appearing in the tree is a review-level event.
+const JS_SCRIPT_TYPES = new Set(['', 'module', 'text/javascript', 'application/javascript',
+  'text/ecmascript', 'application/ecmascript', 'text/jscript', 'text/livescript']);
+
+// Returns a newline-aligned copy of an HTML source in which EVERYTHING is blanked to spaces
+// except the bodies of executable inline <script> blocks. The same per-line scan used for JS
+// files then runs over the result, so `file:line` reporting stays exact while markup, text
+// nodes, attributes, HTML comments, external `src` scripts and non-JS data blocks can never
+// produce a hit (learnings-0ob). Mirrors the HTML parser's own rules where they matter here:
+// a script body ends at the first `</script`, and commented-out markup is inert. Regions are
+// blanked with one native replace and joined once: a per-character loop over the published
+// tree cost seconds of fast-gate time on a loaded box.
+function maskHtmlKeepingInlineScripts(raw) {
+  const blank = (s) => s.replace(/[^\n]/g, ' ');
+  const parts = [];
+  let i = 0;
+  const n = raw.length;
+
+  while (i < n) {
+    const lt = raw.indexOf('<', i);
+    if (lt === -1) { parts.push(blank(raw.slice(i))); break; }
+    if (lt > i) { parts.push(blank(raw.slice(i, lt))); i = lt; }
+
+    if (raw.startsWith('<!--', i)) {
+      const end = raw.indexOf('-->', i + 4);
+      const stop = (end === -1) ? n : end + 3;
+      parts.push(blank(raw.slice(i, stop)));
+      i = stop;
+      continue;
+    }
+
+    if (/^<script(?=[\s>/])/i.test(raw.slice(i, i + 8))) {
+      // Parse the open tag, skipping quoted attribute values so a `>` inside one cannot end it.
+      let j = i + '<script'.length;
+      let attrs = '';
+      while (j < n) {
+        const ch = raw[j];
+        if (ch === '"' || ch === "'") {
+          let k = j + 1;
+          while (k < n && raw[k] !== ch) k++;
+          attrs += raw.slice(j, Math.min(k + 1, n));
+          j = k + 1;
+          continue;
+        }
+        if (ch === '>') break;
+        attrs += ch;
+        j++;
+      }
+      const bodyStart = Math.min(j + 1, n);
+      const close = raw.slice(bodyStart).search(/<\/script[\s>]/i);
+      const bodyEnd = (close === -1) ? n : bodyStart + close;
+      const gt = (close === -1) ? -1 : raw.indexOf('>', bodyEnd);
+      const closeTagEnd = (gt === -1) ? n : gt + 1;
+      const typeMatch = attrs.match(/\btype\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+      const type = typeMatch ? (typeMatch[1] ?? typeMatch[2] ?? typeMatch[3] ?? '').trim().toLowerCase() : '';
+      const isExecutable = !/\bsrc\s*=/i.test(attrs) && JS_SCRIPT_TYPES.has(type);
+      parts.push(blank(raw.slice(i, bodyStart)));
+      parts.push(isExecutable ? raw.slice(bodyStart, bodyEnd) : blank(raw.slice(bodyStart, bodyEnd)));
+      parts.push(blank(raw.slice(bodyEnd, closeTagEnd)));
+      i = closeTagEnd;
+      continue;
+    }
+
+    parts.push(' ');
+    i++;
+  }
+
+  return parts.join('');
+}
+
 function scanFile(file) {
   const failures = [];
   const raw = fs.readFileSync(file, 'utf8');
-  const lines = raw.split('\n');
-  const stripped = stripCommentsAndStrings(raw).split('\n');
-  const noComments = stripComments(raw).split('\n');
+  // For HTML only executable inline <script> bodies survive the masker; every scan below runs
+  // on that newline-aligned form so line numbers and the JS string/comment stripping stay exact.
+  // A page with no executable inline script — the whole published tree today — returns before
+  // the two strip passes ever see the blanked markup.
+  const source = file.endsWith('.html') ? maskHtmlKeepingInlineScripts(raw) : raw;
+  if (file.endsWith('.html') && !/\S/.test(source)) return failures;
+  const lines = source.split('\n');
+  const stripped = stripCommentsAndStrings(source).split('\n');
+  const noComments = stripComments(source).split('\n');
 
   lines.forEach((line, index) => {
     const strippedLine = stripped[index];
@@ -282,6 +364,25 @@ test('lint regression: walks fixtures and catches real sinks', () => {
 test('comments and string literals mentioning sinks are ignored', () => {
   const failures = scanFile('./tests/fixtures/lint-clean.js');
   assert.strictEqual(failures.length, 0, 'Comment/string mentions must not fail the gate');
+});
+
+test('inline <script> bodies in HTML are scanned; markup and data blocks are not (learnings-0ob)', () => {
+  // The two planted sinks: an interpolated innerHTML assignment in a classic inline script
+  // (line 16) and document.write in a module inline script (line 19). The commented-out sink,
+  // the prose/<pre> listing mentions, the speculationrules JSON, the ld+json block and the
+  // external src script in the same fixture must not produce hits — the masker blanks them.
+  const failures = scanFile('./tests/fixtures/lint-inline.html');
+  assert.deepStrictEqual(
+    failures.map((f) => f.replace(/ uses DOM-injection sink.*/, '')),
+    ['File ./tests/fixtures/lint-inline.html:16', 'File ./tests/fixtures/lint-inline.html:19'],
+    `exactly the planted inline-script sinks, at their real line numbers, got:\n${failures.join('\n')}`);
+  assert.ok(failures[0].includes('innerHTML assignment'), 'the innerHTML hit names its construct');
+  assert.ok(failures[1].includes('document.write'), 'the document.write hit names its construct');
+  // And the published pages that motivated the coverage are actually in the walk.
+  const walked = SOURCE_ROOTS.flatMap((root) => findFiles(root, SCAN_EXTENSIONS));
+  for (const expected of ['site/celld/index.html', 'site/neural-networks/backends/javascript.html']) {
+    assert.ok(walked.includes(expected), `${expected} is scanned by the DOM-sink gate`);
+  }
 });
 
 test('file walk reaches .mjs sinks', () => {
