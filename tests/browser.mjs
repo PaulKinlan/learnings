@@ -271,6 +271,17 @@ try{
  // into every new document (browser-level, so CSP does not apply to the injection) record uncaught
  // errors and rejections, which catches a module that throws while defining its global.
  //
+ // THE HARNESS'S OWN REPORT IS CHECKED TOO (learnings-dvc). All four publish {done, error} and set
+ // done = true in BOTH their success and their catch path, so a harness that signalled its global
+ // and then failed internally used to look exactly like one still fetching weights: global present,
+ // no uncaught error escaped, gate passed. `present` is therefore no longer the whole check:
+ //   - `done` must be a boolean, so a completion claim is machine-checkable at all;
+ //   - `error` must be null - a harness catching its own failure is a FAILED smoke test, not a pass
+ //     with a note. This is the gap the audit found;
+ //   - when `done === true` the gate says so explicitly, so a run that never completed cannot be
+ //     read as a completed one.
+ // A harness still loading is reported by its stage and is NOT counted as completion.
+ //
  // UNCAUGHT ERRORS ARE ALWAYS FATAL. Unhandled rejections are only fatal when they fire before
  // the harness has signalled (set its result global) — a module that rejects at top level and
  // never signals is a crash. A rejection after the signal is a fire-and-forget side effect the
@@ -284,6 +295,12 @@ try{
   harnesses[page]=await p.evaluate((name)=>{const g=window[name];const pageErrors=(window.__pageErrors??[]).slice(0,5),pageNotes=(window.__pageNotes??[]).slice(0,5);return g?{present:true,stage:g.stage??null,done:g.done??null,error:g.error?String(g.error).slice(0,200):null,pageErrors,pageNotes}:{present:false,pageErrors,pageNotes};},resultGlobal);
   check(`${page} harness raised no uncaught page error${harnesses[page].pageErrors.length?': '+harnesses[page].pageErrors.join(' | '):''}`,harnesses[page].pageErrors.length===0);
   check(`${page} harness executes under CSP and sets window.${resultGlobal}${harnesses[page].pageErrors.length?` (page errors: ${harnesses[page].pageErrors.join(' | ')})`:''}`,harnesses[page].present);
+  // The harness's own report (learnings-dvc): without these, a harness that set its global and then
+  // failed internally was indistinguishable from one still downloading weights.
+  check(`${page} harness publishes a boolean done flag (was ${JSON.stringify(harnesses[page].done)})`,typeof harnesses[page].done==='boolean');
+  check(`${page} harness reports no internal error${harnesses[page].error?' at stage '+JSON.stringify(harnesses[page].stage)+': '+harnesses[page].error:''}`,harnesses[page].error===null);
+  if(harnesses[page].done===true)check(`${page} harness completed (done === true, stage ${JSON.stringify(harnesses[page].stage)})`,true);
+  else console.log(`NOTE ${page} still loading at stage ${JSON.stringify(harnesses[page].stage)}: not counted as completion`);
  }
  await p.goto(base+'decision-models/');check('report explicit CORS and browser-inference limitations',await p.evaluate(()=>document.body.textContent.includes('HTTP 400')&&document.body.textContent.includes('Run it in this tab')));
  await p.emulateViewport({width:1440,height:1000,mobile:false,scale:1});await p.screenshot(out+'/desktop-report.png',{fullPage:true});
