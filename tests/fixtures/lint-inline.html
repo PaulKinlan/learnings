@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- a commented-out sink is inert markup: el.innerHTML = userHtml; document.write(userHtml); -->
+<script type="speculationrules">
+{"prefetch": [{"source": "document", "urls": ["/next.html?x=.innerHTML="], "eagerness": "moderate"}]}
+</script>
+<script type="module" src="./fixtures-do-not-exist.js"></script>
+</head>
+<body>
+<p>The gate must not flag prose or listings: <code>el.insertAdjacentHTML('beforeend', row)</code>.</p>
+<pre><code>target.innerHTML = `&lt;b&gt;${name}&lt;/b&gt;`;</code></pre>
+<script>
+  const target = document.querySelector('#out');
+  target.innerHTML = `<b>${name}</b>`;
+</script>
+<script type="module">
+  document.write('<p>gone</p>');
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "note": "eval( and new Function( are data here, not code"}
+</script>
+</body>
+</html>
