@@ -53,3 +53,95 @@ test("every __LAYA_URLS/__KEV_URLS read under site/decision-models is gated by o
   // floor deliberately — never by weakening the same-line gate assertion above.
   assert.ok(reads.length >= 8, `the scan saw only ${reads.length} seam reads (${reads.join(", ")}); expected the known drivers`);
 });
+
+// ---- behavioural half (learnings-2b5r) --------------------------------------------------------
+// Above: onLoopback() in isolation, and a scan that every seam READ is gated. Neither proves the
+// GATE'S VALUE reaches the consumer — a refactor could keep `onLoopback() && globalThis.X` and
+// return undefined, or thread the gate into a place the loader never reads. These drive real code.
+
+const withLocation = async (hostname, fn) => {
+  const saved = Object.getOwnPropertyDescriptor(globalThis, "location");
+  try {
+    if (hostname === undefined) delete globalThis.location;
+    else Object.defineProperty(globalThis, "location", { configurable: true, value: { hostname } });
+    return await fn();
+  } finally {
+    if (saved) Object.defineProperty(globalThis, "location", saved);
+    else delete globalThis.location;
+  }
+};
+
+test("core.js exposes one gate for every seam: honoured on loopback, null off it", async () => {
+  const { seamValue } = await import("../site/decision-models/core.js");
+  const override = { "tokenizer.json": "https://seam.invalid/tokenizer.json" };
+  const saved = Object.getOwnPropertyDescriptor(globalThis, "__KEV_URLS");
+  try {
+    globalThis.__KEV_URLS = override;
+    for (const hostname of ["127.0.0.1", "localhost", "[::1]", undefined]) {
+      await withLocation(hostname, () => {
+        assert.deepEqual(seamValue("__KEV_URLS"), override, `${hostname ?? "no location"} honours the seam`);
+      });
+    }
+    for (const hostname of ["paul.kinland.me", "127.0.0.2", "localhost.evil.test", ""]) {
+      await withLocation(hostname, () => {
+        assert.equal(seamValue("__KEV_URLS"), null, `${hostname || "an empty hostname"} gets no seam value`);
+      });
+    }
+    delete globalThis.__KEV_URLS;
+    await withLocation("127.0.0.1", () => {
+      assert.equal(seamValue("__KEV_URLS"), null, "an unset seam is null even on loopback, never undefined");
+    });
+  } finally {
+    if (saved) Object.defineProperty(globalThis, "__KEV_URLS", saved);
+    else delete globalThis.__KEV_URLS;
+  }
+});
+
+test("loadKev takes the Kev seam only on loopback, and the pinned URL everywhere else", async () => {
+  // The consumer, driven for real: loadKev() with no `urls` argument, a stubbed fetch, and the
+  // URL it asks for first. (No model runs: the stub throws on the first request.)
+  const { loadKev } = await import("../site/decision-models/kev-engine.js");
+  const { kevArtifactUrl } = await import("../site/decision-models/kev-engine.js");
+  const override = { "tokenizer.json": "https://seam.invalid/tokenizer.json" };
+  const savedFetch = globalThis.fetch;
+  const savedSeam = Object.getOwnPropertyDescriptor(globalThis, "__KEV_URLS");
+  const firstRequest = async () => {
+    const seen = [];
+    globalThis.fetch = async (url) => {
+      seen.push(String(url));
+      throw new Error("stub: no artefacts are downloaded in a test");
+    };
+    await loadKev({}).catch(() => {});
+    assert.ok(seen.length, "loadKev made a request, so the URL it chose is observable");
+    return seen[0];
+  };
+  try {
+    globalThis.__KEV_URLS = override;
+    const offLoopback = await withLocation("paul.kinland.me", firstRequest);
+    assert.equal(offLoopback, kevArtifactUrl("tokenizer.json"),
+      "off loopback the seam is ignored: the pinned hub URL is requested");
+    assert.equal(offLoopback.includes("seam.invalid"), false, "no request leaves for the injected endpoint");
+
+    const onLoopback = await withLocation("127.0.0.1", firstRequest);
+    assert.equal(onLoopback, override["tokenizer.json"],
+      "on loopback the same call honours the seam (the control: the seam still works)");
+  } finally {
+    globalThis.fetch = savedFetch;
+    if (savedSeam) Object.defineProperty(globalThis, "__KEV_URLS", savedSeam);
+    else delete globalThis.__KEV_URLS;
+  }
+});
+
+test("both engines resolve their urls DEFAULT through the one gate; LitERT's half is structural", () => {
+  // loadKev is driven end to end above. loadLaya cannot be: LitERT boots first and cannot boot
+  // outside a DOM, so no URL is ever chosen in node and any "it rejected" assertion would be a
+  // fake test. The honest statement of Laya's coverage is this structural pair — the default is
+  // the gated seam, and the gated seam itself is behaviourally tested above for BOTH names — so
+  // the reader can see exactly which half is behavioural and which is not.
+  const dir = new URL("../site/decision-models/", import.meta.url);
+  for (const [file, seam] of [["laya-engine.js", "__LAYA_URLS"], ["kev-engine.js", "__KEV_URLS"]]) {
+    const source = readFileSync(new URL(file, dir), "utf8");
+    assert.match(source, new RegExp(`urls = seamValue\\("${seam}"\\) \\?\\? \\{\\}`),
+      `${file} must resolve its urls default through seamValue (learnings-2b5r)`);
+  }
+});

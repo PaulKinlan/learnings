@@ -69,6 +69,24 @@ export async function assertNoBrowserOrphans(profile) {
 
 const BROWSERS = getCandidateBrowsers();
 
+/**
+ * Whether a CDP event belongs to the page this driver attached to.
+ *
+ * Exported because it is the whole of page.on()'s delivery rule and it cannot be exercised
+ * indirectly: every command the driver sends carries its session id, so the browser attributes the
+ * resulting events to that session too — there is no way to make a sessionId-less event arrive
+ * through the public API, and a behavioural test of this would pass whether or not the rule is
+ * right (measured: with the old fallback it still passed). So the rule is a pure function with
+ * direct tests instead of a browser test that cannot fail. (learnings-0i3y)
+ *
+ * A browser-level event (Target.* / Browser.*) has NO sessionId and is not a page event; an event
+ * from another target has a different one. Before the attach, `sessionId` is null, so nothing is
+ * delivered while the page does not exist yet.
+ */
+export function isPageEvent(event, sessionId) {
+  return sessionId != null && event?.sessionId === sessionId;
+}
+
 export function resolveBinary(candidates = null) {
   return (candidates ?? getCandidateBrowsers()).find((b) => existsSync(b)) ?? null;
 }
@@ -187,11 +205,15 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
   });
 
   // Opt-in CDP event delivery, for probes that need a stream rather than a reply
-  // (Tracing.dataCollected, Log.entryAdded, Inspector.detached). Handlers only see events
-  // addressed to THIS page's session — a browser-level event or another target's traffic must not
-  // be mistaken for the page's own, which is how a trace probe ends up counting someone else's
-  // Layout. `currentSession` is assigned after the attach below, so the filter is null-safe for
-  // the Target.* events that arrive first. (learnings-19b8)
+  // (Tracing.dataCollected, Log.entryAdded, Inspector.detached). Handlers see ONLY events that
+  // carry THIS page's session id: another target's traffic must not be mistaken for the page's
+  // own (how a trace probe ends up counting someone else's Layout), and neither must a
+  // browser-level event. Browser-level CDP events (Target.*/Browser.*) carry no sessionId at all,
+  // and they are NOT delivered — the driver has no browser-level subscription, so a probe that
+  // wants one needs a second one added deliberately rather than a silent fallback that looks like
+  // page traffic (learnings-0i3y; the first cut fell back to the current session and the comment
+  // claimed more than the filter did). `currentSession` is null until the attach below, so the
+  // comparison is false — not truthy — for anything arriving before the page exists. (learnings-19b8)
   const listeners = new Map();
   let currentSession = null;
 
@@ -205,8 +227,7 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
     } else if (data.method) {
       events.push(data);
       const handlers = listeners.get(data.method);
-      const session = data.sessionId ?? currentSession;
-      if (handlers?.size && session === currentSession) {
+      if (handlers?.size && isPageEvent(data, currentSession)) {
         // A probe's handler must not be able to wedge the driver: a throw here would escape the
         // socket listener as an uncaught exception and take reply routing (every pending send)
         // with it. The handler's own bug is reported as a warning, and the stream continues.

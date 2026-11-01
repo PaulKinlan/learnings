@@ -123,6 +123,25 @@ export function onLoopback() {
   return typeof location === 'undefined' || ['127.0.0.1','localhost','[::1]'].includes(location.hostname);
 }
 
+/**
+ * The value of one test seam, or null where a seam must not exist.
+ *
+ * ONE gate for every seam (learnings-2b5r): the call sites each re-state
+ * `onLoopback() && globalThis.NAME`, which is five copies of the same condition and five places
+ * a refactor can keep the gate while dropping the value. The engines ALSO resolve their `urls`
+ * default through this, so a caller that forgets the gate cannot enable a seam by passing it by
+ * hand, and the behaviour is testable end to end (loadKev with a stubbed fetch).
+ *
+ * `name` is passed in rather than spelled here so this file contains no bare seam literal: the
+ * drift scan in tests/seam-gate.test.js fails on an ungated `globalThis.__*_URLS` read, and a
+ * reference implementation of the gate that trips its own scan would be a false positive.
+ */
+export function seamValue(name) {
+  if (!onLoopback()) return null;
+  const value = globalThis[name];
+  return value == null ? null : value;
+}
+
 // The __MOCK_DECIDE__ seam exists for the local browser harness (tests/browser.mjs serves over
 // loopback). It short-circuits engine dispatch, bypassing validateAnswers/validateSpec, so it
 // lives only where the harness can run: see onLoopback.

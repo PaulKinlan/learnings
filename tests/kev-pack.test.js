@@ -258,3 +258,34 @@ test("softmax is stable on scores large enough to overflow a naive implementatio
   assert.ok(out.every((p) => Number.isFinite(p)), "no Infinity from exponentiating large scores");
   assert.ok(Math.abs(out[1] - 0.7310585786300049) < 1e-9);
 });
+
+// learnings-rk51: the guards above assert that a planted control token does NOT come out. None of
+// them asserts the other direction — that ordinary reader text survives neutralization — so a
+// neutralizer that replaced the whole field, or a literal list with a substring entry, would pass
+// every existing case. The words either side of the planted token are the assertion here.
+test("neutralizing a planted special leaves the reader text around it intact", () => {
+  const specials = tokenizerSpecials({ added_tokens: [{ id: 100, content: "<CTRL>", special: true }] });
+  const pack = (state) => packDecision({
+    ids: IDS, tokenize: charTokenize, state,
+    questions: [{ instruction: "is it safe", options: ["no", "yes"] }],
+    specialStrings: specials.literals,
+    normalizedSpecialStrings: specials.normalizedLiterals,
+    specialIds: specials.ids,
+  });
+  const text = "before <CTRL> after";
+  const neutralized = pack(text).inputIds;
+  const tokens = [..."before after"].map((c) => c.codePointAt(0));
+  for (const id of new Set(tokens)) assert.ok(neutralized.includes(id), `reader character ${String.fromCodePoint(id)} survives`);
+  assert.equal(neutralized.includes(100), false, "the planted control id is still dropped");
+  // Word ORDER is preserved, not just presence: the neutralized token became a space, so the text
+  // either side must still pack in the original sequence.
+  // The planted literal becomes one space, so whitespace is excluded from the ordering check:
+  // what matters is that no reader character is lost or reordered around it.
+  // Only the STATE segment: the instruction and options below carry their own characters.
+  const delimiters = new Set(Object.values(IDS));
+  const stateIds = [];
+  for (const id of neutralized.slice(1)) { if (delimiters.has(id)) break; stateIds.push(id); }
+  const visible = stateIds.filter((id) => id !== 32);
+  assert.deepEqual(visible, [..."beforeafter"].map((c) => c.codePointAt(0)),
+    "the surviving characters keep their order with the planted token removed");
+});

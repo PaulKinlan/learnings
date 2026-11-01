@@ -30,6 +30,7 @@ import {
   verifyArtifactSha256,
 } from "./fetch-policy.mjs";
 import { Tokenizer } from "../vendor/tokenizers.min.mjs";
+import { seamValue } from "./core.js";
 import {
   ENGLISH_MASK_STRING,
   ENGLISH_SPECIAL_IDS,
@@ -182,7 +183,17 @@ function fp16Lut() {
  * the sums fetch and every artifact download (tm-download-no-timeout): it bounds a stalled
  * hub, not the total transfer time, and must be finite and positive.
  */
-export async function loadLaya({ checkpoint = "multilingual", calibration = "fitted", window = null, onProgress = null, urls = {}, timeoutMs = ARTIFACT_DOWNLOAD_TIMEOUT_MS } = {}) {
+export async function loadLaya({
+  checkpoint = "multilingual",
+  calibration = "fitted",
+  window = null,
+  onProgress = null,
+  // Same gate as Kev's (learnings-2b5r): the default is resolved by core.js's seamValue, so the
+  // seam is dead off-loopback wherever the caller leaves it to the engine. An explicit `urls`
+  // argument is trusted as given (code, not injectable page state).
+  urls = seamValue("__LAYA_URLS") ?? {},
+  timeoutMs = ARTIFACT_DOWNLOAD_TIMEOUT_MS,
+} = {}) {
   const baseSpec = CHECKPOINTS[checkpoint];
   const spec = window ? { ...baseSpec, window } : baseSpec;
   if (!spec) throw new Error(`unknown checkpoint '${checkpoint}' (known: ${Object.keys(CHECKPOINTS).join(", ")})`);
