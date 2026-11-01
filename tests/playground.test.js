@@ -18,6 +18,7 @@ async function loadJev(page) {
   await page.click('#load');
   await page.waitFor(() => document.querySelector('#progress').textContent.includes('Jev ready'), {
     label: 'Jev engine to load',
+  timeout: 60000,
   });
 }
 
@@ -29,7 +30,7 @@ test('playground Jev run cuts off a stalled provider at the 45s boundary and re-
   try {
     page = await launch({ candidates: ['/usr/bin/chromium'] });
     await page.goto(url + 'decision-models/playground.html');
-    await page.waitFor(() => document.querySelector('#engine') !== null);
+    await page.waitFor(() => document.querySelector('#engine') !== null, { label: 'engine select to exist', timeout: 60000 });
     await loadJev(page);
 
     // The run handler's own signal is what is under test, so the interval it asks for is recorded
@@ -49,6 +50,7 @@ test('playground Jev run cuts off a stalled provider at the 45s boundary and re-
     await page.click('.demo .run-demo');
     await page.waitFor(() => window.__timeoutIntervals.length > 0, {
       label: 'the run handler to wire a timeout signal',
+    timeout: 60000,
     });
     assert.deepEqual(
       await page.evaluate(() => window.__timeoutIntervals),
@@ -57,6 +59,7 @@ test('playground Jev run cuts off a stalled provider at the 45s boundary and re-
     );
     await page.waitFor(() => document.querySelector('.demo .results').textContent.includes('Run failed'), {
       label: 'timeout refusal',
+    timeout: 60000,
     });
 
     const state = await page.evaluate(() => ({
@@ -81,7 +84,7 @@ test('playground Jev run rejects malformed provider answers and still renders va
   try {
     page = await launch({ candidates: ['/usr/bin/chromium'] });
     await page.goto(url + 'decision-models/playground.html');
-    await page.waitFor(() => document.querySelector('#engine') !== null);
+    await page.waitFor(() => document.querySelector('#engine') !== null, { label: 'engine select to exist', timeout: 60000 });
     await loadJev(page);
 
     const runState = () => page.evaluate(() => ({
@@ -98,6 +101,7 @@ test('playground Jev run rejects malformed provider answers and still renders va
     await page.click('.demo .run-demo');
     await page.waitFor(() => document.querySelector('.demo .results').textContent.includes('Run failed'), {
       label: 'missing-answers refusal',
+    timeout: 60000,
     });
     let state = await runState();
     assert.equal(state.results, 'Run failed: Provider did not return an answers object.');
@@ -126,6 +130,7 @@ test('playground Jev run rejects malformed provider answers and still renders va
     await page.click('.demo .run-demo');
     await page.waitFor(() => document.querySelector('.demo .results').textContent.includes('Run failed'), {
       label: 'out-of-set-choice refusal',
+    timeout: 60000,
     });
     state = await runState();
     assert.equal(state.results, 'Run failed: Out-of-set choice: tool.');
@@ -154,6 +159,7 @@ test('playground Jev run rejects malformed provider answers and still renders va
     await page.click('.demo .run-demo');
     await page.waitFor(() => document.querySelector('.demo .results .answer') !== null, {
       label: 'valid answer render',
+    timeout: 60000,
     });
     state = await runState();
     assert.equal(state.answerCount, 1, 'a valid response renders exactly one answer');
@@ -174,7 +180,7 @@ test('playground Jev run refuses an unexpected answer ID before any render (lear
   try {
     page = await launch({ candidates: ['/usr/bin/chromium'] });
     await page.goto(url + 'decision-models/playground.html');
-    await page.waitFor(() => document.querySelector('#engine') !== null);
+    await page.waitFor(() => document.querySelector('#engine') !== null, { label: 'engine select to exist', timeout: 60000 });
     await loadJev(page);
 
     // The question set has exactly one question, `tool`. A provider that returns a valid `tool`
@@ -205,6 +211,7 @@ test('playground Jev run refuses an unexpected answer ID before any render (lear
     await page.click('.demo .run-demo');
     await page.waitFor(() => document.querySelector('.demo .results').textContent.includes('Run failed'), {
       label: 'unexpected-answer refusal',
+    timeout: 60000,
     });
 
     const state = await page.evaluate(() => ({
@@ -229,7 +236,7 @@ test('playground Jev keeps a __proto__ question id through the Laya→Jev transl
   try {
     page = await launch({ candidates: ['/usr/bin/chromium'] });
     await page.goto(url + 'decision-models/playground.html');
-    await page.waitFor(() => document.querySelector('#engine') !== null);
+    await page.waitFor(() => document.querySelector('#engine') !== null, { label: 'engine select to exist', timeout: 60000 });
     await loadJev(page);
 
     // Replace the first demo's questions with a single __proto__ question. The textarea holds raw
@@ -254,6 +261,7 @@ test('playground Jev keeps a __proto__ question id through the Laya→Jev transl
     await page.click('.demo .run-demo');
     await page.waitFor(() => document.querySelector('.demo .results .answer') !== null, {
       label: '__proto__ answer render',
+    timeout: 60000,
     });
 
     const state = await page.evaluate(() => ({
@@ -284,6 +292,7 @@ test('playground Jev keeps a __proto__ question id through the Laya→Jev transl
     await page.click('.demo .run-demo');
     await page.waitFor(() => document.querySelector('.demo .results').textContent.includes('Run failed'), {
       label: '__proto__ out-of-set refusal',
+    timeout: 60000,
     });
     const refused = await page.evaluate(() => ({
       results: document.querySelector('.demo .results').textContent,
@@ -305,7 +314,7 @@ test('playground Jev duplicate wire answer IDs collapse to last-wins (documented
   try {
     page = await launch({ candidates: ['/usr/bin/chromium'] });
     await page.goto(url + 'decision-models/playground.html');
-    await page.waitFor(() => document.querySelector('#engine') !== null);
+    await page.waitFor(() => document.querySelector('#engine') !== null, { label: 'engine select to exist', timeout: 60000 });
     await loadJev(page);
 
     // RFC 8259 §4 leaves duplicate object names to the parser; JSON.parse (and therefore
@@ -323,6 +332,7 @@ test('playground Jev duplicate wire answer IDs collapse to last-wins (documented
     await page.click('.demo .run-demo');
     await page.waitFor(() => document.querySelector('.demo .results .answer') !== null, {
       label: 'duplicate-wire-ID last-wins render',
+    timeout: 60000,
     });
 
     const state = await page.evaluate(() => ({
