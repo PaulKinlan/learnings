@@ -15,7 +15,7 @@ const lifted = {transform: 'matrix(1, 0, 0, 1, 0, -2)', borderColor: 'rgb(56, 18
   boxShadow: 'rgba(0, 0, 0, 0.4) 0px 4px 16px 0px'};
 const resting = {transform: 'none', borderColor: 'rgb(100, 116, 139)', boxShadow: 'none'};
 const afterClick = process.argv.includes('--before') ? lifted : resting;
-async function read(target, label) {
+async function read(target, label, {focused = false} = {}) {
   // One atomic in-page read: the target match is checked, re-checked one timer tick later
   // (a restarted transition fails the second sample), and the snapshot is captured in the
   // same evaluation. A separate check-then-capture raced hover restarts under load — the
@@ -23,7 +23,7 @@ async function read(target, label) {
   // learnings-93m). The predicate returns the OBSERVED sample plus a settled flag and selects
   // on `until`, so a timeout message carries the computed styles the card actually showed
   // instead of `last value null` (learnings-ft8).
-  return (await browser.waitFor(async (sel, want) => {
+  return (await browser.waitFor(async (sel, want, focus) => {
     const sample = () => {
       const li = document.querySelector(sel);
       const a = li.querySelector('h3 a');
@@ -37,8 +37,14 @@ async function read(target, label) {
         href: a.href,
       };
     };
+    // With `focused`, the read also waits for focus to land on the link: after history
+    // navigation the browser restores focus asynchronously, and a style-only settle read
+    // the resting card before the restore under load (focusWithin/activeElement false,
+    // learnings-a6u4). Polling the focus state with the same bounded waitFor closes that
+    // race, the same way the atomic re-check closed the hover race (learnings-93m).
     const settled = (s) => s.transform === want.transform && s.borderColor === want.borderColor &&
-      s.boxShadow === want.boxShadow;
+      s.boxShadow === want.boxShadow &&
+      (!focus || (s.focusWithin && s.activeElement));
     const first = sample();
     if (!settled(first)) return { settled: false, observed: first };
     await new Promise((resolve) => setTimeout(resolve, 60));
@@ -46,7 +52,7 @@ async function read(target, label) {
     return settled(second)
       ? { settled: true, observed: second }
       : { settled: false, observed: second, restarted: true };
-  }, { args: [selector, target], timeout: 10000, label, until: (r) => r?.settled === true })).observed;
+  }, { args: [selector, target, focused], timeout: 10000, label, until: (r) => r?.settled === true })).observed;
 }
 async function away() {
   await browser.send('Input.dispatchMouseEvent', {type: 'mouseMoved', x: 0, y: 0});
@@ -75,20 +81,33 @@ try {
   }, {capture: true}));
   await browser.click(anchor);
   await away();
-  const click = await read(afterClick, 'click drop to settle');
+  const click = await read(afterClick, 'click drop to settle', {focused: true});
 
-  await browser.goto(url);
-  await browser.waitFor(() => Boolean(document.querySelector("#nn-stack li h3 a")));
-  const destination = await browser.evaluate(sel => document.querySelector(sel).href, anchor);
-  await browser.click(anchor);
-  await browser.waitFor(href => location.href === href, {args: [destination]});
-  const history = await browser.send('Page.getNavigationHistory');
-  const previous = history.entries[history.currentIndex - 1];
-  assert.ok(previous, 'navigation has a previous page');
-  await browser.send('Page.navigateToHistoryEntry', {entryId: previous.id});
-  await browser.waitFor(() => Boolean(document.querySelector('#nn-stack li h3 a')));
+  // The back-navigation focus restore comes from the bfcache: Chrome freezes the index
+  // page on click and unfreezes it — activeElement included — on back. Under memory
+  // pressure the entry can be evicted and the back navigation reloads fresh, where focus
+  // is never restored (observed once at load average >4, learnings-a6u4). Detect that via
+  // the navigation type of the document we landed on ('back_forward' means a fresh
+  // history load; a bfcache restore keeps the original 'navigate' entry) and retry the
+  // cycle, so the assertion tests the product rather than the environment.
+  let restored = false;
+  for (let attempt = 0; attempt < 3 && !restored; attempt++) {
+    await browser.goto(url);
+    await browser.waitFor(() => Boolean(document.querySelector("#nn-stack li h3 a")));
+    const destination = await browser.evaluate(sel => document.querySelector(sel).href, anchor);
+    await browser.click(anchor);
+    await browser.waitFor(href => location.href === href, {args: [destination]});
+    const history = await browser.send('Page.getNavigationHistory');
+    const previous = history.entries[history.currentIndex - 1];
+    assert.ok(previous, 'navigation has a previous page');
+    await browser.send('Page.navigateToHistoryEntry', {entryId: previous.id});
+    await browser.waitFor(() => Boolean(document.querySelector('#nn-stack li h3 a')));
+    restored = await browser.evaluate(() =>
+      performance.getEntriesByType('navigation')[0]?.type !== 'back_forward');
+  }
+  assert.ok(restored, 'back navigation restored the page from the bfcache');
   await away();
-  const back = await read(afterClick, 'back-navigation drop to settle');
+  const back = await read(afterClick, 'back-navigation drop to settle', {focused: true});
 
   await browser.goto(url);
   await browser.waitFor(() => Boolean(document.querySelector("#nn-stack li h3 a")));
