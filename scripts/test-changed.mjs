@@ -74,7 +74,12 @@ if (invoked) {
     const tests = chosenBase.fallback ? allTests() : selectTests(changedFiles(chosenBase.ref));
     if (!run) console.log(tests.join('\n'));
     else {
-      const result = spawnSync(process.execPath, ['--test', ...tests], { cwd: root, stdio: 'inherit' });
+      // --test-concurrency=4, matching the `npm test` script in package.json (keep the two in
+      // sync): the runner's default spawns one test file per CPU (8 here), and on a loaded box
+      // that many concurrent chromium launches starved each other past cdp.mjs's 20s DevTools
+      // endpoint deadline — gates failed 6/6 on unchanged trees (learnings-i5kc). Bounding the
+      // fan-out keeps the launch storm at 4 browsers without serializing the fast unit files.
+      const result = spawnSync(process.execPath, ['--test', '--test-concurrency=4', ...tests], { cwd: root, stdio: 'inherit' });
       process.exit(result.status ?? 1);
     }
   } catch (error) { console.error(error.message); process.exit(1); }
