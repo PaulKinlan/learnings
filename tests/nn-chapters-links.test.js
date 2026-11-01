@@ -6,10 +6,30 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import { CHAPTERS, PARTS, readyChapters, labRedirectFor, LAB_ANCHORS } from '../site/neural-networks/chapters.js';
 
 const site = fileURLToPath(new URL('../site/', import.meta.url));
 const nn = join(site, 'neural-networks');
+
+// Inline scripts on a neural-network page. The pages' CSP is `script-src 'self'`, so an inline script
+// is dead weight at best and a silent no-op at worst. Exactly one kind is legitimate: a
+// `<script type="speculationrules">` block, which the spec requires to be inline and which the browser
+// only honours when the page's CSP authorizes its exact content by sha256 (the site/celld pattern,
+// learnings-bjx/q6p). Everything else stays banned, and a speculationrules block without its hash
+// fails here rather than silently never firing.
+const INLINE_SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script>/g;
+
+function inlineScriptViolation(html) {
+  const csp = (html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/) ?? [])[1] ?? '';
+  for (const [, attrs, body] of html.matchAll(INLINE_SCRIPT)) {
+    if (/\bsrc\s*=/.test(attrs)) continue;
+    if (!/type="speculationrules"/.test(attrs)) return 'inline <script> is blocked by script-src';
+    const token = `'sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}'`;
+    if (!csp.includes(token)) return `inline speculationrules needs ${token} in script-src`;
+  }
+  return null;
+}
 
 function htmlFiles(dir) {
   const out = [];
@@ -82,7 +102,8 @@ test('every neural-network page has balanced MathML and no inline script or styl
     const html = readFileSync(file, 'utf8');
     const rel = relative(site, file);
     assert.equal((html.match(/<math[\s>]/g) ?? []).length, (html.match(/<\/math>/g) ?? []).length, `${rel}: unbalanced <math>`);
-    assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/, `${rel}: inline <script> is blocked by script-src 'self'`);
+    const inlineProblem = inlineScriptViolation(html);
+    assert.equal(inlineProblem, null, `${rel}: ${inlineProblem}`);
     assert.doesNotMatch(html, /<style[\s>]/, `${rel}: inline <style> is blocked by style-src 'self'`);
     assert.doesNotMatch(html, /\sstyle="/, `${rel}: style="" attributes are blocked by style-src 'self'`);
   }

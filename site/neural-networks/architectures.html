@@ -3,10 +3,33 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval' 'sha256-NQcCddSiCMa8yNU22dQKAz8ijB9faFLfLY9Dfp7IBCU='; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
   <meta name="referrer" content="no-referrer">
   <title>Architectures: MLPs, CNNs and RNNs | Neural networks</title>
   <meta name="description" content="The same weighted sums, with different assumptions about how information should flow.">
+  <!-- Speculation Rules: the sha256 hash in the CSP script-src above must be regenerated if this block changes
+       (tests/nn-speculation.test.js recomputes it and fails if the two drift apart) -->
+  <script type="speculationrules">
+  {
+    "prefetch": [
+      {
+        "source": "list",
+        "urls": [
+          "loss-and-calibration.html",
+          "index.html"
+        ]
+      }
+    ],
+    "prerender": [
+      {
+        "source": "list",
+        "urls": [
+          "cnn.html"
+        ]
+      }
+    ]
+  }
+  </script>
   <link rel="stylesheet" href="../style.css">
   <link rel="stylesheet" href="./chapter.css">
   <link rel="stylesheet" href="./nn.css">
