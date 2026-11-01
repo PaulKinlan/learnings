@@ -108,16 +108,31 @@ try{
  check('image decision renders gate verdicts',await p.evaluate(()=>document.querySelectorAll('#answers .gate').length>=3));
  check('demo engine renders explicit simulation disclosure badge',await p.evaluate(()=>document.querySelector('#simulation-badge')!==null&&document.querySelector('#simulation-badge').textContent.includes('Notice: UI and schema validation simulation')));
  check('engine notice discloses simulation when client engine selected',await p.evaluate(()=>document.querySelector('#engine-notice')!==null&&document.querySelector('#engine-notice').textContent.includes('Notice: UI and schema validation simulation')));
+ // learnings-zai1: this used to upload a 12-byte text file labelled image/png. Once image-lab
+ // rejected anything it cannot decode (554138d, the payload-budget + decode-probe work) that happy
+ // path could never pass, so the whole gate aborted here. Upload a REAL 1x1 PNG for the happy path,
+ // then assert the rejection explicitly with a deliberately undecodable file - both are now stated
+ // behaviour, so both are checked.
+ const pngBase64='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+ await p.evaluateWithGesture((base64)=>{
+  const bytes=Uint8Array.from(atob(base64),c=>c.charCodeAt(0));
+  const dt=new DataTransfer();
+  dt.items.add(new File([bytes],'test-upload.png',{type:'image/png'}));
+  const input=document.querySelector('#image-file');
+  input.files=dt.files;
+  input.dispatchEvent(new Event('change',{bubbles:true}));
+ },pngBase64);
+ await p.waitFor(()=>document.querySelector('#status').textContent.includes('test-upload.png'));
+ check('file upload updates preview and status',await p.evaluate(()=>document.querySelector('#status').textContent.includes('test-upload.png')));
  await p.evaluate(()=>{
   const dt=new DataTransfer();
-  const file=new File(['dummy-bytes'],'test-upload.png',{type:'image/png'});
-  dt.items.add(file);
+  dt.items.add(new File(['not an image'],'not-an-image.png',{type:'image/png'}));
   const input=document.querySelector('#image-file');
   input.files=dt.files;
   input.dispatchEvent(new Event('change',{bubbles:true}));
  });
- await p.waitFor(()=>document.querySelector('#status').textContent.includes('test-upload.png'));
- check('file upload updates preview and status',await p.evaluate(()=>document.querySelector('#status').textContent.includes('test-upload.png')));
+ await p.waitFor(()=>/could not be decoded|Image rejected/.test(document.querySelector('#status').textContent));
+ check('an undecodable upload is rejected with a reason instead of accepted',await p.evaluate(()=>/could not be decoded|Image rejected/.test(document.querySelector('#status').textContent)));
  await p.type('#bench-search','Qwen');
  check('benchmark table search filters systems',await p.evaluate(()=>document.querySelectorAll('#bench-table-container tbody tr').length<50&&document.querySelectorAll('#bench-table-container tbody tr').length>=5));
  await p.screenshot(out+'/desktop-image-lab.png',{fullPage:true});
