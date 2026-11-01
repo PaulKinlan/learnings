@@ -46,10 +46,29 @@ export function getCandidateBrowsers() {
 }
 
 // A browser gate on a shared VM must clean up: a leaked profile blocks the next lane.
+//
+// The `ps` spawn is a means to that end, not the assertion itself: on a loaded box (observed at
+// load average ~6.5) fork+exec of `ps` exceeded the old 1.5s timeout and the ETIMEDOUT threw
+// straight out of close(), failing gates for changes that touch no browser code at all
+// (learnings-p564). A slow process listing is therefore retried like the transient state it is:
+// a generous per-spawn timeout, and repeated spawn failures only become an error — naming the
+// real cause — once the process list cannot be obtained at all.
 export async function assertNoBrowserOrphans(profile) {
   const deadline = Date.now() + 500;
+  let spawnFailures = 0;
   while (true) {
-    const processes = execFileSync("ps", ["-eo", "pid=,stat=,args="], { encoding: "utf8", timeout: 1500 });
+    let processes;
+    try {
+      processes = execFileSync("ps", ["-eo", "pid=,stat=,args="], { encoding: "utf8", timeout: 10000 });
+      spawnFailures = 0;
+    } catch (error) {
+      spawnFailures += 1;
+      if (spawnFailures >= 3) {
+        throw new Error(`could not list processes to check for browser orphans for profile ${profile} after ${spawnFailures} ps spawns: ${error.message}`);
+      }
+      await sleep(200);
+      continue;
+    }
     const leftovers = processes.split("\n").filter((line) => {
       const match = line.trim().match(/^(\d+)\s+(\S+)\s+(.*)$/);
       if (!match || match[2].startsWith("Z")) return false;
