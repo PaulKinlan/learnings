@@ -83,6 +83,10 @@ test('SIGTERM interrupts a runner and removes its browser and profile', {skip: !
     setInterval(() => {}, 1000);
   `], {stdio: ['ignore', 'pipe', 'pipe'], detached: true});
   let profile;
+  // Hoisted out of the promise so stdout keeps accumulating after the launch bound trips: a
+  // late PROFILE= line is then still enough for the finally block to identify and reap the
+  // runner's browser (learnings-yci0).
+  let output = '';
   try {
     profile = await new Promise((resolve, reject) => {
       // 90s: launch() retries a failed startup once (learnings-gib), so a slow-start box can
@@ -91,7 +95,6 @@ test('SIGTERM interrupts a runner and removes its browser and profile', {skip: !
       // failing gates for changes that touch nothing here (learnings-p564). A runner that is
       // truly hung still trips this bound; the suite's own gate bound is far larger.
       const timer = setTimeout(() => reject(new Error('runner did not launch')), 90000);
-      let output = '';
       runner.stdout.on('data', (chunk) => {
         output += chunk;
         const found = output.match(/PROFILE=(\/tmp\/voicebox-cdp-[^\s]+)/);
@@ -107,7 +110,22 @@ test('SIGTERM interrupts a runner and removes its browser and profile', {skip: !
     assert.equal(existsSync(profile), false);
     console.log(`PASS  SIGTERM: no browser processes or profile ${profile}`);
   } finally {
+    // SIGTERM before SIGKILL: the runner installs cdp.mjs's signal handlers, whose close()
+    // kills the browser's process group and removes the profile — the only cleanup that works
+    // when PROFILE= never reached this test and the profile is unknown here. The old
+    // SIGKILL-only finally orphaned the detached chrome group (killGroup cannot reach it:
+    // chrome is its own group) until the fleet reaper's 45-minute browser limit, ~1.2GB per
+    // leak (observed: profile voicebox-cdp-1I0shL, learnings-yci0). A runner wedged past
+    // waitForExit's bound still gets SIGKILLed, and a late PROFILE= is reaped below.
+    if (runner.exitCode === null && runner.signalCode === null) {
+      try { runner.kill('SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+      await waitForExit(runner).catch(() => {});
+    }
     killGroup(runner);
+    if (!profile) {
+      const late = output.match(/PROFILE=(\/tmp\/voicebox-cdp-[^\s]+)/);
+      if (late) profile = late[1];
+    }
     if (profile) {
       reapTestProfile(profile);
       rmSync(profile, {recursive: true, force: true});
