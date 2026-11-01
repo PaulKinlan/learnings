@@ -248,13 +248,20 @@ function maskHtmlKeepingInlineScripts(raw) {
         j++;
       }
       const bodyStart = Math.min(j + 1, n);
+      // No closing tag: the body runs to EOF — which is what a browser does with an unclosed
+      // <script> (it consumes the rest of the document), so scanning it as JS is the
+      // fail-closed, parser-faithful reading; a page with an unclosed script is broken anyway
+      // (learnings-r7a7 reviewed this edge).
       const close = raw.slice(bodyStart).search(/<\/script[\s>]/i);
       const bodyEnd = (close === -1) ? n : bodyStart + close;
       const gt = (close === -1) ? -1 : raw.indexOf('>', bodyEnd);
       const closeTagEnd = (gt === -1) ? n : gt + 1;
       const typeMatch = attrs.match(/\btype\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
       const type = typeMatch ? (typeMatch[1] ?? typeMatch[2] ?? typeMatch[3] ?? '').trim().toLowerCase() : '';
-      const isExecutable = !/\bsrc\s*=/i.test(attrs) && JS_SCRIPT_TYPES.has(type);
+      // (?:^|\s) anchor, not \b: \bsrc also matched data-src=, which would blank the body of
+      // an executable inline script that merely carries a data-src attribute — fail-open
+      // (learnings-r7a7).
+      const isExecutable = !/(?:^|\s)src\s*=/i.test(attrs) && JS_SCRIPT_TYPES.has(type);
       parts.push(blank(raw.slice(i, bodyStart)));
       parts.push(isExecutable ? raw.slice(bodyStart, bodyEnd) : blank(raw.slice(bodyStart, bodyEnd)));
       parts.push(blank(raw.slice(bodyEnd, closeTagEnd)));
@@ -367,17 +374,25 @@ test('comments and string literals mentioning sinks are ignored', () => {
 });
 
 test('inline <script> bodies in HTML are scanned; markup and data blocks are not (learnings-0ob)', () => {
-  // The two planted sinks: an interpolated innerHTML assignment in a classic inline script
-  // (line 16) and document.write in a module inline script (line 19). The commented-out sink,
-  // the prose/<pre> listing mentions, the speculationrules JSON, the ld+json block and the
-  // external src script in the same fixture must not produce hits — the masker blanks them.
+  // The three planted hits: a document.write in a script carrying data-src (line 11 — data-src
+  // is NOT src, so the body is executable and must hit: pinning the attribute-boundary anchor,
+  // learnings-r7a7), an interpolated innerHTML assignment in a classic inline script (line 18),
+  // and document.write in a module inline script (line 21). The exclusion controls are
+  // DISCRIMINATING (learnings-r7a7): the external-src script carries a sink-looking body
+  // and the text/template block carries unquoted sink text, so if the masker's guards broke
+  // (e.g. isExecutable forced true) either would produce a hit and this list would move —
+  // an empty-bodied src control only proved that string-blanking hides things, not that the
+  // masker excludes. The commented-out sink, the prose/<pre> listing mentions, the
+  // speculationrules JSON and the ld+json block must not produce hits either.
   const failures = scanFile('./tests/fixtures/lint-inline.html');
   assert.deepStrictEqual(
     failures.map((f) => f.replace(/ uses DOM-injection sink.*/, '')),
-    ['File ./tests/fixtures/lint-inline.html:16', 'File ./tests/fixtures/lint-inline.html:19'],
+    ['File ./tests/fixtures/lint-inline.html:11', 'File ./tests/fixtures/lint-inline.html:18',
+      'File ./tests/fixtures/lint-inline.html:21'],
     `exactly the planted inline-script sinks, at their real line numbers, got:\n${failures.join('\n')}`);
-  assert.ok(failures[0].includes('innerHTML assignment'), 'the innerHTML hit names its construct');
-  assert.ok(failures[1].includes('document.write'), 'the document.write hit names its construct');
+  assert.ok(failures[0].includes('document.write'), 'the data-src script body is executable and hits');
+  assert.ok(failures[1].includes('innerHTML assignment'), 'the innerHTML hit names its construct');
+  assert.ok(failures[2].includes('document.write'), 'the document.write hit names its construct');
   // And the published pages that motivated the coverage are actually in the walk.
   const walked = SOURCE_ROOTS.flatMap((root) => findFiles(root, SCAN_EXTENSIONS));
   for (const expected of ['site/celld/index.html', 'site/neural-networks/backends/javascript.html']) {
