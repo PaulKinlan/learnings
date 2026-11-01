@@ -141,6 +141,19 @@ export async function boundedArtifactRead(url, {
     ownCap(caps, labelBasename) ??
     ownCap(caps, basename) ??
     defaultMaxBytes;
+  // Fail closed: a read whose byte cap resolves to nothing must not proceed unbounded
+  // (tm-artifact-cap-fails-open, learnings-8bpy). explicitCap already rejects an invalid
+  // EXPLICIT override and ownCap skips invalid manifest entries, but the final resolved limit
+  // was never checked: with limit === null both size guards below (`limit != null && ...`)
+  // were skipped and the body streamed into memory with no bound at all. Every current caller
+  // resolves a cap (engine defaults, manifest caps, the sums fetch's explicit maxBytes), so
+  // this only turns a FUTURE cap-less caller into a named error instead of a silent unbounded
+  // buffer.
+  if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) {
+    throw new Error(
+      `${prefix}: no byte cap resolved for ${label} — pass maxBytes, a matching caps entry, or a positive defaultMaxBytes; refusing to read unbounded`,
+    );
+  }
 
   const controller = new AbortController();
   let received = 0;

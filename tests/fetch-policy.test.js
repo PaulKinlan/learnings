@@ -10,6 +10,7 @@ import {
   artifactFetchOptions,
   artifactHostAllowed,
   assertArtifactResponse,
+  boundedArtifactRead,
 } from "../site/decision-models/fetch-policy.mjs";
 import { fetchVerified, loadKev } from "../site/decision-models/kev-engine.js";
 import { PROVIDER_FETCH_OPTIONS } from "../site/decision-models/core.js";
@@ -342,4 +343,37 @@ test("loadKev threads its timeoutMs to the artifact downloads (learnings-604)", 
     stalled.closeAllConnections?.();
     stalled.close();
   }
+});
+
+// learnings-8bpy (tm-artifact-cap-fails-open): the resolved byte cap is validated, so a caller
+// that supplies no maxBytes, no matching caps entry and no defaultMaxBytes fails CLOSED with a
+// named error instead of streaming unbounded. The guard runs before any fetch, so an
+// unreachable URL proves no network access happened.
+test("boundedArtifactRead refuses to read when no byte cap resolves", async () => {
+  await assert.rejects(
+    () => boundedArtifactRead("https://hf.co/some/artifact.bin"),
+    /no byte cap resolved for https:\/\/hf\.co\/some\/artifact\.bin/,
+    "a cap-less read must fail closed before fetching",
+  );
+  await assert.rejects(
+    () => boundedArtifactRead("https://hf.co/some/artifact.bin", { defaultMaxBytes: 0 }),
+    /no byte cap resolved/,
+    "a non-positive default cap must fail closed too",
+  );
+  await assert.rejects(
+    () => boundedArtifactRead("https://hf.co/some/artifact.bin", { caps: { "artifact.bin": 0 } }),
+    /no byte cap resolved/,
+    "an invalid caps entry resolves to nothing and must fail closed",
+  );
+});
+
+test("boundedArtifactRead with a positive default cap proceeds past the guard to the fetch", async () => {
+  // Port 1 refuses instantly: the point is the error is the FETCH failure, not the cap guard.
+  await assert.rejects(
+    () => boundedArtifactRead("http://127.0.0.1:1/artifact.bin", { defaultMaxBytes: 1024 }),
+    (error) => {
+      assert.doesNotMatch(error.message, /no byte cap resolved/, "a resolved cap must not trip the guard");
+      return true;
+    },
+  );
 });
