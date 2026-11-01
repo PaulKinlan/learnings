@@ -85,10 +85,12 @@ test('SIGTERM interrupts a runner and removes its browser and profile', {skip: !
   let profile;
   try {
     profile = await new Promise((resolve, reject) => {
-      // 45s: launch() now retries a failed startup once (learnings-gib), so a slow-start box
-      // can legitimately take two 20s endpoint bounds before the runner reports its profile.
-      // A runner that is truly hung still trips this bound.
-      const timer = setTimeout(() => reject(new Error('runner did not launch')), 45000);
+      // 90s: launch() retries a failed startup once (learnings-gib), so a slow-start box can
+      // legitimately take two 20s endpoint bounds before the runner reports its profile — and
+      // under fleet load (observed at load average ~10) even that exceeded the old 45s bound,
+      // failing gates for changes that touch nothing here (learnings-p564). A runner that is
+      // truly hung still trips this bound; the suite's own gate bound is far larger.
+      const timer = setTimeout(() => reject(new Error('runner did not launch')), 90000);
       let output = '';
       runner.stdout.on('data', (chunk) => {
         output += chunk;

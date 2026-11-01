@@ -11,6 +11,11 @@ test('attention playground roving tabindex, arrow navigation, and hover status s
     await page.goto(url + 'neural-networks/transformer.html');
     await page.waitFor(() => document.querySelector('[data-widget="attention"] table[data-heatmap]') !== null, {
       label: 'attention playground heatmap table to mount',
+      // 60s: the default 15s bound died under fleet load (observed 60.8s into the gate with
+      // launch() already retrying, load average ~10) — the widget mounts fine, the box is just
+      // slow (learnings-p564). waitFor polls for real readiness, so this is a ceiling, not a
+      // sleep: a healthy box still proceeds the moment the table exists.
+      timeout: 60000,
     });
 
     const getGridState = () => page.evaluate(() => {
