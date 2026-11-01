@@ -100,12 +100,54 @@ export function loopbackEndpoint(value) {
 // with it. Spread this into every provider fetch init (post() below, the playground's hosted
 // Jev call, image-lab's hosted TypeSafe call) so the policy has one source.
 export const PROVIDER_FETCH_OPTIONS = { redirect: 'error', credentials: 'omit', referrerPolicy: 'no-referrer' };
+// INV-BOUNDED-BODY: a provider or loopback response is read through a bounded stream BEFORE it
+// is parsed. response.json() materialises the entire body first, so a runaway or hostile
+// endpoint could exhaust the tab before validateAnswers/validateSpec ever saw the payload
+// (tm-provider-response-unbounded-read, learnings-is49). Same budget class as the image lab's
+// IMAGE_MAX_BYTES. Exported for tests: the bound is the whole of this defence, and a bound no
+// test exercises is a bound that silently grows.
+export const RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
+export async function readJSONBounded(response, maxBytes = RESPONSE_MAX_BYTES) {
+  // headers is optional-chained because the repo's mock-transport tests hand post() plain
+  // {ok, json()} objects; a real fetch Response always has headers, and a response with no
+  // readable body cannot smuggle bytes past the bound (it takes the json() fallback below).
+  const declared = Number(response.headers?.get?.('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new Error(`Provider response declares ${declared} bytes, over the ${maxBytes}-byte budget. Refused before reading. No automatic retry.`);
+  }
+  if (!response.body) return response.json();
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        // Cancel before throwing: the sender stops producing, nothing more is buffered.
+        await reader.cancel();
+        throw new Error(`Provider response exceeded the ${maxBytes}-byte budget after ${total} bytes. Refused before parsing. No automatic retry.`);
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { merged.set(chunk, offset); offset += chunk.byteLength; }
+  // Multibyte characters split across chunks decode correctly from the merged buffer, exactly
+  // as response.json() would have; malformed JSON still throws a SyntaxError.
+  return JSON.parse(new TextDecoder().decode(merged));
+}
 async function post(url, headers, body, signal) {
   let response;
   try { response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body),signal,...PROVIDER_FETCH_OPTIONS}); }
   catch(e) { if(signal?.aborted) throw new Error('Request cancelled or timed out. No automatic retry.'); throw new Error('Connection failed or browser CORS refused. Jev rejected the Pages origin in our preflight check. Serve locally and select the optional relay for hosted APIs; for Kev check the server and local-network permission. No automatic retry.'); }
   if(!response.ok) throw new Error(`Provider returned HTTP ${response.status}. Check access, model name or rate limits. No automatic retry.`);
-  return response.json();
+  return readJSONBounded(response);
 }
 function providerURL(provider, settings, direct) {
   if(settings.transport!=='relay') return direct;

@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {validateSpec,validateAnswers,gate,loopbackEndpoint,illustrative,trialMetrics,requestFor,decide,generate,mockDecide,PROVIDER_FETCH_OPTIONS} from '../site/decision-models/core.js';
+import {readFileSync} from 'node:fs';
+import {validateSpec,validateAnswers,gate,loopbackEndpoint,illustrative,trialMetrics,requestFor,decide,generate,mockDecide,PROVIDER_FETCH_OPTIONS,readJSONBounded,RESPONSE_MAX_BYTES} from '../site/decision-models/core.js';
 import {examples} from '../site/decision-models/examples.js';
 for(const [name,s] of Object.entries(examples))test(`schema and synthetic roundtrip: ${name}`,()=>{assert.deepEqual(validateSpec(s),s);validateAnswers(illustrative(s).data,s.questions);});
 test('generated executable fields and prototype IDs are refused',()=>{assert.throws(()=>validateSpec({...examples.tools,script:'alert(1)'}));assert.throws(()=>validateSpec({...examples.tools,questions:JSON.parse('{"__proto__":{"type":"noul","instructions":"test"}}')}));});
@@ -46,4 +47,41 @@ test('__MOCK_DECIDE__ seam is honoured on loopback and dead off-loopback (learni
   if(saved)Object.defineProperty(globalThis,'location',saved);else delete globalThis.location;
  }
  assert.equal(mockDecide(),null,'no seam installed -> no mock');
+});
+
+// learnings-is49 (tm-provider-response-unbounded-read): provider/loopback bodies are read
+// through a bounded stream BEFORE parsing. The bound is pinned from four sides: an ordinary
+// body parses (with a multibyte character split across chunks, proving the merged-buffer
+// decode), an over-budget body is refused mid-stream with the reader CANCELLED instead of
+// drained, a declared Content-Length over budget is refused before a byte is read, and a
+// source pin keeps post() from silently regressing to response.json().
+const streamOf=(chunks)=>new ReadableStream({start(c){for(const b of chunks)c.enqueue(b);c.close();}});
+test('readJSONBounded parses an ordinary body with a multibyte char split across chunks',async()=>{
+ const payload=JSON.stringify({answers:{tool:{choice:'café ✓'}}});
+ const bytes=new TextEncoder().encode(payload);
+ const at=bytes.indexOf(0xC3)+1; // inside the two-byte é, so the chunks alone are invalid UTF-8
+ const parsed=await readJSONBounded(new Response(streamOf([bytes.slice(0,at),bytes.slice(at)])));
+ assert.deepEqual(parsed,JSON.parse(payload));
+});
+test('readJSONBounded refuses an over-budget body and cancels the stream instead of draining it',async()=>{
+ let produced=0;
+ const stream=new ReadableStream({pull(c){if(produced>=64*1024){c.close();return;}produced+=1024;c.enqueue(new Uint8Array(1024).fill(97));}});
+ await assert.rejects(()=>readJSONBounded(new Response(stream),4096),/exceeded the 4096-byte budget after \d+ bytes/);
+ assert.ok(produced<=8192,`the reader cancelled early instead of draining the sender: produced ${produced} of 65536`);
+});
+test('readJSONBounded refuses a declared Content-Length over budget without reading a byte',async()=>{
+ // A constructed Response cannot carry this case: undici drops a hand-set content-length on a
+ // stream body (it cannot know the length), so the declared-length branch is exercised on a
+ // Response-shaped object with a real Headers and a POISON body — Node primes a ReadableStream's
+ // pull() even with no consumer, so a pull-tracked stream cannot prove the body went unread;
+ // a getReader() that fails the test can.
+ const shaped={headers:new Headers({'content-length':String(2*RESPONSE_MAX_BYTES)}),
+   body:{getReader:()=>assert.fail('the body must not be read when the declared length is over budget')},
+   json:()=>assert.fail('json() fallback must not run')};
+ await assert.rejects(()=>readJSONBounded(shaped,RESPONSE_MAX_BYTES),/declares \d+ bytes, over the \d+-byte budget/);
+});
+test('post() reads through the bound, and the shipped bound is 8 MiB',()=>{
+ assert.equal(RESPONSE_MAX_BYTES,8*1024*1024);
+ const src=readFileSync(new URL('../site/decision-models/core.js',import.meta.url),'utf8');
+ assert.match(src,/return readJSONBounded\(response\);/,'post() must hand the response to the bounded reader');
 });
