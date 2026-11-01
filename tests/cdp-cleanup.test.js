@@ -28,11 +28,45 @@ const reapTestProfile = (profile) => {
   }
 };
 
-test('cdp close removes its browser process group and temporary profile', {skip: !binary}, async () => {
+// learnings-19b8: page.on() is checked here rather than in a test of its own on purpose — it needs
+// a live browser, and a second launch would add ~5s (up to ~20s under fleet load) to every full
+// gate run for assertions that fit in a suite that already has one open.
+test('cdp close removes its browser process group and temporary profile; page.on delivers this page\'s events', {skip: !binary}, async () => {
   const page = await launch();
   const {profile} = page;
   try {
     assert.ok(existsSync(profile));
+    const seen = [];
+    const unsubscribe = page.on('Runtime.consoleAPICalled', params => seen.push(params));
+    await page.evaluate(() => { console.log('first'); });
+    for (let i = 0; i < 40 && seen.length === 0; i++) await new Promise(r => setTimeout(r, 25));
+    assert.equal(seen.length, 1, 'the handler receives the event this page produced');
+    assert.equal(seen[0].type, 'log', 'and the params, not the envelope');
+    assert.equal(seen[0].args[0].value, 'first');
+
+    unsubscribe();
+    await page.evaluate(() => { console.log('second'); });
+    await new Promise(r => setTimeout(r, 120));
+    assert.equal(seen.length, 1, 'no delivery after unsubscribe');
+
+    // A handler that throws must not wedge the driver: a throw escaping the socket listener would
+    // take reply routing (every pending send) with it, so it is reported as a warning instead.
+    const warnings = [];
+    const onWarning = warning => warnings.push(warning.message);
+    process.on('warning', onWarning);
+    let calls = 0;
+    const off = page.on('Runtime.consoleAPICalled', () => { calls++; throw new Error('probe bug'); });
+    try {
+      await page.evaluate(() => { console.log('third'); });
+      for (let i = 0; i < 40 && warnings.length === 0; i++) await new Promise(r => setTimeout(r, 25));
+      assert.equal(calls, 1, 'the throwing handler ran once');
+      assert.equal(warnings.length, 1, 'the handler failure is reported, not swallowed');
+      assert.match(warnings[0], /Runtime\.consoleAPICalled.*probe bug/);
+      assert.equal(await page.evaluate(() => 1 + 1), 2, 'the driver still answers');
+    } finally {
+      off();
+      process.removeListener('warning', onWarning);
+    }
   } finally {
     await page.close();
   }
