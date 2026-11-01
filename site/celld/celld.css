@@ -28,6 +28,13 @@
   border-radius: 8px;
   padding: 2rem;
   margin-bottom: 2.5rem;
+  /* A size container, so the two-column .celld-grid inside reacts to THIS box rather than to the
+     viewport (learnings-wn6). The section is inset by main's page padding and reused in narrower
+     places, so the viewport width said nothing useful about the space the grid actually had: the
+     columns were squeezing before the media query fired. `inline-size` (width only) is the right
+     containment here - it needs no explicit height, unlike `size`. */
+  container-type: inline-size;
+  container-name: celld;
 }
 
 .celld-section h2 {
@@ -165,7 +172,14 @@
   margin-top: 0;
 }
 
-@media (max-width: 860px) {
+/* The component's own width, not the viewport's (learnings-wn6). The threshold is 760px, not the
+   viewport 860px the media query used: the section's CONTENT box is what the grid gets, and it is
+   much narrower than the viewport (measured at 1440px viewport the content box is 843px, at 1100px
+   it is 695px, at 900px it is 511px because the page's own reading column takes 190px + gap). At
+   860px the grid would have stacked at EVERY desktop width - a visible regression - while 760px
+   keeps the two-column layout at the 843px it has always had, and stacks the 695/603/511 cases
+   that were genuinely squeezed before. 760 also matches the one breakpoint site/style.css uses. */
+@container celld (max-width: 760px) {
   .celld-grid {
     grid-template-columns: 1fr;
   }

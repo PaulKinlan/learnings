@@ -139,3 +139,22 @@ test('celld speculationrules script is permitted by CSP and initiates prefetch r
     server.close();
   }
 });
+
+// learnings-wn6: .celld-grid collapses to one column when ITS SPACE is too narrow, not when the
+// viewport is. The page's reading column steals 190px plus a gap, so at a 900px viewport the grid
+// was squeezing two columns into 511px while the viewport media query still said "wide". This pins
+// the MECHANISM, not the pixel value: the section must declare itself a size container and the
+// collapse must be a container query, so a future edit cannot quietly restore a viewport query.
+test('celld grid collapse is a container query on its own section, not a viewport media query', () => {
+  const css = readFileSync(new URL('../site/celld/celld.css', import.meta.url), 'utf8');
+  const section = css.match(/\.celld-section\s*\{[^}]*\}/)?.[0] ?? '';
+
+  assert.match(section, /container-type:\s*inline-size/, '.celld-section must be an inline-size container');
+  assert.match(section, /container-name:\s*celld/, '.celld-section must name its container so the query cannot match an unrelated one');
+  assert.match(
+    css,
+    /@container\s+celld\s*\(max-width:\s*\d+px\)\s*\{\s*\.celld-grid\s*\{[^}]*grid-template-columns:\s*1fr/,
+    'the .celld-grid collapse must be a container query on the celld container'
+  );
+  assert.doesNotMatch(css, /@media[^{]*\{[^}]*\.celld-grid/, 'no viewport media query may own the .celld-grid collapse');
+});
