@@ -52,14 +52,19 @@ async function read(target, label, {focused = false} = {}) {
     return settled(second)
       ? { settled: true, observed: second }
       : { settled: false, observed: second, restarted: true };
-  }, { args: [selector, target, focused], timeout: 10000, label, until: (r) => r?.settled === true })).observed;
+  }, { args: [selector, target, focused], timeout: 30000, label, until: (r) => r?.settled === true })).observed;
 }
 async function away() {
   await browser.send('Input.dispatchMouseEvent', {type: 'mouseMoved', x: 0, y: 0});
 }
 try {
   await browser.goto(url);
-  await browser.waitFor(() => Boolean(document.querySelector('#nn-stack li h3 a')));
+  // 60s bounds with labels on every page wait below: the 15s defaults died under fleet load
+  // (observed twice at load average ~10-12, gates 5fc5be1a and a547419d) as an anonymous
+  // 'timed out waiting for condition'. waitFor polls, so a healthy box loses nothing
+  // (learnings-p564).
+  await browser.waitFor(() => Boolean(document.querySelector('#nn-stack li h3 a')),
+    {label: 'initial load: nn-stack link to exist', timeout: 60000});
   await away();
   let found = false;
   for (let i = 0; i < 90; i++) {
@@ -74,7 +79,8 @@ try {
   const keyboard = await read(lifted, 'keyboard focus lift to settle');
 
   await browser.goto(url);
-  await browser.waitFor(() => Boolean(document.querySelector("#nn-stack li h3 a")));
+  await browser.waitFor(() => Boolean(document.querySelector("#nn-stack li h3 a")),
+    {label: 'click block: nn-stack link to exist', timeout: 60000});
   await browser.evaluate(() => document.addEventListener('click', event => {
     event.preventDefault();
     event.stopPropagation();
@@ -93,15 +99,18 @@ try {
   let restored = false;
   for (let attempt = 0; attempt < 3 && !restored; attempt++) {
     await browser.goto(url);
-    await browser.waitFor(() => Boolean(document.querySelector("#nn-stack li h3 a")));
+    await browser.waitFor(() => Boolean(document.querySelector("#nn-stack li h3 a")),
+      {label: 'navigation block: nn-stack link to exist', timeout: 60000});
     const destination = await browser.evaluate(sel => document.querySelector(sel).href, anchor);
     await browser.click(anchor);
-    await browser.waitFor(href => location.href === href, {args: [destination]});
+    await browser.waitFor(href => location.href === href,
+      {args: [destination], label: 'click navigates to the chapter', timeout: 60000});
     const history = await browser.send('Page.getNavigationHistory');
     const previous = history.entries[history.currentIndex - 1];
     assert.ok(previous, 'navigation has a previous page');
     await browser.send('Page.navigateToHistoryEntry', {entryId: previous.id});
-    await browser.waitFor(() => Boolean(document.querySelector('#nn-stack li h3 a')));
+    await browser.waitFor(() => Boolean(document.querySelector('#nn-stack li h3 a')),
+      {label: 'back navigation: nn-stack link to exist', timeout: 60000});
     restored = await browser.evaluate(() =>
       performance.getEntriesByType('navigation')[0]?.type !== 'back_forward');
   }
@@ -110,7 +119,8 @@ try {
   const back = await read(afterClick, 'back-navigation drop to settle', {focused: true});
 
   await browser.goto(url);
-  await browser.waitFor(() => Boolean(document.querySelector("#nn-stack li h3 a")));
+  await browser.waitFor(() => Boolean(document.querySelector("#nn-stack li h3 a")),
+    {label: 'hover block: nn-stack link to exist', timeout: 60000});
   await browser.evaluate(sel => document.querySelector(sel).scrollIntoView({block: 'center'}), anchor);
   const position = await browser.evaluate(sel => {
     const b = document.querySelector(sel).getBoundingClientRect();
