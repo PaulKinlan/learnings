@@ -6,7 +6,9 @@
 <script type="speculationrules">
 {"prefetch": [{"source": "document", "urls": ["/next.html?x=.innerHTML="], "eagerness": "moderate"}]}
 </script>
-<script type="module" src="./fixtures-do-not-exist.js"></script>
+<script type="module" src="./fixtures-do-not-exist.js">target.innerHTML = userHtml;</script>
+<script type="text/template">target.innerHTML = name;</script>
+<script data-src="./unused.js">document.write(name);</script>
 </head>
 <body>
 <p>The gate must not flag prose or listings: <code>el.insertAdjacentHTML('beforeend', row)</code>.</p>
