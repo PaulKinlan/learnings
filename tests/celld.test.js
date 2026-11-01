@@ -119,13 +119,22 @@ test('celld speculationrules script is permitted by CSP and initiates prefetch r
     });
 
     await page.goto(url + 'celld/index.html');
-    await page.waitFor(() => document.querySelector('.celld-hero'));
+    await page.waitFor(() => document.querySelector('.celld-hero'),
+      { label: 'celld hero to render', timeout: 60000 });
 
-    // Wait for speculation rules to fire prefetch requests
-    const deadline = Date.now() + 2000;
-    while (Date.now() < deadline && prefetchedPaths.size < 4) {
+    // Wait for the speculation rules to fire all four prefetch requests. Prefetches are
+    // best-effort and low-priority, so the old fixed 2000ms window flaked under fleet load
+    // (1/460 on tree ffa8d9e, learnings-xjaf): poll the full expected SET with a labeled 60s
+    // ceiling instead. The assertion stays real — a genuinely absent prefetch still fails when
+    // the ceiling expires, and the failure names both the missing and the observed paths.
+    const expectedPrefetches = ['/neural-networks/', '/decision-models/', '/opt-chronicles/', '/index.html'];
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline && !expectedPrefetches.every((p) => prefetchedPaths.has(p))) {
       await new Promise((r) => setTimeout(r, 50));
     }
+    const missingPrefetches = expectedPrefetches.filter((p) => !prefetchedPaths.has(p));
+    assert.deepEqual(missingPrefetches, [],
+      `timed out waiting for celld speculation-rules prefetches; missing ${JSON.stringify(missingPrefetches)}, observed ${JSON.stringify([...prefetchedPaths])}`);
 
     const violations = await page.evaluate(() => window.__cspViolations);
     assert.deepEqual(violations, [], 'speculationrules script must not trigger CSP violations');
