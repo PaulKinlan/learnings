@@ -114,6 +114,9 @@ try{
  // then assert the rejection explicitly with a deliberately undecodable file - both are now stated
  // behaviour, so both are checked.
  const pngBase64='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+ // Captured BEFORE the upload: the preset preview is 600x380, so "replaced and decoded as the 1x1 we
+ // uploaded" cannot be satisfied by the image that was already on screen (learnings-aobu).
+ const previewBefore=await p.evaluate(()=>{const i=document.querySelector('#preview-image');return {src:i.src,w:i.naturalWidth,h:i.naturalHeight};});
  await p.evaluateWithGesture((base64)=>{
   const bytes=Uint8Array.from(atob(base64),c=>c.charCodeAt(0));
   const dt=new DataTransfer();
@@ -122,8 +125,16 @@ try{
   input.files=dt.files;
   input.dispatchEvent(new Event('change',{bubbles:true}));
  },pngBase64);
- await p.waitFor(()=>document.querySelector('#status').textContent.includes('test-upload.png'));
- check('file upload updates preview and status',await p.evaluate(()=>document.querySelector('#status').textContent.includes('test-upload.png')));
+ await p.waitFor(()=>document.querySelector('#status').textContent.includes('test-upload.png')&&document.querySelector('#preview-image').naturalWidth===1);
+ // learnings-aobu: this check used to read ONLY #status, so a stale or broken preview still passed -
+ // the very regression the name promises to catch. It now reads the preview it claims to check: the
+ // upload must REPLACE the preset image (different src) and DECODE as the 1x1 PNG that was uploaded,
+ // which the 600x380 preset cannot satisfy by accident.
+ check('file upload updates preview and status',await p.evaluate((before)=>{
+  const status=document.querySelector('#status').textContent.includes('test-upload.png');
+  const img=document.querySelector('#preview-image');
+  return status && img.src!==before.src && img.naturalWidth===1 && img.naturalHeight===1;
+ },previewBefore));
  await p.evaluate(()=>{
   const dt=new DataTransfer();
   dt.items.add(new File(['not an image'],'not-an-image.png',{type:'image/png'}));
@@ -132,7 +143,11 @@ try{
   input.dispatchEvent(new Event('change',{bubbles:true}));
  });
  await p.waitFor(()=>/could not be decoded|Image rejected/.test(document.querySelector('#status').textContent));
- check('an undecodable upload is rejected with a reason instead of accepted',await p.evaluate(()=>/could not be decoded|Image rejected/.test(document.querySelector('#status').textContent)));
+ // A rejection must not install the bad file either: the preview stays the 1x1 that was accepted.
+ check('an undecodable upload is rejected with a reason and leaves the preview untouched',await p.evaluate(()=>{
+  const img=document.querySelector('#preview-image');
+  return /could not be decoded|Image rejected/.test(document.querySelector('#status').textContent) && img.naturalWidth===1 && img.naturalHeight===1;
+ }));
  await p.type('#bench-search','Qwen');
  check('benchmark table search filters systems',await p.evaluate(()=>document.querySelectorAll('#bench-table-container tbody tr').length<50&&document.querySelectorAll('#bench-table-container tbody tr').length>=5));
  await p.screenshot(out+'/desktop-image-lab.png',{fullPage:true});
