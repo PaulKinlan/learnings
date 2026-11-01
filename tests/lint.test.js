@@ -8,6 +8,10 @@ import path from 'node:path';
 // dropping '.mjs' here fails the suite.
 const SCAN_EXTENSIONS = ['.js', '.mjs'];
 
+// Property names whose COMPUTED form (`el['name'] = x`) is a sink: kept verbatim by the blanking
+// pass so the computed patterns below can see them (learnings-blv).
+const COMPUTED_SINK_PROPERTIES = new Set(['innerHTML', 'outerHTML']);
+
 // The only `notice.innerHTML` form this allowance admits is a constant-only,
 // single-quoted, no-interpolation assignment, and only inside image-lab.js.
 const NOTICE_CONSTANT_LINE = /notice\.innerHTML\s*=\s*'[^']*'\s*;?\s*$/;
@@ -37,8 +41,9 @@ function findFiles(dir, exts) {
 
 // Blanks line comments, block comments and string/template literals while keeping
 // newlines aligned, so per-line sink matching and `file:line` reporting stay exact.
-// The only literal kept verbatim is a bare 'innerHTML'/"innerHTML"/`innerHTML`
-// property name, because `el["innerHTML"] = x` is itself a real sink.
+// The only literals kept verbatim are bare property names that ARE sinks when computed —
+// 'innerHTML' and 'outerHTML' — because `el["innerHTML"] = x` and `el['outerHTML'] = x` are real
+// sinks that a pattern over the blanked line could not see (learnings-blv).
 function stripCommentsAndStrings(source) {
   let out = '';
   let i = 0;
@@ -75,7 +80,7 @@ function stripCommentsAndStrings(source) {
         i++;
       }
       if (i < n) i++; // closing quote
-      out += (content === 'innerHTML') ? source.slice(start, i) : ' '.repeat(i - start);
+      out += COMPUTED_SINK_PROPERTIES.has(content) ? source.slice(start, i) : ' '.repeat(i - start);
       continue;
     }
 
@@ -90,7 +95,7 @@ function stripCommentsAndStrings(source) {
         i++;
       }
       if (i < n) i++; // closing backtick
-      if (!hasInterpolation && content === 'innerHTML') {
+      if (!hasInterpolation && COMPUTED_SINK_PROPERTIES.has(content)) {
         out += source.slice(start, i);
       } else {
         for (let j = start; j < i; j++) out += (source[j] === '\n') ? '\n' : ' ';
@@ -151,11 +156,41 @@ function stripComments(source) {
   return out;
 }
 
-function isSinkLine(line) {
-  return /\.innerHTML\s*\+?=/.test(line) ||
-         /\[['"`]innerHTML['"`]\]\s*\+?=/.test(line) ||
-         /\.insertAdjacentHTML\s*\(/.test(line) ||
-         /document\.write\s*\(/.test(line);
+// Every DOM-injection construct the gate refuses, with the name reported on a hit.
+//
+// WHY A LIST (learnings-blv): matching only `.innerHTML =` and three friends left a scanner that a
+// single `el.outerHTML = x`, `iframe.srcdoc = x` or `new Function(code)()` walked straight past. A
+// gate whose bypass is "use the other property" is not a gate. Each pattern is matched against the
+// string/comment-blanked line, so a construct inside a comment or a string is not a hit — except
+// `setAttribute` with an event-handler name, whose attribute name IS a literal (see below).
+//
+// DELIBERATELY NOT LISTED: `insertAdjacentText` and `textContent`/`innerText` take text and cannot
+// parse HTML, so flagging them would be a false positive that pushes real code to work around the
+// gate. Nothing legitimately needs the constructs below in this repository: the tree is clean
+// against every pattern, which is what makes them enforceable.
+const SINK_PATTERNS = [
+  [/\.innerHTML\s*\+?=/, 'innerHTML assignment'],
+  [/\[['"`]innerHTML['"`]\]\s*\+?=/, 'computed innerHTML assignment'],
+  [/\[['"`]outerHTML['"`]\]\s*\+?=/, 'computed outerHTML assignment'],
+  [/\.outerHTML\s*\+?=/, 'outerHTML assignment'],
+  [/\.insertAdjacentHTML\s*\(/, 'insertAdjacentHTML'],
+  [/\bdocument\.write(?:ln)?\s*\(/, 'document.write'],
+  [/\.createContextualFragment\s*\(/, 'createContextualFragment'],
+  [/\.srcdoc\s*=/, 'iframe srcdoc assignment'],
+  [/\beval\s*\(/, 'eval'],
+  [/\bnew\s+Function\s*\(/, 'new Function'],
+];
+
+// An inline event-handler attribute set from script is the same injection with a different name.
+// Its attribute name is a string literal, which the blanking pass removes, so this one is judged on
+// the COMMENT-stripped line (like the empty-clear allowance): `setAttribute("on" + name, x)` is not
+// matched by a literal pattern and is covered only by review, which the comment states.
+const EVENT_ATTR_LINE = /\.setAttribute\s*\(\s*['"`]on[a-z]/i;
+
+function sinkConstruct(line, commentStrippedLine) {
+  for (const [pattern, label] of SINK_PATTERNS) if (pattern.test(line)) return label;
+  if (EVENT_ATTR_LINE.test(commentStrippedLine)) return 'setAttribute of an event handler';
+  return null;
 }
 
 function scanFile(file) {
@@ -181,8 +216,9 @@ function scanFile(file) {
     // comment-stripped line for the same reason: a comment cannot extend this allowance.
     if (file.endsWith('/decision-models/image-lab.js') && NOTICE_CONSTANT_LINE.test(noComments[index].trim())) return;
 
-    if (isSinkLine(strippedLine)) {
-      failures.push(`File ${file}:${index + 1} uses innerHTML sink: ${line.trim()}`);
+    const construct = sinkConstruct(strippedLine, noComments[index]);
+    if (construct) {
+      failures.push(`File ${file}:${index + 1} uses DOM-injection sink (${construct}): ${line.trim()}`);
     }
   });
 
@@ -231,8 +267,16 @@ test('the gate walks research/ and scripts/, not just site/', () => {
 });
 
 test('lint regression: walks fixtures and catches real sinks', () => {
-  const failures = lintTree('./tests/fixtures');
-  assert.strictEqual(failures.length, 7, 'Should catch exactly 7 sink occurrences in the fixtures');
+  // Per FILE, not a directory total: a total hides which fixture moved, and adding a fixture used to
+  // silently change an unrelated expectation (learnings-blv).
+  const perFile = (name) => scanFile(`./tests/fixtures/${name}`);
+  assert.strictEqual(perFile('lint-sinks.js').length, 4, 'lint-sinks.js: the original innerHTML/write sinks');
+  assert.strictEqual(perFile('lint-sinks.mjs').length, 1, 'lint-sinks.mjs: the planted .mjs sink');
+  assert.strictEqual(perFile('lint-plant-app.js').length, 2, 'lint-plant-app.js: the two planted app sinks');
+  assert.strictEqual(perFile('lint-clean.js').length, 0, 'comments and string literals mentioning a sink are not hits');
+  assert.strictEqual(perFile('lint-sinks-extra.js').length, 9, 'lint-sinks-extra.js: one hit per new construct');
+  assert.strictEqual(perFile('lint-clean-extra.js').length, 0, 'text APIs and quoted constructs are not hits');
+  assert.strictEqual(lintTree('./tests/fixtures').filter((f) => f.includes('lint-clean.js') || f.includes('lint-clean-extra.js')).length, 0);
 });
 
 test('comments and string literals mentioning sinks are ignored', () => {
