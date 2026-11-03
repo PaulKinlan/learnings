@@ -89,8 +89,9 @@ test("every __LAYA_URLS/__KEV_URLS read under site/decision-models is gated by o
   const dir = new URL("../site/decision-models/", import.meta.url);
   const reads = [];
   for (const file of driverFiles(dir)) {
-    const lines = readFileSync(new URL(file, dir), "utf8").split("\n");
-    for (const line of seamReadLines(lines.join("\n"))) {
+    const source = readFileSync(new URL(file, dir), "utf8");
+    const lines = source.split("\n");
+    for (const line of seamReadLines(source)) {
       reads.push(`${file}:${line}`);
       assert.match(
         lines[line - 1],

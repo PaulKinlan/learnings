@@ -77,8 +77,12 @@ test("caller text cannot forge a delimiter", () => {
 // learnings-iif (tm-kev-delimiter-token-id-filter-missing): Kev had only the literal-shape
 // escape, while Laya got the full three-part hardening (learnings-xp4/gen). The graph derives
 // segments, positions and the block-causal mask from the delimiter ids themselves, so one id
-// smuggled through reader text shifts which token is read as an option's score. Mirrors the
-// Laya suite: declared literals, case-folded aliases, token-level id drop, engine wiring.
+// smuggled through reader text shifts which token is read as an option's score.
+// Mirrors the Laya suite in the four test blocks below, covering five behaviours: declared-literal
+// neutralization (plus the parameter guards), the case-folded alias through the real Tokenizer, the
+// normalization-agnostic id drop on its own, forged structural delimiter ids, and the engine wiring
+// guard. learnings-x7k2: the landing record said "+5" tests; the tree adds four test() blocks for
+// the five behaviours above — the id drop is proved in the alias block, not in a fifth test.
 test("a checkpoint-declared special literal is neutralized in state, instructions and options", () => {
   const LITERAL = "<2mass>";
   const INJECTED = 59999;
