@@ -1049,12 +1049,27 @@ export function imagePixelsRejection(width, height) {
 }
 
 /**
+ * The exact decoded size of a base64 body: 3 bytes per 4 characters, less the padding. A
+ * length-only estimate ignores that padding and so counts up to 2 bytes MORE than the file
+ * holds, which put the payload bound above the exact File.size the picker measures — a file AT
+ * the cap passed imageFileRejection and was then refused by the choke point (learnings-ywyg).
+ * IMAGE_MAX_BYTES counts DECODED bytes, and the File side owns that number; this derives the
+ * same number from the encoding so the two bounds cannot disagree at the boundary. An unpadded
+ * body's length is not a multiple of 4, and floor(length * 3 / 4) is already exact for it.
+ */
+function base64DecodedBytes(body) {
+  if (body.length % 4 !== 0) return Math.floor(body.length * 3 / 4);
+  const padding = body.endsWith('==') ? 2 : body.endsWith('=') ? 1 : 0;
+  return body.length * 3 / 4 - padding;
+}
+
+/**
  * The sync half of the payload choke point (learnings-hmg): shape, MIME allowlist and byte cap
  * applied to the payload STRING itself, so every caller of validateImageSpec/decideImage is
  * bound — not only the drop/picker/paste listeners. A data: URL's MIME is parsed from its
- * header and its base64 body measured (a non-base64 body's decoded size cannot exceed its
- * encoded length, so the string length is the bound). A blob: URL is opaque to sync
- * inspection: imagePayloadProbe measures and decodes it wherever a runtime can.
+ * header and its base64 body decoded to an exact byte count (a non-base64 body's decoded size
+ * cannot exceed its encoded length, so the string length is the bound there). A blob: URL is
+ * opaque to sync inspection: imagePayloadProbe measures and decodes it wherever a runtime can.
  * @returns {string} rejection reason, or '' when acceptable
  */
 export function imagePayloadRejection(imagePayload) {
@@ -1070,7 +1085,7 @@ export function imagePayloadRejection(imagePayload) {
   const mimeRejection = imageMimeRejection(mime, `Image type "${mime || 'unknown'}"`);
   if (mimeRejection) return mimeRejection;
   const body = imagePayload.slice(comma + 1);
-  const bytes = /;base64$/i.test(meta) ? Math.floor(body.length * 3 / 4) : body.length;
+  const bytes = /;base64$/i.test(meta) ? base64DecodedBytes(body) : body.length;
   return imageBytesRejection(bytes);
 }
 
@@ -1132,7 +1147,15 @@ export function setupImageLab() {
   let lastResult = null;
   const offscreenCanvas = document.createElement('canvas');
 
-  function loadImagePayload(dataUrl, infoText = 'Image loaded') {
+  /**
+   * Run a payload through the choke point and report the outcome in #status — the ONE place that
+   * writes the status for an image load (learnings-80dp). Callers used to write their own success
+   * line unconditionally straight after calling, overwriting the sync budget rejection below, so
+   * a refused upload still read 'Image loaded from file: X' with the preview untouched. The
+   * rejection and `statusText` are now mutually exclusive: neither can mask the other.
+   * @param statusText the success line for #status; `infoText` labels the #image-meta payload size
+   */
+  function loadImagePayload(dataUrl, infoText = 'Image loaded', statusText = infoText) {
     // Decode before accepting: a small file can decompress into a huge bitmap, and a corrupt
     // one never decodes at all (tm-image-payload-unbounded). Only a decoded, in-budget image
     // replaces the current payload — on rejection the previous image stays loaded and shown.
@@ -1143,6 +1166,7 @@ export function setupImageLab() {
       if (statusEl) statusEl.textContent = budgetRejection;
       return;
     }
+    if (statusEl) statusEl.textContent = statusText;
     imagePayloadProbe(dataUrl).then((rejection) => {
       if (rejection) {
         if (statusEl) statusEl.textContent = rejection;
@@ -1161,12 +1185,9 @@ export function setupImageLab() {
     const p = PRESETS[presetId];
     if (!p) return;
     const dataUrl = p.draw(offscreenCanvas);
-    loadImagePayload(dataUrl, `Preset: ${p.name}`);
+    loadImagePayload(dataUrl, `Preset: ${p.name}`, `Preset loaded: ${p.name}. Ready to evaluate.`);
     if (questionsArea) {
       questionsArea.value = JSON.stringify(p.spec, null, 2);
-    }
-    if (statusEl) {
-      statusEl.textContent = `Preset loaded: ${p.name}. Ready to evaluate.`;
     }
     if (answersEl) answersEl.replaceChildren();
     if (rawDetails) rawDetails.hidden = 'until-found';
@@ -1205,8 +1226,7 @@ export function setupImageLab() {
       }
       const reader = new FileReader();
       reader.onload = ev => {
-        loadImagePayload(ev.target.result, `Dropped: ${file.name}`);
-        if (statusEl) statusEl.textContent = `Custom image dropped: ${file.name}.`;
+        loadImagePayload(ev.target.result, `Dropped: ${file.name}`, `Custom image dropped: ${file.name}.`);
       };
       reader.readAsDataURL(file);
     });
@@ -1234,8 +1254,7 @@ export function setupImageLab() {
       }
       const reader = new FileReader();
       reader.onload = ev => {
-        loadImagePayload(ev.target.result, `Selected: ${file.name}`);
-        if (statusEl) statusEl.textContent = `Image loaded from file: ${file.name}.`;
+        loadImagePayload(ev.target.result, `Selected: ${file.name}`, `Image loaded from file: ${file.name}.`);
       };
       reader.readAsDataURL(file);
     });
@@ -1256,8 +1275,7 @@ export function setupImageLab() {
         if (file) {
           const reader = new FileReader();
           reader.onload = ev => {
-            loadImagePayload(ev.target.result, 'Pasted from clipboard');
-            if (statusEl) statusEl.textContent = 'Pasted image from clipboard.';
+            loadImagePayload(ev.target.result, 'Pasted from clipboard', 'Pasted image from clipboard.');
           };
           reader.readAsDataURL(file);
           break;

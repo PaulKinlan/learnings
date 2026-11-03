@@ -486,6 +486,31 @@ test('the payload budget binds validateImageSpec and decideImage, not only the l
   assert.equal(await imagePayloadProbe(png1x1), '');
 });
 
+// learnings-ywyg: the payload guard measured a base64 body by ROUNDING UP (3 bytes per char
+// group, ignoring the padding), which lands 1-2 bytes above the exact File.size the picker
+// measures — so at the cap the two guards disagreed and a file the picker accepted was refused
+// by the choke point. IMAGE_MAX_BYTES counted in DECODED bytes is the single source of truth:
+// the picker reads it off File.size, and the payload side must derive that same number from the
+// encoding rather than estimate it. These cases drive REAL encodings, because the cap and cap+1
+// encode to the SAME number of base64 characters (11184812) and differ only in padding — a
+// synthetic padding-free body cannot tell them apart.
+test('the picker and the payload choke point agree at the byte-cap boundary (learnings-ywyg)', () => {
+  const dataUrlOf = size => 'data:image/png;base64,' + Buffer.alloc(size, 0x41).toString('base64');
+  const boundaries = [
+    ['one byte under the cap', IMAGE_MAX_BYTES - 1, true],
+    ['exactly at the cap', IMAGE_MAX_BYTES, true],
+    ['one byte over the cap', IMAGE_MAX_BYTES + 1, false],
+  ];
+  for (const [label, size, withinBudget] of boundaries) {
+    const picker = imageFileRejection({ type: 'image/png', size, name: 'x.png' });
+    const payload = imagePayloadRejection(dataUrlOf(size));
+    assert.equal(picker === '', withinBudget, `${label}: the picker's verdict`);
+    // Same verdict AND same message: both sides counted the same number of decoded bytes.
+    assert.equal(payload, picker, `${label}: the choke point agrees with the picker`);
+    if (!withinBudget) assert.match(payload, /Image is too large/, `${label}: the refusal names the budget`);
+  }
+});
+
 test('Image decision schema validation: reject bad specs and payloads', () => {
   const validImage = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
@@ -1667,6 +1692,72 @@ test('image lab: drop zone styles, CSP compliance, keyboard activation, and non-
     const presetStatus = await page.evaluate(() => document.querySelector('#status').textContent);
     assert.match(presetStatus, /Preset loaded/);
     assert.doesNotMatch(presetStatus, /not an image/);
+  } finally {
+    if (page) await page.close();
+    server.close();
+  }
+});
+
+// learnings-80dp: loadImagePayload wrote the sync budget rejection into #status, and every
+// caller then wrote its own success line over it unconditionally — so an upload the choke point
+// had refused still reported 'Image loaded from file: X' while the payload and the preview were
+// untouched. Both halves are asserted on observable state (#status and #preview-image.src), not
+// on the source: a refused upload keeps the rejection AND the previous preview, an accepted one
+// reports success and replaces it.
+test('image lab: a payload the choke point refuses never reports "Image loaded" (learnings-80dp)', async () => {
+  const { serve } = await import('../scripts/serve.mjs');
+  const { launch } = await import('./lib/cdp.mjs');
+  const { server, url } = await serve();
+  let page;
+  try {
+    page = await launch();
+    await page.goto(url + 'decision-models/image-lab.html');
+    await page.waitFor(() => document.querySelector('#preview-image').src.startsWith('data:image/'));
+
+    // Pick a small allowlisted File, but hand the listener a reader whose data URL is whatever
+    // we choose. The File itself passes imageFileRejection, so only the choke point inside
+    // loadImagePayload can refuse it — the exact shape of the reported false green.
+    const pickWithReaderResult = (result, name) => page.evaluate((result, name) => {
+      const RealFileReader = window.FileReader;
+      window.FileReader = class {
+        readAsDataURL() {
+          this.result = result;
+          setTimeout(() => this.onload({ target: this }), 0);
+        }
+      };
+      try {
+        const input = document.querySelector('#image-file');
+        const dt = new DataTransfer();
+        dt.items.add(new File(['x'], name, { type: 'image/png' }));
+        input.files = dt.files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      } finally {
+        window.FileReader = RealFileReader;
+      }
+    }, result, name);
+    // Evaluated IN THE PAGE (waitFor serializes its predicate), so it closes over nothing here.
+    const pageState = () => ({
+      status: document.querySelector('#status').textContent,
+      preview: document.querySelector('#preview-image').src,
+    });
+    const readState = () => page.evaluate(pageState);
+
+    const before = await readState();
+    const overBudget = 'data:image/png;base64,' + 'A'.repeat(4 * Math.ceil((IMAGE_MAX_BYTES + 1) / 3));
+    await pickWithReaderResult(overBudget, 'too-big.png');
+    await page.waitFor(s => document.querySelector('#status').textContent !== s,
+      { args: [before.status], label: 'the refused upload to reach #status' });
+    const refused = await readState();
+    assert.match(refused.status, /Image is too large/, 'the reader sees the refusal the choke point produced');
+    assert.doesNotMatch(refused.status, /Image loaded/i, 'a refused upload must not report success');
+    assert.equal(refused.preview, before.preview, 'a refused upload must not replace the preview');
+
+    // The same path with an in-budget, decodable payload still reports success and shows it.
+    await pickWithReaderResult(DUMMY_IMAGE, 'fits.png');
+    const accepted = await page.waitFor(pageState,
+      { until: state => state.preview === DUMMY_IMAGE, label: 'the accepted upload to reach the preview' });
+    assert.match(accepted.status, /Image loaded from file: fits\.png\./, 'an accepted upload reports success');
+    assert.equal(accepted.preview, DUMMY_IMAGE, 'an accepted upload replaces the preview');
   } finally {
     if (page) await page.close();
     server.close();
