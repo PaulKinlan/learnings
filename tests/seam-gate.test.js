@@ -32,19 +32,70 @@ test("onLoopback is true outside a browser and on loopback hosts only", () => {
   }
 });
 
+// learnings-7jst: this scan used to pin ONE spelling — `globalThis.__(LAYA|KEV)_URLS` — so a
+// `window.__LAYA_URLS`, `self.__KEV_URLS` or `window['__LAYA_URLS']` read passed it green. A seam
+// read is the seam NAME, on any receiver or bare, so the walk below finds it wherever it appears
+// in code. Two things are not reads: a seam name in a comment (core.js documents them) and one
+// inside a plain string, which is how the approved accessor is spelled — seamValue("__KEV_URLS").
+// A bracket KEY is a read again: window["__LAYA_URLS"].
+const SEAM_IN_CODE = /^__(?:LAYA|KEV)_URLS\b/;
+const SEAM_BRACKET_KEY = /^__(?:LAYA|KEV)_URLS$/;
+
+// 1-based line numbers in `source` that read a seam, whatever the spelling.
+function seamReadLines(source) {
+  const hits = new Set();
+  let line = 1;
+  let lastCode = ""; // the last non-space character seen in code: `[` makes the next string a key
+  let comment = null; // "line" or "block" while inside one
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === "\n") {
+      line += 1;
+      if (comment === "line") comment = null;
+      continue;
+    }
+    if (comment === "block") {
+      if (ch === "*" && source[i + 1] === "/") { comment = null; i += 1; }
+      continue;
+    }
+    if (comment === "line") continue;
+    if (ch === "/" && source[i + 1] === "/") { comment = "line"; i += 1; continue; }
+    if (ch === "/" && source[i + 1] === "*") { comment = "block"; i += 1; continue; }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      // One whole literal: a bracket key if it names a seam, a string otherwise. Bracket keys are
+      // plain literals, so no escape handling is needed to read their content.
+      const close = source.indexOf(ch, i + 1);
+      const literal = source.slice(i + 1, close === -1 ? source.length : close);
+      if (SEAM_BRACKET_KEY.test(literal) && lastCode === "[") hits.add(line);
+      line += literal.split("\n").length - 1; // template literals can span lines
+      i = close === -1 ? source.length : close;
+      continue;
+    }
+    if (ch === "_" && SEAM_IN_CODE.test(source.slice(i))) { hits.add(line); continue; }
+    if (ch.trim()) lastCode = ch;
+  }
+  return [...hits];
+}
+
+// Every .js/.mjs under site/decision-models, subdirectories included: the drivers are flat today,
+// but a future decision-models/<subdir>/*.mjs must not be invisible to the scan (learnings-7jst).
+const driverFiles = (base, prefix = "") =>
+  readdirSync(new URL(prefix, base), { withFileTypes: true }).flatMap((entry) =>
+    entry.isDirectory()
+      ? driverFiles(base, `${prefix}${entry.name}/`)
+      : /\.(js|mjs)$/.test(entry.name) ? [`${prefix}${entry.name}`] : []);
+
 test("every __LAYA_URLS/__KEV_URLS read under site/decision-models is gated by onLoopback()", () => {
   const dir = new URL("../site/decision-models/", import.meta.url);
-  const files = readdirSync(dir).filter((f) => /\.(js|mjs)$/.test(f));
   const reads = [];
-  for (const file of files) {
+  for (const file of driverFiles(dir)) {
     const lines = readFileSync(new URL(file, dir), "utf8").split("\n");
-    for (const [i, line] of lines.entries()) {
-      if (!/globalThis\.__(LAYA|KEV)_URLS/.test(line)) continue;
-      reads.push(`${file}:${i + 1}`);
+    for (const line of seamReadLines(lines.join("\n"))) {
+      reads.push(`${file}:${line}`);
       assert.match(
-        line,
+        lines[line - 1],
         /onLoopback\(\)/,
-        `${file}:${i + 1} reads a URL seam without the loopback gate (learnings-dkd): off-loopback it must be dead`,
+        `${file}:${line} reads a URL seam without the loopback gate (learnings-dkd): off-loopback it must be dead`,
       );
     }
   }
@@ -52,6 +103,31 @@ test("every __LAYA_URLS/__KEV_URLS read under site/decision-models is gated by o
   // gate-smoke.mjs (1), kev-smoke.mjs (1). If a refactor moves or removes them, update this
   // floor deliberately — never by weakening the same-line gate assertion above.
   assert.ok(reads.length >= 8, `the scan saw only ${reads.length} seam reads (${reads.join(", ")}); expected the known drivers`);
+});
+
+test("the drift scan catches every spelling of a seam read, and no other name", () => {
+  // learnings-7jst regression fixture: the bead's repro spelled the one seam three ways and the
+  // old scan saw none of them.
+  const spellings = [
+    "const a = globalThis.__LAYA_URLS;", // the one spelling the old scan pinned
+    "const b = window.__LAYA_URLS;", // a different receiver
+    "const c = self.__KEV_URLS;", // the other seam name
+    "const d = window['__LAYA_URLS'];", // single-quoted bracket key
+    'const e = globalThis["__KEV_URLS"];', // double-quoted bracket key
+    "const f = __LAYA_URLS;", // the bare global
+    "const g = page.__KEV_URLS;", // any receiver, not just a global object
+  ];
+  assert.deepEqual(seamReadLines(spellings.join("\n")), spellings.map((_, index) => index + 1));
+
+  const notReads = [
+    "// window.__LAYA_URLS is a test seam", // a line comment
+    "/* __LAYA_URLS/__KEV_URLS live in the drivers */", // a block comment
+    'urls = seamValue("__KEV_URLS") ?? {},', // the approved accessor: a string, not a read
+    'const note = "no window.__LAYA_URLS here";', // a seam name inside a message string
+    "const other = window.__LAYA_URL;", // not a seam name
+    "const loaded = window.__LAYA_URLS_LOADED;", // a longer identifier, not the seam
+  ];
+  assert.deepEqual(seamReadLines(notReads.join("\n")), []);
 });
 
 // ---- behavioural half (learnings-2b5r) --------------------------------------------------------
