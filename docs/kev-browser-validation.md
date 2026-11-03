@@ -38,12 +38,18 @@ Kev reuses five reserved Qwen special tokens as sequence boundaries:
 | `option_end` | `<|box_end|>` | `151649` | Closes an option; hidden state is gathered here |
 | `decide` | `<|fim_suffix|>` | `151661` | Terminates branch; hidden state scores options |
 
-To ensure that user-supplied text can never spoof boundary tokens, caller text is sanitized prior to tokenization:
-```javascript
-export const escapeUserText = (text) =>
-  String(text).replace(/<\|([A-Za-z0-9_]+)\|>/g, "<\u00a6$1\u00a6>");
-```
-When evaluated against the real Qwen fast tokenizer (`tokenizer.json`), unescaped input tokenizes to special delimiter token `151659`, whereas sanitized input tokenizes to regular character tokens `[27, 64621, 69, 318, 13974, 64621, 29]`, completely eliminating delimiter injection.
+Caller text passes three layers of protection before it reaches the sequence. Only the third is the structural guarantee; the first two are the text-level half:
+
+- **Shape escape (`escapeUserText`, `kev-pack.js`).** The delimiter *shape* is rewritten before tokenizing:
+  ```javascript
+  export const escapeUserText = (text) =>
+    String(text).replace(/<\|([A-Za-z0-9_]+)\|>/g, "<\u00a6$1\u00a6>");
+  ```
+  Evaluated against the real Qwen fast tokenizer (`tokenizer.json`), raw `<|fim_prefix|>` tokenizes to the special delimiter token `151659`, while the escaped `<¦fim_prefix¦>` tokenizes to regular character tokens `[27, 64621, 69, 318, 13974, 64621, 29]`. This layer only knows the `<|name|>` shape: it cannot see a control literal the checkpoint declares special under a different shape, nor a case-folded or NFKC alias the tokenizer matches after normalizing the text.
+- **Declared-literal neutralization (`neutralizeReaderText`, `tokenizer-specials.mjs`).** Every literal the loaded tokenizer declares `special: true`, plus a built-in floor, is replaced with one space in the state, each instruction and each option. Literals declared `normalized: true` are matched case-insensitively and in NFKC form as well, because that is how the tokenizer matches them. This is the layer that covers the checkpoint's own control tokens and their aliases.
+- **Token-id drop (`packDecision`, `kev-pack.js`).** After tokenization, every privileged id is filtered out of the token stream: every id the tokenizer declares special, and always the five delimiter ids above, declared or not. This is the normalization-agnostic layer and the one the guarantee rests on: whatever a normalizer did to the text (case folding, NFKC, Strip, Replace), an id that comes out is dropped, so caller text cannot add a delimiter id and cannot insert an extra segment boundary. It does not depend on either text-level layer; a packer that reuses `neutralizeReaderText` but skips this filter has given up the guarantee.
+
+In the Kev session the order is: neutralize the declared literals, apply the shape escape (in `KevSession.tokenize`), tokenize, then drop privileged ids. No single layer is the whole defence — the escape alone cannot see a normalizing tokenizer's folded alias, which is why Laya needed `learnings-xp4` and then `learnings-gen`, and why the id drop must not be removed.
 
 ### In-Graph Block-Causal Mask
 In PyTorch Kev, a custom 4D additive attention mask restricts each question branch to attending only to the shared state and its own tokens. In the browser ONNX export, this block-causal mask logic is compiled **directly inside the graph**: the host provides a 2D all-ones `attention_mask` `[1, seq_len]`, and the graph derives segment IDs, position IDs, and block-causal attention internally from delimiter token positions.
