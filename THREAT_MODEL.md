@@ -43,7 +43,7 @@ Audits and discovery agents should **not** flag the following as vulnerabilities
 
 - **Local loopback listener** — `scripts/serve.mjs` binds `127.0.0.1` and rejects requests whose `Host` is not the printed `127.0.0.1:<port>`; `/api/` requires a same-origin `Origin`, `POST`, `application/json`, and one of three fixed routes. A loopback-bound dev listener is a trusted component (see §7 for the accepted header-only authorization model). Candidate `ep-16`.
 - **Empty-string DOM clears** — `containerEl.innerHTML = ""` (`site/neural-networks/steppers.js:84`, candidate `ep-1`), `e.innerHTML = ""` (`site/neural-networks/widgets.js:37`, `ep-2`), and `container/listEl.innerHTML = ""` (`site/opt-chronicles/app.js:394,425,430`, `ep-12/13/14`) clear a container before appending nodes created with `textContent`. These are not injection sinks. They are additionally covered by `tests/lint.test.js`, which permits only `.innerHTML = ["']\s*["']` clears.
-- **Constant-only notice strings** — `notice.innerHTML = '<strong>…'` in `site/decision-models/image-lab.js:1129,1132,1135` (candidates `ep-5/6/7`) are quoted string literals with no interpolation; `tests/lint.test.js` allows exactly this constant form, and only in `image-lab.js`, via `NOTICE_CONSTANT_LINE`.
+- **Constant-only notice strings** — `notice.innerHTML = '<strong>…'` in `site/decision-models/image-lab.js:1297,1300,1303` (candidates `ep-5/6/7`) are quoted string literals with no interpolation; `tests/lint.test.js` allows exactly this constant form, and only in `image-lab.js`, via `NOTICE_CONSTANT_LINE`.
 - **Reader-supplied secrets** — API keys are read from `input[type=password]` and kept in memory only; there is no `localStorage`, `sessionStorage`, `document.cookie`, or other persistence of keys anywhere in `site/`.
 - **Loopback inference endpoints chosen by the reader** — `core.js:loopbackEndpoint` deliberately accepts any port on exactly `localhost`, `127.0.0.1`, or `[::1]` (with `http`/`https`, path exactly `/v1/systemone`, and no credentials/query/fragment). The field exists so a reader can point at their own local server; any-port on loopback is intentional.
 - **Developer test suites and fixtures** — `tests/` and `tests/fixtures/` are local test artifacts and trusted.
@@ -118,9 +118,9 @@ Check these; a violation is a likely vulnerability.
 | ep-2 | dom-injection | `site/neural-networks/widgets.js:37` | False positive — empty-string clear |
 | ep-3 | external-fetch | `site/decision-models/core.js:105` | Guarded — validated URL, `credentials:'omit'`, `redirect:'error'`, `no-referrer`, timeout |
 | ep-4 | external-fetch | `site/decision-models/image-lab.js:668` | Guarded — `loopbackEndpoint` or fixed `api.typesafe.ai`, validated response |
-| ep-5 | dom-injection | `site/decision-models/image-lab.js:1279` | False positive — constant string |
-| ep-6 | dom-injection | `site/decision-models/image-lab.js:1282` | False positive — constant string |
-| ep-7 | dom-injection | `site/decision-models/image-lab.js:1285` | False positive — constant string |
+| ep-5 | dom-injection | `site/decision-models/image-lab.js:1297` | False positive — constant string |
+| ep-6 | dom-injection | `site/decision-models/image-lab.js:1300` | False positive — constant string |
+| ep-7 | dom-injection | `site/decision-models/image-lab.js:1303` | False positive — constant string |
 | ep-8 | external-fetch | `site/decision-models/kev-engine.js:90` | Guarded — pinned revision + required SHA-256 + streaming cap |
 | ep-9 | external-fetch | `site/decision-models/laya-engine.js:135` | Guarded — pinned revision + required SHA-256 + streaming cap |
 | ep-10 | external-fetch | `site/decision-models/laya-engine.js:229` | Guarded — SHA256SUMS verified + 1 MiB streaming cap |
