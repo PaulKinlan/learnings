@@ -149,6 +149,38 @@ test('celld speculationrules script is permitted by CSP and initiates prefetch r
   }
 });
 
+// learnings-a3e9: the no-@media half of the guard below used to be one regex —
+// /@media[^{]*\{[^}]*\.celld-grid/ — and `[^}]*` cannot cross a closing brace, so it only ever saw
+// a media query whose FIRST rule targeted the grid. `@media (max-width: 860px) { .celld-hero
+// { color: red } .celld-grid { grid-template-columns: 1fr } }` restores the viewport-owned collapse
+// this test exists to prevent and left that regex green. The read is now structural: comments go
+// first (so a comment that merely mentions @media is not a query), then every @media block is cut
+// out by brace matching — from its at-keyword to its own closing brace, so nested rules and nested
+// at-rules are INSIDE it — and no block may mention .celld-grid anywhere, in any position, at any
+// depth. At-rules are case-insensitive in CSS, so the keyword is matched /i.
+function mediaBlocksIn(css) {
+  const source = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const blocks = [];
+  const at = /@media\b/gi;
+  for (let found = at.exec(source); found; found = at.exec(source)) {
+    const open = source.indexOf('{', found.index);
+    // No opening brace: broken CSS. Read to the end of the file rather than skipping, so a
+    // truncated query cannot hide the rules that follow it.
+    if (open === -1) { blocks.push(source.slice(found.index)); break; }
+    let depth = 0;
+    let end = source.length;
+    for (let i = open; i < source.length; i += 1) {
+      if (source[i] === '{') depth += 1;
+      else if (source[i] === '}') {
+        depth -= 1;
+        if (depth === 0) { end = i + 1; break; }
+      }
+    }
+    blocks.push(source.slice(found.index, end));
+  }
+  return blocks;
+}
+
 // learnings-wn6: .celld-grid collapses to one column when ITS SPACE is too narrow, not when the
 // viewport is. The page's reading column steals 190px plus a gap, so at a 900px viewport the grid
 // was squeezing two columns into 511px while the viewport media query still said "wide". This pins
@@ -165,5 +197,37 @@ test('celld grid collapse is a container query on its own section, not a viewpor
     /@container\s+celld\s*\(max-width:\s*\d+px\)\s*\{\s*\.celld-grid\s*\{[^}]*grid-template-columns:\s*1fr/,
     'the .celld-grid collapse must be a container query on the celld container'
   );
-  assert.doesNotMatch(css, /@media[^{]*\{[^}]*\.celld-grid/, 'no viewport media query may own the .celld-grid collapse');
+  const media = mediaBlocksIn(css);
+  assert.deepEqual(
+    media.filter((block) => block.includes('.celld-grid')),
+    [],
+    'no viewport media query may own the .celld-grid collapse (learnings-a3e9: every @media block in '
+    + `the file was read whole — ${media.length} found — and one of them targets the grid)`
+  );
+});
+
+test('the @media walker the grid guard depends on is itself pinned (learnings-a3e9)', () => {
+  // A guard that reads blocks can also quietly read NONE, and `[]` passes an "no block mentions X"
+  // assertion vacuously. So the walker is driven over a string that has the discriminating shape:
+  // the grid rule is NOT first inside the query, and the query is followed by more CSS.
+  const css = [
+    '.celld-hero { color: red }',
+    '/* a comment that mentions @media and .celld-grid is not a query */',
+    '@media (max-width: 860px) {',
+    '  .celld-hero { color: blue }',
+    '  .celld-grid { grid-template-columns: 1fr }',
+    '}',
+    '.celld-grid { gap: 2rem }',
+  ].join('\n');
+  const blocks = mediaBlocksIn(css);
+  assert.equal(blocks.length, 1, 'exactly the one real @media block is found (the comment is not one)');
+  assert.match(blocks[0], /@media/, 'the block starts at its at-keyword');
+  assert.equal(blocks[0].includes('.celld-grid'), true,
+    'a .celld-grid rule that is NOT the first in the block is still inside it');
+  assert.equal(blocks[0].includes('gap: 2rem'), false,
+    'the block ends at its own closing brace, so the grid rule outside it is not swallowed');
+  // Nested at-rules stay inside the media block, and an unterminated one reads to the end.
+  assert.equal(mediaBlocksIn('@media screen { @supports (display: grid) { .celld-grid { color: red } } } .x { color: blue }')[0].includes('.x'), false);
+  assert.equal(mediaBlocksIn('@media (max-width: 1px) { .celld-grid { color: red }').length, 1);
+  assert.deepEqual(mediaBlocksIn('.celld-grid { color: red }'), [], 'no @media at all means no blocks, and the guard says so');
 });
