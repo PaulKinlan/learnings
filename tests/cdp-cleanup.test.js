@@ -17,14 +17,49 @@ const killGroup = (child) => {
     try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
   }
 };
-const reapTestProfile = (profile) => {
-  // Last-resort test teardown if an assertion fails before the runner's cleanup completes.
+// Chrome processes running on a given profile. The browser is in its own detached process group,
+// so the profile on its command line is the only handle a test has on it.
+const chromePidsFor = (profile) => {
+  const pids = [];
   for (const line of execFileSync('ps', ['-eo', 'pid=,args='], {encoding: 'utf8'}).split('\n')) {
     if (!line.includes(`--user-data-dir=${profile}`) || !/chrom(e|ium)/.test(line)) continue;
     const pid = Number(line.trim().match(/^\d+/)?.[0]);
-    if (pid) {
-      try { process.kill(-pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
-    }
+    if (pid) pids.push(pid);
+  }
+  return pids;
+};
+const reapTestProfile = (profile) => {
+  // Last-resort test teardown if an assertion fails before the runner's cleanup completes.
+  for (const pid of chromePidsFor(profile)) {
+    try { process.kill(-pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+  }
+};
+
+/**
+ * Tear down a runner whose browser profile may never have reached the test, and reap what the
+ * runner could not.
+ *
+ * SIGTERM BEFORE SIGKILL: the runner installs cdp.mjs's signal handlers, whose exit path kills the
+ * browser's process group and removes the profile — the only cleanup that works when the launch
+ * bound trips and the profile is unknown here (chrome is its own detached group, so killGroup
+ * cannot reach it). A SIGKILL-only teardown orphaned that group, ~1.2GB per leak, until the fleet
+ * reaper's 45-minute browser limit (observed profile voicebox-cdp-1I0shL, learnings-yci0). A runner
+ * wedged past waitForExit's bound is still SIGKILLed afterwards, and a PROFILE= line that arrives
+ * late is reaped too. `state` accumulates the runner's stdout, because that is where the profile
+ * comes from when the launch did report it.
+ *
+ * Idempotent: a runner that already exited is only killGroup'd, which is a no-op on a dead group.
+ */
+const stopRunner = async (runner, state) => {
+  if (runner.exitCode === null && runner.signalCode === null) {
+    try { runner.kill('SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+    await waitForExit(runner).catch(() => {});
+  }
+  killGroup(runner);
+  const profile = state.output.match(/PROFILE=(\/tmp\/voicebox-cdp-[^\s]+)/)?.[1];
+  if (profile) {
+    reapTestProfile(profile);
+    rmSync(profile, {recursive: true, force: true});
   }
 };
 
@@ -86,7 +121,7 @@ test('SIGTERM interrupts a runner and removes its browser and profile', {skip: !
   // Hoisted out of the promise so stdout keeps accumulating after the launch bound trips: a
   // late PROFILE= line is then still enough for the finally block to identify and reap the
   // runner's browser (learnings-yci0).
-  let output = '';
+  const state = {output: ''};
   try {
     profile = await new Promise((resolve, reject) => {
       // 90s: launch() retries a failed startup once (learnings-gib), so a slow-start box can
@@ -96,8 +131,8 @@ test('SIGTERM interrupts a runner and removes its browser and profile', {skip: !
       // truly hung still trips this bound; the suite's own gate bound is far larger.
       const timer = setTimeout(() => reject(new Error('runner did not launch')), 90000);
       runner.stdout.on('data', (chunk) => {
-        output += chunk;
-        const found = output.match(/PROFILE=(\/tmp\/voicebox-cdp-[^\s]+)/);
+        state.output += chunk;
+        const found = state.output.match(/PROFILE=(\/tmp\/voicebox-cdp-[^\s]+)/);
         if (found) { clearTimeout(timer); resolve(found[1]); }
       });
       runner.once('exit', (code) => { clearTimeout(timer); reject(new Error(`runner exited before launch: ${code}`)); });
@@ -110,26 +145,71 @@ test('SIGTERM interrupts a runner and removes its browser and profile', {skip: !
     assert.equal(existsSync(profile), false);
     console.log(`PASS  SIGTERM: no browser processes or profile ${profile}`);
   } finally {
-    // SIGTERM before SIGKILL: the runner installs cdp.mjs's signal handlers, whose close()
-    // kills the browser's process group and removes the profile — the only cleanup that works
-    // when PROFILE= never reached this test and the profile is unknown here. The old
-    // SIGKILL-only finally orphaned the detached chrome group (killGroup cannot reach it:
-    // chrome is its own group) until the fleet reaper's 45-minute browser limit, ~1.2GB per
-    // leak (observed: profile voicebox-cdp-1I0shL, learnings-yci0). A runner wedged past
-    // waitForExit's bound still gets SIGKILLed, and a late PROFILE= is reaped below.
-    if (runner.exitCode === null && runner.signalCode === null) {
-      try { runner.kill('SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
-      await waitForExit(runner).catch(() => {});
-    }
-    killGroup(runner);
-    if (!profile) {
-      const late = output.match(/PROFILE=(\/tmp\/voicebox-cdp-[^\s]+)/);
-      if (late) profile = late[1];
-    }
+    // The bound-trip cleanup, shared with the launch-bound test below so it is asserted rather
+    // than only executed (learnings-bdli); its SIGTERM-before-SIGKILL ordering and the
+    // late-PROFILE reap are documented on stopRunner.
+    await stopRunner(runner, state);
+  }
+});
+
+// learnings-bdli: the teardown above was the one cleanup in this file with no assertion behind it.
+// Its happy-path leak check sits in the try, after the profile resolves, so the path that matters —
+// the launch bound tripping while chrome is already up and the profile never reached the test — ran
+// with nothing watching it, and a regression to a SIGKILL-only teardown still passed the suite.
+// This test reproduces that window on purpose and asserts what the teardown left behind, with the
+// one runner it spawns itself.
+test('a launch bound that trips with chrome already up leaves no browser behind (learnings-bdli)', {skip: !binary}, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cdp-bound-'));
+  const marker = join(dir, 'profile');
+  // The runner records its profile in a FILE rather than on stdout, because that is exactly the
+  // bound-trip case: the browser is up and the teardown has no PROFILE= line to identify it by.
+  // The file is this test's own bookkeeping, so the leak assertion has a profile to look for.
+  const runner = spawn(process.execPath, ['--input-type=module', '-e', `
+    import {writeFileSync} from 'node:fs';
+    import {launch} from ${JSON.stringify(new URL('./lib/cdp.mjs', import.meta.url).href)};
+    const page = await launch();
+    writeFileSync(${JSON.stringify(marker)}, page.profile);
+    setInterval(() => {}, 1000);
+  `], {stdio: ['ignore', 'pipe', 'pipe'], detached: true});
+  const state = {output: ''};
+  runner.stdout.on('data', (chunk) => { state.output += chunk; });
+  let profile = null;
+  try {
+    // Same 90s launch bound as the SIGTERM test above (learnings-gib retries a failed startup
+    // once; learnings-p564 measured a slow box past the old 45s).
+    profile = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('runner did not launch')), 90000);
+      const tick = setInterval(() => {
+        if (!existsSync(marker)) return;
+        clearInterval(tick);
+        clearTimeout(timer);
+        resolve(readFileSync(marker, 'utf8').trim());
+      }, 25);
+      runner.once('exit', (code) => { clearInterval(tick); clearTimeout(timer); reject(new Error(`runner exited before launch: ${code}`)); });
+      runner.once('error', (error) => { clearInterval(tick); clearTimeout(timer); reject(error); });
+    });
+    assert.doesNotMatch(state.output, /PROFILE=/, 'the profile must be unknown to the teardown: that is the case under test');
+    assert.ok(chromePidsFor(profile).length > 0, 'chrome is up while the teardown has no profile to reap');
+
+    await stopRunner(runner, state);
+
+    // SIGTERM, not SIGKILL: only a handled signal runs the runner's own cleanup, so the exit code
+    // (128 + 15) is what proves the grace period was given. A SIGKILLed runner reports
+    // signalCode 'SIGKILL' and exitCode null, and its detached chrome group is never reaped.
+    assert.equal(runner.signalCode, null, 'the runner exited on the signal it was given');
+    assert.equal(runner.exitCode, 143, 'so cdp.mjs\'s own exit handler ran the cleanup');
+    await assertNoBrowserOrphans(profile);
+    assert.equal(existsSync(profile), false, 'and the runner removed the profile it never reported');
+    console.log(`PASS  bound trip: no browser processes or profile ${profile}`);
+  } finally {
+    // Also clears the mess an assertion above just reported (stopRunner is idempotent, so this is
+    // the same teardown again — here it is the red-case hygiene, not the thing being asserted).
+    await stopRunner(runner, state);
     if (profile) {
       reapTestProfile(profile);
       rmSync(profile, {recursive: true, force: true});
     }
+    rmSync(dir, {recursive: true, force: true});
   }
 });
 

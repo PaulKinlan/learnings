@@ -6,6 +6,13 @@ import assert from 'node:assert/strict';
 // browser, the same way image-decision.test.js drives the image lab. Both tests stub the
 // network and drive the actual Run button, never the private function directly.
 
+// Every page load in this file is opened through here, with an explicit labelled ceiling: the
+// waits below are all bounded at 60s (learnings-ki36) and the load they precede sits on the same
+// external-load-sensitive path, so goto's 20s default is three times tighter than the ceiling —
+// the incident that filed ki36 was measured at box load 9.96 (learnings-cdtw).
+const openPlayground = (page, url) =>
+  page.goto(url + 'decision-models/playground.html', { label: 'the playground page', timeout: 60000 });
+
 // Select the hosted Jev engine and load it. Loading Jev performs no network request (the fetch
 // happens inside decideAll at run time), so the page can be put on Jev before the fetch is stubbed.
 async function loadJev(page) {
@@ -29,7 +36,7 @@ test('playground Jev run cuts off a stalled provider at the 45s boundary and re-
   let page;
   try {
     page = await launch({ candidates: ['/usr/bin/chromium'] });
-    await page.goto(url + 'decision-models/playground.html');
+    await openPlayground(page, url);
     await page.waitFor(() => document.querySelector('#engine') !== null, { label: 'engine select to exist', timeout: 60000 });
     await loadJev(page);
 
@@ -83,7 +90,7 @@ test('playground Jev run rejects malformed provider answers and still renders va
   let page;
   try {
     page = await launch({ candidates: ['/usr/bin/chromium'] });
-    await page.goto(url + 'decision-models/playground.html');
+    await openPlayground(page, url);
     await page.waitFor(() => document.querySelector('#engine') !== null, { label: 'engine select to exist', timeout: 60000 });
     await loadJev(page);
 
@@ -179,7 +186,7 @@ test('playground Jev run refuses an unexpected answer ID before any render (lear
   let page;
   try {
     page = await launch({ candidates: ['/usr/bin/chromium'] });
-    await page.goto(url + 'decision-models/playground.html');
+    await openPlayground(page, url);
     await page.waitFor(() => document.querySelector('#engine') !== null, { label: 'engine select to exist', timeout: 60000 });
     await loadJev(page);
 
@@ -235,7 +242,7 @@ test('playground Jev keeps a __proto__ question id through the Laya→Jev transl
   let page;
   try {
     page = await launch({ candidates: ['/usr/bin/chromium'] });
-    await page.goto(url + 'decision-models/playground.html');
+    await openPlayground(page, url);
     await page.waitFor(() => document.querySelector('#engine') !== null, { label: 'engine select to exist', timeout: 60000 });
     await loadJev(page);
 
@@ -313,7 +320,7 @@ test('playground Jev duplicate wire answer IDs collapse to last-wins (documented
   let page;
   try {
     page = await launch({ candidates: ['/usr/bin/chromium'] });
-    await page.goto(url + 'decision-models/playground.html');
+    await openPlayground(page, url);
     await page.waitFor(() => document.querySelector('#engine') !== null, { label: 'engine select to exist', timeout: 60000 });
     await loadJev(page);
 

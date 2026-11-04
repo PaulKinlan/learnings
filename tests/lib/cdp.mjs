@@ -294,7 +294,16 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
     close,
   };
 
-  page.goto = async (url, { timeout = 20000 } = {}) => {
+  /**
+   * Navigate and wait for the page's own load event.
+   *
+   * The bound THROWS instead of resolving false. Not one caller inspects the result (every call
+   * site in tests/ and research/ is a bare `await page.goto(...)`), so a resolved false was an
+   * invisible failed load: the test went on and failed a minute later inside the next waitFor,
+   * naming a stage that had never been reached rather than the page load that never finished
+   * (learnings-cdtw). `label` names what was loading, the way waitFor's does.
+   */
+  page.goto = async (url, { timeout = 20000, label = url } = {}) => {
     const loaded = new Promise((resolve) => {
       const started = events.length;
       const tick = setInterval(() => {
@@ -312,7 +321,9 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
       }, timeout);
     });
     await page.send("Page.navigate", { url });
-    await loaded;
+    if (!(await loaded)) {
+      throw new Error(`timed out waiting for ${label} to load; no Page.loadEventFired within ${timeout}ms`);
+    }
     await sleep(150);
   };
 
