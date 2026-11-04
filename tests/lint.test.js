@@ -256,7 +256,11 @@ function maskHtmlKeepingInlineScripts(raw) {
       const bodyEnd = (close === -1) ? n : bodyStart + close;
       const gt = (close === -1) ? -1 : raw.indexOf('>', bodyEnd);
       const closeTagEnd = (gt === -1) ? n : gt + 1;
-      const typeMatch = attrs.match(/\btype\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+      // (?:^|\s) anchor, not \b, for the same reason as src below: \btype also matched data-type=
+      // and any other *-type=, and the leftmost match wins, so
+      // <script data-type="text/plain" type="module"> was read as a text/plain DATA block and its
+      // executable body blanked — fail-open (learnings-wcea).
+      const typeMatch = attrs.match(/(?:^|\s)type\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
       const type = typeMatch ? (typeMatch[1] ?? typeMatch[2] ?? typeMatch[3] ?? '').trim().toLowerCase() : '';
       // (?:^|\s) anchor, not \b: \bsrc also matched data-src=, which would blank the body of
       // an executable inline script that merely carries a data-src attribute — fail-open
@@ -374,25 +378,32 @@ test('comments and string literals mentioning sinks are ignored', () => {
 });
 
 test('inline <script> bodies in HTML are scanned; markup and data blocks are not (learnings-0ob)', () => {
-  // The three planted hits: a document.write in a script carrying data-src (line 11 — data-src
+  // The five planted hits: a document.write in a script carrying data-src (line 11 — data-src
   // is NOT src, so the body is executable and must hit: pinning the attribute-boundary anchor,
   // learnings-r7a7), an interpolated innerHTML assignment in a classic inline script (line 18),
-  // and document.write in a module inline script (line 21). The exclusion controls are
-  // DISCRIMINATING (learnings-r7a7): the external-src script carries a sink-looking body
-  // and the text/template block carries unquoted sink text, so if the masker's guards broke
-  // (e.g. isExecutable forced true) either would produce a hit and this list would move —
-  // an empty-bodied src control only proved that string-blanking hides things, not that the
-  // masker excludes. The commented-out sink, the prose/<pre> listing mentions, the
-  // speculationrules JSON and the ld+json block must not produce hits either.
+  // document.write in a module inline script (line 21), and the two data-type controls at lines
+  // 30/31 — data-type= is NOT type= either (learnings-wcea), so the first script has no type at
+  // all and the second's real type="module" must win over the data-type beside it; under \btype
+  // the leftmost match read data-type="text/plain" and blanked both executable bodies.
+  // The exclusion controls are DISCRIMINATING (learnings-r7a7, learnings-wcea): the external-src
+  // script carries a sink-looking body, the text/template block carries unquoted sink text, and
+  // line 32 pairs a data-type="text/javascript" with a REAL type="text/template" — so if the
+  // masker's guards broke in either direction (isExecutable forced true, or data-type read as
+  // type) the list would move. An empty-bodied src control only proved that string-blanking hides
+  // things, not that the masker excludes. The commented-out sink, the prose/<pre> listing
+  // mentions, the speculationrules JSON and the ld+json block must not produce hits either.
   const failures = scanFile('./tests/fixtures/lint-inline.html');
   assert.deepStrictEqual(
     failures.map((f) => f.replace(/ uses DOM-injection sink.*/, '')),
     ['File ./tests/fixtures/lint-inline.html:11', 'File ./tests/fixtures/lint-inline.html:18',
-      'File ./tests/fixtures/lint-inline.html:21'],
+      'File ./tests/fixtures/lint-inline.html:21', 'File ./tests/fixtures/lint-inline.html:30',
+      'File ./tests/fixtures/lint-inline.html:31'],
     `exactly the planted inline-script sinks, at their real line numbers, got:\n${failures.join('\n')}`);
   assert.ok(failures[0].includes('document.write'), 'the data-src script body is executable and hits');
   assert.ok(failures[1].includes('innerHTML assignment'), 'the innerHTML hit names its construct');
   assert.ok(failures[2].includes('document.write'), 'the document.write hit names its construct');
+  assert.ok(failures[3].includes('document.write'), 'a data-type= script with no type= is executable JS and hits');
+  assert.ok(failures[4].includes('insertAdjacentHTML'), 'a real type="module" next to data-type= is still read as the script type');
   // And the published pages that motivated the coverage are actually in the walk.
   const walked = SOURCE_ROOTS.flatMap((root) => findFiles(root, SCAN_EXTENSIONS));
   for (const expected of ['site/celld/index.html', 'site/neural-networks/backends/javascript.html']) {

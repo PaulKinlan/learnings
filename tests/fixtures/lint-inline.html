@@ -23,5 +23,12 @@
 <script type="application/ld+json">
 {"@context": "https://schema.org", "note": "eval( and new Function( are data here, not code"}
 </script>
+<!-- learnings-wcea: data-type= is NOT type=. The first script below has no type at all, so it is
+     executable and its sink must be reported; the second pairs a data-type with a real
+     type="module", which must win and stay executable; the third is the reverse control - a real
+     type="text/template" data block that a data-type="text/javascript" must NOT make executable. -->
+<script data-type="text/plain">document.write(name);</script>
+<script data-type="text/plain" type="module">target.insertAdjacentHTML('beforeend', name);</script>
+<script data-type="text/javascript" type="text/template">target.innerHTML = name;</script>
 </body>
 </html>
