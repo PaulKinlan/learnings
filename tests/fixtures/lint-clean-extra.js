@@ -14,3 +14,11 @@ function d(el) {
 function e(el) {
   el.innerHTML = ' ';
 }
+// learnings-wltf: the neighbours of the five new patterns that are NOT sinks. `setAttribute` with a
+// non-handler name whose VALUE starts with "on" is the false positive a sloppy
+// setAttribute/setAttributeNS pattern would produce; `data-onclick` is not a handler; removing an
+// attribute writes nothing; and a mention inside a string is data.
+function f(el) { el.setAttribute('class', 'only-if-loaded'); }
+function g(el) { el.setAttributeNS('http://www.w3.org/1999/xhtml', 'data-onclick', 'x'); }
+function h(frame) { frame.removeAttribute('srcdoc'); }
+const ALSO_BANNED = "bare Function(code), frame['srcdoc'] += html and globalThis['eval'](code)";
