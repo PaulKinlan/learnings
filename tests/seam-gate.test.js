@@ -150,27 +150,37 @@ const withLocation = async (hostname, fn) => {
 
 test("core.js exposes one gate for every seam: honoured on loopback, null off it", async () => {
   const { seamValue } = await import("../site/decision-models/core.js");
-  const override = { "tokenizer.json": "https://seam.invalid/tokenizer.json" };
-  const saved = Object.getOwnPropertyDescriptor(globalThis, "__KEV_URLS");
-  try {
-    globalThis.__KEV_URLS = override;
-    for (const hostname of ["127.0.0.1", "localhost", "[::1]", undefined]) {
-      await withLocation(hostname, () => {
-        assert.deepEqual(seamValue("__KEV_URLS"), override, `${hostname ?? "no location"} honours the seam`);
+  // BOTH names through the same three cases, not Kev alone (learnings-jw4d). seamValue is
+  // name-parametric today (`globalThis[name]`), so a __KEV_URLS-only test passed green while the
+  // structural comment below and the landing record claimed "both names" — and a per-name branch
+  // added later would have been caught only for Kev. Each name carries its own override object, so
+  // a gate that answered with the OTHER seam's value fails the deepEqual as well.
+  const seams = [
+    ["__KEV_URLS", { "tokenizer.json": "https://seam.invalid/tokenizer.json" }],
+    ["__LAYA_URLS", { SHA256SUMS: "https://seam.invalid/SHA256SUMS" }],
+  ];
+  for (const [name, override] of seams) {
+    const saved = Object.getOwnPropertyDescriptor(globalThis, name);
+    try {
+      globalThis[name] = override;
+      for (const hostname of ["127.0.0.1", "localhost", "[::1]", undefined]) {
+        await withLocation(hostname, () => {
+          assert.deepEqual(seamValue(name), override, `${name}: ${hostname ?? "no location"} honours the seam`);
+        });
+      }
+      for (const hostname of ["paul.kinland.me", "127.0.0.2", "localhost.evil.test", ""]) {
+        await withLocation(hostname, () => {
+          assert.equal(seamValue(name), null, `${name}: ${hostname || "an empty hostname"} gets no seam value`);
+        });
+      }
+      delete globalThis[name];
+      await withLocation("127.0.0.1", () => {
+        assert.equal(seamValue(name), null, `${name}: an unset seam is null even on loopback, never undefined`);
       });
+    } finally {
+      if (saved) Object.defineProperty(globalThis, name, saved);
+      else delete globalThis[name];
     }
-    for (const hostname of ["paul.kinland.me", "127.0.0.2", "localhost.evil.test", ""]) {
-      await withLocation(hostname, () => {
-        assert.equal(seamValue("__KEV_URLS"), null, `${hostname || "an empty hostname"} gets no seam value`);
-      });
-    }
-    delete globalThis.__KEV_URLS;
-    await withLocation("127.0.0.1", () => {
-      assert.equal(seamValue("__KEV_URLS"), null, "an unset seam is null even on loopback, never undefined");
-    });
-  } finally {
-    if (saved) Object.defineProperty(globalThis, "__KEV_URLS", saved);
-    else delete globalThis.__KEV_URLS;
   }
 });
 
@@ -213,8 +223,10 @@ test("both engines resolve their urls DEFAULT through the one gate; LitERT's hal
   // loadKev is driven end to end above. loadLaya cannot be: LitERT boots first and cannot boot
   // outside a DOM, so no URL is ever chosen in node and any "it rejected" assertion would be a
   // fake test. The honest statement of Laya's coverage is this structural pair — the default is
-  // the gated seam, and the gated seam itself is behaviourally tested above for BOTH names — so
-  // the reader can see exactly which half is behavioural and which is not.
+  // the gated seam, and the gated seam itself is behaviourally tested above for BOTH names (the
+  // seamValue loop drives __KEV_URLS and __LAYA_URLS through the same honoured/ignored/unset
+  // cases, learnings-jw4d) — so the reader can see exactly which half is behavioural and which
+  // is not: what is NOT driven for Laya is loadLaya's own default resolution.
   const dir = new URL("../site/decision-models/", import.meta.url);
   for (const [file, seam] of [["laya-engine.js", "__LAYA_URLS"], ["kev-engine.js", "__KEV_URLS"]]) {
     const source = readFileSync(new URL(file, dir), "utf8");

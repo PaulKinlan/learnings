@@ -9,9 +9,10 @@ import path from 'node:path';
 // below, not as raw markup (learnings-0ob).
 const SCAN_EXTENSIONS = ['.js', '.mjs', '.html'];
 
-// Property names whose COMPUTED form (`el['name'] = x`) is a sink: kept verbatim by the blanking
-// pass so the computed patterns below can see them (learnings-blv).
-const COMPUTED_SINK_PROPERTIES = new Set(['innerHTML', 'outerHTML']);
+// Property names whose COMPUTED form is a sink — `el['name'] = x` for the two HTML setters and for
+// srcdoc, `globalThis['eval'](x)` for the call: kept verbatim by the blanking pass so the computed
+// patterns below can see them (learnings-blv, learnings-wltf).
+const COMPUTED_SINK_PROPERTIES = new Set(['innerHTML', 'outerHTML', 'srcdoc', 'eval']);
 
 // The only `notice.innerHTML` form this allowance admits is a constant-only,
 // single-quoted, no-interpolation assignment, and only inside image-lab.js.
@@ -42,9 +43,9 @@ function findFiles(dir, exts) {
 
 // Blanks line comments, block comments and string/template literals while keeping
 // newlines aligned, so per-line sink matching and `file:line` reporting stay exact.
-// The only literals kept verbatim are bare property names that ARE sinks when computed —
-// 'innerHTML' and 'outerHTML' — because `el["innerHTML"] = x` and `el['outerHTML'] = x` are real
-// sinks that a pattern over the blanked line could not see (learnings-blv).
+// The only literals kept verbatim are the bare names in COMPUTED_SINK_PROPERTIES, because
+// `el["innerHTML"] = x`, `frame['srcdoc'] = x` and `globalThis['eval'](x)` are real sinks that a
+// pattern over the blanked line could not see (learnings-blv, learnings-wltf).
 function stripCommentsAndStrings(source) {
   let out = '';
   let i = 0;
@@ -165,6 +166,14 @@ function stripComments(source) {
 // string/comment-blanked line, so a construct inside a comment or a string is not a hit — except
 // `setAttribute` with an event-handler name, whose attribute name IS a literal (see below).
 //
+// WHY EVERY ENTRY ALSO LISTS ITS ADJACENT SPELLING (learnings-wltf): the same objection applies one
+// construct down. A gate that refuses `frame.srcdoc = x` but not `frame.srcdoc += x` or
+// `frame['srcdoc'] = x`, that refuses `new Function(code)` but not the spec-identical bare
+// `Function(code)()`, that refuses `eval(code)` but not `globalThis['eval'](code)`, and that refuses
+// `setAttribute('onclick', x)` but not `setAttributeNS(null, 'onclick', x)`, is bypassed by a rename
+// and not by a different technique. Aliasing (`const E = eval`) stays out of scope for a line
+// scanner; that limit is stated here rather than hidden.
+//
 // DELIBERATELY NOT LISTED: `insertAdjacentText` and `textContent`/`innerText` take text and cannot
 // parse HTML, so flagging them would be a false positive that pushes real code to work around the
 // gate. Nothing legitimately needs the constructs below in this repository: the tree is clean
@@ -177,20 +186,29 @@ const SINK_PATTERNS = [
   [/\.insertAdjacentHTML\s*\(/, 'insertAdjacentHTML'],
   [/\bdocument\.write(?:ln)?\s*\(/, 'document.write'],
   [/\.createContextualFragment\s*\(/, 'createContextualFragment'],
-  [/\.srcdoc\s*=/, 'iframe srcdoc assignment'],
+  [/\.srcdoc\s*\+?=/, 'iframe srcdoc assignment'],
+  [/\[['"`]srcdoc['"`]\]\s*\+?=/, 'computed srcdoc assignment'],
   [/\beval\s*\(/, 'eval'],
-  [/\bnew\s+Function\s*\(/, 'new Function'],
+  [/\[['"`]eval['"`]\]\s*\(/, 'computed eval call'],
+  // No `new`: `Function(code)()` compiles and runs code exactly like `new Function(code)()`.
+  [/\bFunction\s*\(/, 'Function constructor'],
 ];
 
 // An inline event-handler attribute set from script is the same injection with a different name.
-// Its attribute name is a string literal, which the blanking pass removes, so this one is judged on
-// the COMMENT-stripped line (like the empty-clear allowance): `setAttribute("on" + name, x)` is not
-// matched by a literal pattern and is covered only by review, which the comment states.
-const EVENT_ATTR_LINE = /\.setAttribute\s*\(\s*['"`]on[a-z]/i;
+// Its attribute name is a string literal, which the blanking pass removes, so these are judged on
+// the COMMENT-stripped line (like the empty-clear allowance). Two shapes, because the name is the
+// FIRST argument of setAttribute and the SECOND of setAttributeNS — one optional-argument pattern
+// would also read `setAttribute('class', 'only-if-loaded')` as an event handler (learnings-wltf).
+// `setAttribute("on" + name, x)` is matched by neither and is covered only by review, which this
+// comment states.
+const EVENT_ATTR_LINES = [
+  /\.setAttribute\s*\(\s*['"`]on[a-z]/i,
+  /\.setAttributeNS\s*\(\s*[^,)]+,\s*['"`]on[a-z]/i,
+];
 
 function sinkConstruct(line, commentStrippedLine) {
   for (const [pattern, label] of SINK_PATTERNS) if (pattern.test(line)) return label;
-  if (EVENT_ATTR_LINE.test(commentStrippedLine)) return 'setAttribute of an event handler';
+  for (const pattern of EVENT_ATTR_LINES) if (pattern.test(commentStrippedLine)) return 'setAttribute of an event handler';
   return null;
 }
 
@@ -256,7 +274,11 @@ function maskHtmlKeepingInlineScripts(raw) {
       const bodyEnd = (close === -1) ? n : bodyStart + close;
       const gt = (close === -1) ? -1 : raw.indexOf('>', bodyEnd);
       const closeTagEnd = (gt === -1) ? n : gt + 1;
-      const typeMatch = attrs.match(/\btype\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+      // (?:^|\s) anchor, not \b, for the same reason as src below: \btype also matched data-type=
+      // and any other *-type=, and the leftmost match wins, so
+      // <script data-type="text/plain" type="module"> was read as a text/plain DATA block and its
+      // executable body blanked — fail-open (learnings-wcea).
+      const typeMatch = attrs.match(/(?:^|\s)type\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
       const type = typeMatch ? (typeMatch[1] ?? typeMatch[2] ?? typeMatch[3] ?? '').trim().toLowerCase() : '';
       // (?:^|\s) anchor, not \b: \bsrc also matched data-src=, which would blank the body of
       // an executable inline script that merely carries a data-src attribute — fail-open
@@ -363,9 +385,26 @@ test('lint regression: walks fixtures and catches real sinks', () => {
   assert.strictEqual(perFile('lint-sinks.mjs').length, 1, 'lint-sinks.mjs: the planted .mjs sink');
   assert.strictEqual(perFile('lint-plant-app.js').length, 2, 'lint-plant-app.js: the two planted app sinks');
   assert.strictEqual(perFile('lint-clean.js').length, 0, 'comments and string literals mentioning a sink are not hits');
-  assert.strictEqual(perFile('lint-sinks-extra.js').length, 9, 'lint-sinks-extra.js: one hit per new construct');
+  assert.strictEqual(perFile('lint-sinks-extra.js').length, 14, 'lint-sinks-extra.js: one hit per construct');
   assert.strictEqual(perFile('lint-clean-extra.js').length, 0, 'text APIs and quoted constructs are not hits');
   assert.strictEqual(lintTree('./tests/fixtures').filter((f) => f.includes('lint-clean.js') || f.includes('lint-clean-extra.js')).length, 0);
+});
+
+test('every construct in lint-sinks-extra.js is reported BY NAME, one per line (learnings-blv, learnings-wltf)', () => {
+  // A count cannot say which construct stopped being caught: a pattern firing twice on one line and
+  // another going dead both leave it at 14. The fixture is one construct per line, so the ordered
+  // label list is the assertion. The last five are the adjacent spellings a reviewer proved walked
+  // past the widened gate (learnings-wltf): the computed and `+=` srcdoc forms, bare `Function(...)`,
+  // `setAttributeNS` with a handler name, and the computed eval call.
+  const labels = scanFile('./tests/fixtures/lint-sinks-extra.js')
+    .map((f) => f.replace(/^.*DOM-injection sink \((.*)\):.*$/, '$1'));
+  assert.deepStrictEqual(labels, [
+    'outerHTML assignment', 'insertAdjacentHTML', 'document.write', 'createContextualFragment',
+    'iframe srcdoc assignment', 'eval', 'Function constructor', 'setAttribute of an event handler',
+    'computed outerHTML assignment',
+    'computed srcdoc assignment', 'iframe srcdoc assignment', 'Function constructor',
+    'setAttribute of an event handler', 'computed eval call',
+  ], 'one label per fixture line, in file order');
 });
 
 test('comments and string literals mentioning sinks are ignored', () => {
@@ -374,25 +413,32 @@ test('comments and string literals mentioning sinks are ignored', () => {
 });
 
 test('inline <script> bodies in HTML are scanned; markup and data blocks are not (learnings-0ob)', () => {
-  // The three planted hits: a document.write in a script carrying data-src (line 11 — data-src
+  // The five planted hits: a document.write in a script carrying data-src (line 11 — data-src
   // is NOT src, so the body is executable and must hit: pinning the attribute-boundary anchor,
   // learnings-r7a7), an interpolated innerHTML assignment in a classic inline script (line 18),
-  // and document.write in a module inline script (line 21). The exclusion controls are
-  // DISCRIMINATING (learnings-r7a7): the external-src script carries a sink-looking body
-  // and the text/template block carries unquoted sink text, so if the masker's guards broke
-  // (e.g. isExecutable forced true) either would produce a hit and this list would move —
-  // an empty-bodied src control only proved that string-blanking hides things, not that the
-  // masker excludes. The commented-out sink, the prose/<pre> listing mentions, the
-  // speculationrules JSON and the ld+json block must not produce hits either.
+  // document.write in a module inline script (line 21), and the two data-type controls at lines
+  // 30/31 — data-type= is NOT type= either (learnings-wcea), so the first script has no type at
+  // all and the second's real type="module" must win over the data-type beside it; under \btype
+  // the leftmost match read data-type="text/plain" and blanked both executable bodies.
+  // The exclusion controls are DISCRIMINATING (learnings-r7a7, learnings-wcea): the external-src
+  // script carries a sink-looking body, the text/template block carries unquoted sink text, and
+  // line 32 pairs a data-type="text/javascript" with a REAL type="text/template" — so if the
+  // masker's guards broke in either direction (isExecutable forced true, or data-type read as
+  // type) the list would move. An empty-bodied src control only proved that string-blanking hides
+  // things, not that the masker excludes. The commented-out sink, the prose/<pre> listing
+  // mentions, the speculationrules JSON and the ld+json block must not produce hits either.
   const failures = scanFile('./tests/fixtures/lint-inline.html');
   assert.deepStrictEqual(
     failures.map((f) => f.replace(/ uses DOM-injection sink.*/, '')),
     ['File ./tests/fixtures/lint-inline.html:11', 'File ./tests/fixtures/lint-inline.html:18',
-      'File ./tests/fixtures/lint-inline.html:21'],
+      'File ./tests/fixtures/lint-inline.html:21', 'File ./tests/fixtures/lint-inline.html:30',
+      'File ./tests/fixtures/lint-inline.html:31'],
     `exactly the planted inline-script sinks, at their real line numbers, got:\n${failures.join('\n')}`);
   assert.ok(failures[0].includes('document.write'), 'the data-src script body is executable and hits');
   assert.ok(failures[1].includes('innerHTML assignment'), 'the innerHTML hit names its construct');
   assert.ok(failures[2].includes('document.write'), 'the document.write hit names its construct');
+  assert.ok(failures[3].includes('document.write'), 'a data-type= script with no type= is executable JS and hits');
+  assert.ok(failures[4].includes('insertAdjacentHTML'), 'a real type="module" next to data-type= is still read as the script type');
   // And the published pages that motivated the coverage are actually in the walk.
   const walked = SOURCE_ROOTS.flatMap((root) => findFiles(root, SCAN_EXTENSIONS));
   for (const expected of ['site/celld/index.html', 'site/neural-networks/backends/javascript.html']) {
