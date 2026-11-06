@@ -28,7 +28,7 @@ export const DEMO_MODELS = [
 
 /** Thinking level buys reasoning tokens. They are billed as output, kept on the assistant message
  *  (`requiresReasoningContentOnAssistantMessages`), and therefore re-sent as input on every later
- *  request in the same run. */
+ *  request in the same run, until a compaction summarises them away. */
 export const THINKING_LEVELS = [
   { id: "off", label: "thinking off", reasoningTokens: 0 },
   { id: "low", label: "thinking low", reasoningTokens: 900 },
