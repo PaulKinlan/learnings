@@ -138,7 +138,8 @@ export function compactMessages(messages, keepRecentTokens) {
 /**
  * Run the scripted scenario under one configuration.
  *
- * Returns `{ events, metrics, status, threshold }`:
+ * Returns `{ events, metrics, status, threshold }` plus the controls as they were resolved (the
+ * clamped reserve, the model, the allowlist), so a caller can print the inputs it actually used:
  *   - `events` is the trace the page renders, in order;
  *   - `metrics` is every number the page shows, each one derived from `options` and the
  *     constants above (no literal in the renderer);
