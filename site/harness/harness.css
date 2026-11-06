@@ -1,0 +1,146 @@
+/* The harness page's own styles. Everything shared — type, colours, buttons, the reading grid —
+   comes from ../style.css; this file only adds what the trace and the context bar need. */
+
+.tool-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(9rem, 100%), 1fr));
+  gap: 0.35rem 1rem;
+}
+
+.tool-list label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 500;
+  margin: 0;
+  min-height: 44px;
+}
+
+.tool-list input[type="checkbox"] {
+  width: 1.15rem;
+  height: 1.15rem;
+  margin: 0;
+}
+
+/* The numbers panel: a definition list that reads as a table without being one. */
+.metrics {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.4rem 1rem;
+  margin: 1rem 0 1.5rem;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 0.8rem 0;
+}
+
+.metrics dt {
+  color: var(--muted);
+}
+
+.metrics dd {
+  margin: 0;
+  font-weight: 650;
+  text-align: right;
+}
+
+/* The rolling context bar: fill is the context, the marker is the compaction line. */
+.ctx-bar {
+  position: relative;
+  height: 1.1rem;
+  background: var(--wash);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 0.4rem 0 0.5rem;
+}
+
+.ctx-fill {
+  height: 100%;
+  background: #4c8fc4;
+}
+
+.ctx-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #ad5500;
+}
+
+/* The trace: an ordered list of transcript events. */
+.trace {
+  list-style: none;
+  margin: 1.2rem 0 1.5rem;
+  padding: 0;
+  border-left: 3px solid var(--line);
+}
+
+.ev {
+  padding: 0.5rem 0 0.5rem 1.1rem;
+  border-bottom: 1px solid var(--line);
+  max-width: 82ch;
+}
+
+.ev-title {
+  margin: 0;
+  font-weight: 650;
+  color: #142d44;
+}
+
+.ev-line,
+.ev-note {
+  margin: 0.2rem 0 0;
+  font-size: 0.92rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.ev-request {
+  background: #f2f8fd;
+}
+
+.ev-compaction .ev-title,
+.ev-compaction-skipped .ev-title {
+  color: #8a4300;
+}
+
+.ev-tool .ev-title {
+  font-variant-numeric: tabular-nums;
+}
+
+.ev-settled .ev-title,
+.ev-run-end .ev-title {
+  color: var(--muted);
+}
+
+.ev-failed {
+  background: #fff1d8;
+}
+
+@media (max-width: 760px) {
+  .metrics {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+
+/* Long identifiers — `requiresReasoningContentOnAssistantMessages` is the offender that found
+   this — have no break opportunity, so a phone-width column overflows the page without it. */
+.article p,
+.article li,
+.article dd {
+  overflow-wrap: anywhere;
+}
+
+/* A request the compaction could not bring back under the window: the bar is capped at 100%, so the
+   number and this row are what tell the reader it happened. */
+.ev-over .ev-title {
+  color: #8a1f00;
+}
+
+.ev-warn {
+  margin: 0.2rem 0 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #8a1f00;
+  overflow-wrap: anywhere;
+}
