@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval' 'sha256-0msSpu3ktmVy5IVi13zUu6JTIRI342v7S7Ymf3EvVLk='; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
   <meta name="referrer" content="no-referrer">
   <title>The harness, and software you can reshape · Learnings</title>
-  <meta name="description" content="A deep dive into the DeepSeek coding harness: the turn loop, the tool protocol, prompt assembly, what isolation actually is here, the hot/restart/code-change ladder of malleable software, and a deterministic playground that prices batching, compaction and retries.">
+  <meta name="description" content="A deep dive into the DeepSeek coding harness: the turn loop, the tool protocol, prompt assembly, what isolation actually is here, the plugin surface an extension gets, the space and time a run lives in, the hot/reload/restart/code ladder of malleable software, and two deterministic simulations — one that prices batching, compaction and retries, one that lets you add a hook, deactivate a tool and fork a session.">
   <link rel="stylesheet" href="../style.css">
   <link rel="stylesheet" href="./harness.css">
   <!-- Speculation Rules: the sha256 in the CSP script-src above must be regenerated if this block changes -->
@@ -43,22 +43,27 @@
       <a href="../decision-models/">Decision Models</a>
       <a href="../opt-chronicles/">OPT Chronicles</a>
       <a href="#playground">Playground</a>
+      <a href="#plugins">Plugins</a>
+      <a href="#explorer">Plugin explorer</a>
     </nav>
   </header>
 
   <main id="main">
     <h1>The harness, and software you can reshape</h1>
-    <p class="lead">An agent is a loop, a tool protocol and a prompt, wrapped in whatever isolation you actually built. This page takes the DeepSeek harness running in this fleet apart, and then hands you the controls: a simulated run you can re-price by changing one setting at a time.</p>
-    <p class="notice"><strong>This page calls nothing.</strong> The playground below is a deterministic simulation: no key, no network, no model. Every number it shows is computed from the controls and a scripted transcript. The <a href="#playground">playground section</a> says exactly which mechanics it does and does not model.</p>
+    <p class="lead">An agent is a loop, a tool protocol and a prompt, wrapped in whatever isolation you actually built. This page takes the DeepSeek harness running in this fleet apart, and then hands you the controls: a simulated run you can re-price by changing one setting at a time, and a plugin explorer where you can add a hook, deactivate a tool and fork a session.</p>
+    <p class="notice"><strong>This page calls nothing.</strong> The playground and the plugin explorer below are deterministic simulations: no key, no network, no model, no extension loaded. Every number they show is computed from the controls and a scripted transcript. The <a href="#playground">playground section</a> and the <a href="#explorer">explorer section</a> each say exactly which mechanics they do and do not model.</p>
 
     <div class="reading">
       <aside class="toc" aria-label="Contents">
         <a href="#what">1. What the harness is here</a>
         <a href="#anatomy">2. Anatomy</a>
         <a href="#playground">3. Playground</a>
-        <a href="#malleable">4. Malleable software</a>
-        <a href="#deepseek">5. DeepSeek vs generic</a>
-        <a href="#limits">6. Honest limits</a>
+        <a href="#plugins">4. Plugins</a>
+        <a href="#spatiotemporal">5. Space and time</a>
+        <a href="#explorer">6. Plugin explorer</a>
+        <a href="#malleable">7. Malleable software</a>
+        <a href="#deepseek">8. DeepSeek vs generic</a>
+        <a href="#limits">9. Honest limits</a>
         <a href="#evidence">Where this comes from</a>
       </aside>
       <article class="article">
@@ -206,17 +211,350 @@
           <p class="small">Not simulated, deliberately: what the model would actually say or choose; real latency; provider caching; any failure other than a 429; and tokenisation. The scripted assistant has one blocked branch (a write-class tool it may not call) and otherwise does not react to anything — including the steering message, whose effect on a real model is a model behaviour, not a loop mechanic.</p>
         </section>
 
+        <section id="plugins">
+          <h2>Plugins: the surface an extension actually gets</h2>
+          <p>Everything above was the harness as a product. This section is the harness as an API. The version under discussion is <code>0.87.1</code>, and the names below are the names in its <code>dist/</code> and its <code>docs/</code>: <code>extensions.md</code> for the surface, and <code>rpc-commands.md</code> plus <code>sdk.md</code> for the two ways to drive it without a terminal.</p>
+          <p>An extension is a module with one default export: a factory that receives <code>pi</code> and registers what it wants to be called for. There is no manifest, no config file and no sandbox to configure.</p>
+          <pre><code>export default function (pi) {
+  const stop = pi.on("tool_call", (event) => {
+    if (event.toolName === "edit" || event.toolName === "write") {
+      return { block: true, reason: "this lane reviews; it does not write" };
+    }
+  });
+  // stop() unsubscribes this handler. The extension itself stays loaded: there is
+  // no way to unload one plugin short of rebuilding the whole runtime.
+}</code></pre>
+          <p>That sample is the whole shape. What makes it worth writing down is not the factory but the two objects it is handed, and the fact that they are not a boundary.</p>
+
+          <h3>Two objects: the API, and the context of one dispatch</h3>
+          <div class="table-scroll"><table>
+            <thead><tr><th>You get</th><th>What is in it</th></tr></thead>
+            <tbody>
+              <tr><td><code>pi</code> (<code>ExtensionAPI</code>)</td><td><code>on(hook, handler)</code> — which returns an unsubscribe — plus the registration calls (<code>registerTool</code>, <code>registerCommand</code>, <code>registerShortcut</code>, <code>registerFlag</code>, <code>registerMessageRenderer</code>, <code>registerMarkdownTransformer</code>, <code>registerEntryRenderer</code>, <code>registerProvider</code> / <code>unregisterProvider</code>), the session and state calls (<code>sendMessage</code>, <code>sendUserMessage</code>, <code>appendEntry</code>, <code>setSessionName</code> / <code>getSessionName</code>, <code>setLabel</code>), <code>exec</code>, the live getters and setters (<code>getFlag</code>, <code>getActiveTools</code> / <code>getAllTools</code> / <code>setActiveTools</code>, <code>getCommands</code>, <code>setModel</code>, <code>getThinkingLevel</code> / <code>setThinkingLevel</code>), and the shared <code>events</code> bus. <code>setActiveTools</code> is the one the deactivation control below is modelled on.</td></tr>
+              <tr><td><code>ctx</code> (<code>ExtensionContext</code>), per dispatch</td><td><code>ui</code>, <code>mode</code>, <code>hasUI</code>, <code>cwd</code>, <code>sessionManager</code> (read-only), <code>modelRegistry</code>, <code>model</code>, <code>scopedModels</code>, <code>thinkingLevel</code>, <code>isIdle()</code>, <code>isProjectTrusted()</code>, <code>signal</code>, <code>hasPendingMessages()</code>, <code>getContextUsage()</code>, <code>compact()</code>, <code>getSystemPrompt()</code>, <code>abort()</code>, <code>shutdown()</code>.</td></tr>
+              <tr><td><code>ctx</code> in a <em>command</em> handler</td><td>The same, plus <code>waitForIdle</code>, <code>newSession</code>, <code>fork</code>, <code>navigateTree</code>, <code>switchSession</code>, <code>reload</code>. These are command-only because calling them from a lifecycle handler can deadlock the loop.</td></tr>
+            </tbody>
+          </table></div>
+          <p>That last row is the design tell. The powerful verbs — replace the session, fork, move the leaf, rebuild the runtime — are not in the context of a lifecycle hook. A hook can <em>ask</em> for things; a command handler can <em>do</em> them. If you find yourself wanting <code>ctx.fork()</code> inside a <code>turn_end</code> handler, the shape of the API is telling you that you want a command.</p>
+
+          <h3>The hooks, grouped by when they fire</h3>
+          <p>Handlers are dispatched in extension load order, and the list of handlers is snapshotted when a dispatch starts — so a change made by one handler does not affect the dispatch it is already inside. The full set, with what each one is allowed to move:</p>
+          <div class="table-scroll"><table>
+            <thead><tr><th>Phase</th><th>Hook</th><th>When it fires</th><th>What a handler can change</th></tr></thead>
+            <tbody>
+              <tr><td>load and trust</td><td><code>project_trust</code></td><td>when Pi has to decide whether a project directory is trusted</td><td>returns a trust decision; the first handler with a definite answer wins</td></tr>
+              <tr><td>load and trust</td><td><code>resources_discover</code></td><td>when Pi loads skills, prompt templates and themes</td><td>adds <code>skillPaths</code>, <code>promptPaths</code>, <code>themePaths</code></td></tr>
+              <tr><td>session</td><td><code>session_start</code></td><td>when a session starts, resumes, or is reloaded (the event carries the reason)</td><td>nothing — it observes; the transcript is already what it is</td></tr>
+              <tr><td>session</td><td><code>session_info_changed</code></td><td>when the session's name or metadata changes</td><td>nothing — observes</td></tr>
+              <tr><td>session</td><td><code>session_before_switch</code></td><td>before switching to another session file</td><td>cancels the switch</td></tr>
+              <tr><td>session</td><td><code>session_before_fork</code></td><td>before forking at a chosen entry</td><td>cancels, or skips restoring the conversation in the new file</td></tr>
+              <tr><td>session</td><td><code>session_before_tree</code></td><td>before the leaf moves inside the tree</td><td>cancels, or attaches a summary to the branch you enter</td></tr>
+              <tr><td>session</td><td><code>session_tree</code></td><td>after the leaf has moved</td><td>nothing — observes</td></tr>
+              <tr><td>session</td><td><code>session_before_compact</code></td><td>before a compaction, with the branch entries in hand</td><td>cancels, or supplies its own compaction result</td></tr>
+              <tr><td>session</td><td><code>session_compact</code></td><td>after the compaction entry is written</td><td>nothing — observes</td></tr>
+              <tr><td>session</td><td><code>session_compact_failed</code></td><td>when the summarising request fails</td><td>nothing — observes</td></tr>
+              <tr><td>session</td><td><code>session_shutdown</code></td><td>when the runtime shuts down, including <code>reason: "reload"</code></td><td>nothing — observes</td></tr>
+              <tr><td>context and provider</td><td><code>context</code></td><td>before every model request, with the message list</td><td>returns replacement messages — but Pi restores the leading system message, so this hook cannot rewrite the prompt</td></tr>
+              <tr><td>context and provider</td><td><code>context_with_system</code></td><td>after <code>context</code>, with the system message visible</td><td>returns replacement messages <em>including</em> the system prompt; that is the difference between the two hooks</td></tr>
+              <tr><td>context and provider</td><td><code>cache_warming_decision</code></td><td>when Pi decides whether to warm the prompt cache</td><td>returns an action</td></tr>
+              <tr><td>context and provider</td><td><code>before_provider_request</code></td><td>with the request payload about to go out</td><td>returns a replacement payload: the last per-request rewriting point</td></tr>
+              <tr><td>context and provider</td><td><code>before_provider_headers</code></td><td>with the outgoing HTTP headers</td><td>mutates the headers in place</td></tr>
+              <tr><td>context and provider</td><td><code>after_provider_response</code></td><td>after the provider answers</td><td>nothing — observes</td></tr>
+              <tr><td>agent and turn</td><td><code>before_agent_start</code></td><td><strong>once per user prompt</strong>, before the loop starts</td><td>appends messages, or replaces the system prompt the run that is starting will use — later handlers observe the override</td></tr>
+              <tr><td>agent and turn</td><td><code>agent_start</code></td><td>when a run starts</td><td>nothing — observes</td></tr>
+              <tr><td>agent and turn</td><td><code>agent_end</code></td><td>when an agent loop ends, whatever its stop reason — including error and abort, so it is not a success signal</td><td>nothing — observes</td></tr>
+              <tr><td>agent and turn</td><td><code>agent_before_settle</code></td><td>just before settling, when automatic work may still be pending</td><td>returns a boundary result: appended entries, and whether to continue</td></tr>
+              <tr><td>agent and turn</td><td><code>agent_settled</code></td><td>when no automatic work remains</td><td>nothing — observes</td></tr>
+              <tr><td>agent and turn</td><td><code>turn_start</code></td><td>at the start of each turn</td><td>nothing — observes</td></tr>
+              <tr><td>agent and turn</td><td><code>turn_end</code></td><td>at the end of each turn, with that turn's tool results</td><td>returns a boundary result: appended entries, and whether the loop should continue</td></tr>
+              <tr><td>messages</td><td><code>message_start</code></td><td>as a message begins</td><td>nothing — observes</td></tr>
+              <tr><td>messages</td><td><code>message_update</code></td><td>on every streamed update of a message</td><td>nothing — observes (this is the streaming hook)</td></tr>
+              <tr><td>messages</td><td><code>message_end</code></td><td>when a message is finalized</td><td>replaces it, provided the replacement keeps the same role</td></tr>
+              <tr><td>tools</td><td><code>tool_call</code></td><td>before a tool runs, <em>after</em> its arguments validated</td><td>returns <code>{ block, reason, terminate }</code>, or mutates <code>event.input</code> in place; a handler that throws also blocks the call</td></tr>
+              <tr><td>tools</td><td><code>tool_result</code></td><td>after the tool returns</td><td>rewrites <code>content</code>, <code>details</code>, <code>isError</code>, <code>usage</code>; handlers compose, each seeing the previous one's result</td></tr>
+              <tr><td>tools</td><td><code>tool_execution_start</code></td><td>when a tool starts running</td><td>nothing — observes</td></tr>
+              <tr><td>tools</td><td><code>tool_execution_update</code></td><td>on partial output from a running tool</td><td>nothing — observes</td></tr>
+              <tr><td>tools</td><td><code>tool_execution_end</code></td><td>when a tool finishes</td><td>nothing — observes</td></tr>
+              <tr><td>model and thinking</td><td><code>model_select</code></td><td>after the model changes</td><td>nothing — observes</td></tr>
+              <tr><td>model and thinking</td><td><code>thinking_level_select</code></td><td>after the thinking level changes</td><td>nothing — observes</td></tr>
+              <tr><td>input and shell</td><td><code>input</code></td><td>when text arrives from the UI</td><td>transforms it, or handles it and stops it reaching the model</td></tr>
+              <tr><td>input and shell</td><td><code>user_bash</code></td><td>when the user runs a shell command directly</td><td>supplies the operations to run, or a finished result</td></tr>
+              <tr><td>input and shell</td><td><code>ui_prompt_start</code> / <code>ui_prompt_end</code></td><td>around an interactive prompt</td><td>nothing — observes; they fire when a UI is bound (the TUI and RPC bind one), and not in a binding that has none</td></tr>
+            </tbody>
+          </table></div>
+          <p>Read the last column as the honest map of influence. The hooks that can <em>change</em> something are a minority, and they cluster at four places: the decision hooks (<code>project_trust</code>, <code>resources_discover</code>, <code>cache_warming_decision</code>, <code>before_provider_headers</code>); the four <code>session_before_*</code> cancellation points; the per-request rewriting chain (<code>context</code>, <code>context_with_system</code>, <code>before_provider_request</code>); and the four that see real content — <code>before_agent_start</code>, <code>message_end</code>, <code>tool_call</code>, <code>tool_result</code> — plus the two boundary hooks (<code>turn_end</code>, <code>agent_before_settle</code>) and the input hooks. The rest are instrumentation, and instrumentation is most of what a working extension does.</p>
+
+          <h3>The registry: add works, replace is undocumented, removal does not exist</h3>
+          <p><code>registerTool</code> writes into the extension's tool map and then calls the runtime's tool-list refresh, so a tool is callable as soon as it is registered: at load, or later from a handler or a command. The refresh is only needed post-bind, which is exactly why a registration made from a command handler takes effect without a reload. The shipped <code>dynamic-tools</code> example does both halves: its own header describes it as "registering tools after session initialization", it registers one tool during <code>session_start</code>, and it registers more at runtime from a <code>/add-echo-tool</code> command. The interesting part is what happens around the edges of that.</p>
+          <div class="table-scroll"><table>
+            <thead><tr><th>What you want</th><th>Possible?</th><th>How</th><th>The catch</th></tr></thead>
+            <tbody>
+              <tr><td>Add a tool while the process runs</td><td><strong>Yes</strong></td><td><code>pi.registerTool(...)</code>, at load or later from a handler or a command</td><td>The runtime's tool list is refreshed post-bind, so the tool is callable as soon as it is registered. The shipped <code>dynamic-tools</code> example registers at <code>session_start</code> and again at runtime from <code>/add-echo-tool</code>.</td></tr>
+              <tr><td>Replace a tool by name</td><td>Works, undocumented</td><td><code>registerTool</code> again with the same name</td><td>It is a map set, so the new definition wins — but no documentation promises it and no diagnostic reports it.</td></tr>
+              <tr><td>Shadow a built-in</td><td><strong>Yes</strong></td><td>register a tool with a built-in's name</td><td>Extension tools shadow built-ins by name, silently.</td></tr>
+              <tr><td>Beat another extension to a name</td><td>First-loaded wins</td><td>be earlier in the load order</td><td>Silently. Tool names are the one registry without a conflict diagnostic; shortcuts and commands have diagnostics.</td></tr>
+              <tr><td>Remove a tool</td><td><strong>No</strong></td><td>—</td><td>There is no <code>unregisterTool</code>: zero hits across this version's <code>dist/</code>, <code>docs/</code> and <code>examples/</code>. <code>setActiveTools</code> deactivation is the supported thing, and the tool stays registered.</td></tr>
+              <tr><td>Not offer a tool at all</td><td><strong>Yes</strong>, at construction</td><td><code>tools</code> / <code>noTools</code> / <code>excludeTools</code></td><td>A name that is not allowed is never in the schema, so the model cannot call it — that is a session-level decision, not a runtime one.</td></tr>
+            </tbody>
+          </table></div>
+          <p>So "live tool mutation" is not one capability, it is three. Adding is real. Replacing works because a map is a map. Removing is not in the API at all, and the two things that look like it are not it: <code>setActiveTools</code> changes what the model is offered while the definition stays in the registry, and deleting the extension file only takes effect on a reload of the whole runtime. The <a href="#explorer">explorer</a> below has a button for the removal, so you can watch it find nothing.</p>
+
+          <h3>What an extension is not</h3>
+          <p>An extension is code the harness calls. It is not a sandbox, and the API does not pretend otherwise:</p>
+          <ul>
+            <li><strong>Same operating-system permissions.</strong> A tool registered by an extension runs where the process runs, with the process's credentials.</li>
+            <li><strong>It can read everything the harness can.</strong> Prompts, tool calls and their arguments, tool results, files, session history, and any credential the process holds. A redaction plugin is a promise, not an enforcement.</li>
+            <li><strong>It gets a read-only view of the session.</strong> <code>ctx.sessionManager</code> is exposed, but the verbs that replace a session are command-only.</li>
+            <li><strong>It is not isolated from other extensions.</strong> One extension can shadow another's tool name, and load order is the only arbitration.</li>
+          </ul>
+          <p>Errors are handled generously, with two exceptions that matter. A handler that throws is caught, and the failure becomes an <code>extension_error</code> record — the loop continues. But a failure in a <code>tool_call</code> handler <em>blocks</em> the tool, because the harness would rather not run a tool than run one it could not check. And a throw inside a tool's own <code>execute()</code> becomes an error result for the model, which is the same shape as any other tool failure.</p>
+
+          <h3><code>/reload</code>: one command, three audiences</h3>
+          <p><code>/reload</code> reloads keybindings, extensions, skills, prompt templates, themes and context files. It is also the sharpest example on this page of a feature that exists and is still not available where you need it.</p>
+          <div class="table-scroll"><table>
+            <thead><tr><th>Audience</th><th>Can it reload?</th><th>Why</th></tr></thead>
+            <tbody>
+              <tr><td>The interactive TUI</td><td><strong>Yes</strong></td><td><code>/reload</code> is a TUI command. It re-reads the extension set and rebuilds the runtime in place.</td></tr>
+              <tr><td>A process driven over RPC</td><td>Only through an extension command</td><td>The RPC command list in <code>rpc-commands.md</code> has no reload command. The one route is an extension command handler calling <code>ctx.reload()</code> — which means the extension you want to reload has to be the thing that reloads.</td></tr>
+              <tr><td>An embedder binding extensions without command actions</td><td><strong>No</strong> — silently</td><td>If the host does not bind command actions, <code>ctx.reload()</code> resolves against a no-op handler. The fleet's SDK host binds extensions this way, so a reload there is a silent no-op rather than an error.</td></tr>
+            </tbody>
+          </table></div>
+          <p>What a reload actually does is worth being precise about, because three wrong versions of it are in circulation. It shuts the runtime down with <code>session_shutdown { reason: "reload" }</code>, re-imports <strong>every</strong> extension with the module cache cleared (jiti runs with <code>moduleCache: false</code>), and starts again with <code>session_start { reason: "reload" }</code>. The transcript is preserved — this is not a new session — and the process keeps running, so it is not a restart either. What it is <em>not</em> is per-plugin: there is no way to reload one extension. Everything is re-imported, which is why every <code>pi</code> and <code>ctx</code> object captured before the reload is stale, and why the runtime tells you not to touch a <code>ctx</code> after <code>await ctx.reload()</code>.</p>
+          <p>One more asymmetry, because it explains a design choice: <strong>a tool cannot reload the runtime.</strong> Tools are handed an <code>ExtensionContext</code>, which has <code>compact()</code> and <code>getContextUsage()</code> but no <code>reload()</code>. The documented workaround is to queue a follow-up command and let a command handler do it — the same "hooks ask, commands act" split as above.</p>
+        </section>
+
+        <section id="spatiotemporal">
+          <h2>Space and time: where a run lives, and what it can revisit</h2>
+          <p>The loop is one process with one transcript, so it is easy to talk about "the agent" as a thing that is simply there. It is not: it has a place on the filesystem, and it has a history it can move around in. Two axes, and most of the ways multi-agent systems go wrong are one axis being mistaken for the other.</p>
+
+          <h3>The spatial axis: what is a boundary and what is a convention</h3>
+          <p>This fleet says "lane" a lot. A lane is not a container. What actually separates two lanes is a short list, and only the first three items on it are enforced by something other than text:</p>
+          <div class="table-scroll"><table>
+            <thead><tr><th>Boundary</th><th>Hard or convention?</th><th>What actually enforces it</th></tr></thead>
+            <tbody>
+              <tr><td>One <code>pi</code> process per lane</td><td><strong>Hard</strong></td><td>The operating system. Two lanes are two processes with separate memory; a tool call in one cannot touch the other's loop.</td></tr>
+              <tr><td>One session file per session</td><td><strong>Hard</strong></td><td>The history lives in one file, and a fork writes a <em>second</em> file. That is why a replay cannot damage the original.</td></tr>
+              <tr><td>The tool allowlist</td><td><strong>Hard for the protocol</strong></td><td>A tool that is not offered is not in the schema and the loop cannot call it. It says nothing about <code>bash</code>, which can write the same bytes with no tool involved.</td></tr>
+              <tr><td>A git worktree</td><td>Convention</td><td>One checkout per branch keeps two lanes from editing the same files. It does not fence processes, and it is not a permission.</td></tr>
+              <tr><td>The working directory</td><td>Convention, and the weakest one</td><td>The harness is launched with <code>cwd</code> set to the journal directory for <em>every</em> lane; the worktree arrives as <code>FLEET_WORKDIR</code> in the prompt text. "Where am I" is a sentence the model is told, not a syscall that constrains it.</td></tr>
+              <tr><td>Role separation</td><td>Convention</td><td>Role text plus an allowlist: a reviewer gets no <code>write</code> and no <code>edit</code> and is told not to shell out. Enforced by code around the tool and by instructions inside the prompt.</td></tr>
+              <tr><td>A subagent</td><td>Hard for the process, and not resumable</td><td>The shipped subagent example runs <code>--mode json -p --no-session</code>: a one-shot child process with no session to return to. Calling it a "nested resumable session" would be wrong on both words.</td></tr>
+            </tbody>
+          </table></div>
+          <p>Two consequences, and both are load-bearing. First: a plugin loaded in two processes is two independent plugins — hook state is per process, and the load order in one lane says nothing about the other. Second: the only things two lanes genuinely share are the ones with a hard boundary of their own — a git remote and the beads database. Everything else that looks shared is two copies plus a convention about who writes when.</p>
+
+          <h3>The temporal axis: a tree, not a transcript</h3>
+          <p>A session file is a tree. Every entry has an <code>id</code> and a <code>parentId</code>, and the <strong>active branch</strong> — the path from the root to the current leaf — is what the model is sent. Not the tree: the branch. That one sentence is the whole mechanism behind re-entry, replay and compaction, and it is also the sentence most descriptions of "agent memory" get wrong.</p>
+          <ul>
+            <li><strong>Re-entry is real.</strong> <code>/tree</code> moves the leaf <em>within the same file</em>. Submit a different message at that point and you have a second branch; the first is not erased, because nothing was ever a linear log to truncate.</li>
+            <li><strong>Replay is real.</strong> <code>/fork</code> writes a <em>new</em> session file whose header names the parent session, with the branch from an earlier entry. <code>/clone</code> copies the active branch into a new session. The original file is untouched in both cases.</li>
+            <li><strong>Leaving a branch can leave a note.</strong> Pi can summarise the branch you leave and attach that summary to the branch you enter, so the work is available without every message of it.</li>
+            <li><strong>Rewind is not.</strong> There is no undo. Moving the leaf changes what happens next; it does not change what happened.</li>
+          </ul>
+          <p>Compaction is the same idea applied to one dimension. It writes a <em>new</em> entry of type <code>compaction</code> holding the summary, <code>tokensBefore</code>, and <code>firstKeptEntryId</code>; when the context is rebuilt, everything before <code>firstKeptEntryId</code> is replaced by the summary and the entries from it onwards are sent as they are. The raw entries stay in the file. A "retain-none" compaction is the edge case: it stores its own id in <code>firstKeptEntryId</code>, so no preceding entry survives into the context, and the file is still whole.</p>
+          <p><code>context_edit</code> is the third member of the family, and it is the one most easily misread. It appends an entry that changes what the model <em>sees from that point on</em> — it is branch-relative, and it does not rewrite history. A tool result you edited out with a context edit is still in the file, and a fork from before the edit still sees it.</p>
+          <p>Put together: the harness has a real sense of "where" (process, file, allowlist) and a real sense of "when" (tree, branch, compaction cut). What it does not have is a way to make either of them invisible. Every rewrite leaves an entry; every boundary is either a kernel fact or a sentence in a prompt.</p>
+
+          <h3>How the two compose</h3>
+          <div class="table-scroll"><table>
+            <thead><tr><th>Setup</th><th>What is separate</th><th>What is shared</th><th>What it is good for</th></tr></thead>
+            <tbody>
+              <tr><td>Two lanes</td><td>Two processes, two worktrees, two session files, two tool allowlists</td><td>The git remote and the beads database — and nothing else</td><td>Parallel work on one repository without a merge per tool call. Convergence happens through <code>git</code>, deliberately and late.</td></tr>
+              <tr><td>One session forked at a turn</td><td>Two session files, two branches</td><td>One process, one worktree, one tool set</td><td>Replay: try the other repair, keep the first attempt readable, and compare afterwards without a checkout.</td></tr>
+              <tr><td>One session, compacted</td><td>Nothing — one file, one branch</td><td>Everything, including the entries the summary replaced</td><td>A long run that keeps going: the model's context shrinks, the file does not.</td></tr>
+            </tbody>
+          </table></div>
+          <p>The mistake to avoid is using the spatial axis for a temporal problem. Restarting a process to get a fresh transcript throws away the history you might have wanted to compare against; forking a session gives you the fresh context while keeping the original file, at the cost of nothing but disk. And the reverse mistake is just as common: expecting a fork to give you isolation, when both files are in the same worktree, the same process and the same tool set.</p>
+        </section>
+
+        <section id="explorer">
+          <h2>Plugin explorer: add a hook, deactivate a tool, fork a session</h2>
+          <p><strong>This is a deterministic simulation of the plugin surface and the session graph.</strong> No extension is loaded, no model is called, no key is used and nothing leaves this page. <code>plugins.js</code> holds the scripted run and the arithmetic; <code>explorer.js</code> renders whatever it returns.</p>
+          <p>Six controls, and each one is a mechanic from the two sections above:</p>
+          <ul>
+            <li><strong>Add a plugin</strong> — an extension that hooks something. Watch the load order, the dispatch count, and what that hook did to the run's numbers. A hook that only observes moves no numbers, which is the honest result and worth seeing once.</li>
+            <li><strong>Offer or withhold a tool</strong> — the construction-time allowlist. A tool that is not offered is not in the schema, so the scripted assistant's call to it fails as "not offered".</li>
+            <li><strong>Deactivate a tool mid-run</strong> — <code>setActiveTools</code>. The tool stays registered; the next call to it fails. This is labelled <em>deactivated, not unregistered</em> everywhere it appears, because that distinction is the whole point.</li>
+            <li><strong>Guard a call</strong> — a <code>tool_call</code> handler returning <code>{ block: true }</code>, with and without <code>terminate</code>. The two terminate options exist to show that a vote is not a veto: blocking <code>bash</code> votes inside a two-call batch and the loop carries on past turn 2 — until turn 4, where bash is the only call in its batch and the same vote is unanimous, so the run does stop there; blocking <code>edit</code> votes inside a one-call batch and the run stops at turn 3.</li>
+            <li><strong>Fork the session</strong> — the chosen turn decides the prefix, a new file gets the other branch, and file A keeps the branch it abandoned.</li>
+            <li><strong>Move the compaction cut</strong> — <code>firstKeptEntryId</code> slides down the active branch: everything above it becomes the summary, and the numbers move with it.</li>
+          </ul>
+
+          <div class="workbench">
+            <section class="settings" aria-labelledby="explorer-controls">
+              <h3 id="explorer-controls">Controls</h3>
+
+              <fieldset>
+                <legend>Plugins, in load order</legend>
+                <div class="plugin-buttons">
+                  <button type="button" id="add-turn-logger" class="secondary">+ turn-logger</button>
+                  <button type="button" id="add-context-redactor" class="secondary">+ context-redactor</button>
+                  <button type="button" id="add-prompt-stamp" class="secondary">+ prompt-stamp</button>
+                  <button type="button" id="add-result-annotator" class="secondary">+ result-annotator</button>
+                  <button type="button" id="add-lint-tool" class="secondary">+ lint-tool</button>
+                </div>
+                <p class="small">Each button appends an extension to the load order. Hooks dispatch in that order, and the list is snapshotted when a dispatch starts — so order matters and a mid-dispatch change does not.</p>
+                <ol id="plugin-order" class="plugin-order"></ol>
+                <button type="button" id="plugin-clear" class="secondary">clear the load set</button>
+                <p class="small">This clears the explorer's own state. In a real lane the set is fixed when the runtime is built: changing it means a reload of the whole runtime, or a restart.</p>
+              </fieldset>
+
+              <fieldset>
+                <legend>Tools: offered, and active</legend>
+                <div class="tool-list">
+                  <label><input type="checkbox" id="explore-tool-read" value="read" checked> <code>read</code></label>
+                  <label><input type="checkbox" id="explore-tool-bash" value="bash" checked> <code>bash</code></label>
+                  <label><input type="checkbox" id="explore-tool-edit" value="edit" checked> <code>edit</code></label>
+                  <label><input type="checkbox" id="explore-tool-write" value="write" checked> <code>write</code></label>
+                  <label><input type="checkbox" id="explore-tool-lint" value="lint" checked> <code>lint</code></label>
+                </div>
+                <p class="small">The first four are built-ins. <code>lint</code> is not: it exists only once the <code>lint-tool</code> plugin registers it. Offering a name nothing registered gives you neither a schema nor a call.</p>
+                <div class="fields">
+                  <div>
+                    <label for="deactivate-tool">Deactivate a tool</label>
+                    <select id="deactivate-tool">
+                      <option value="" selected>nothing deactivated</option>
+                      <option value="read">read</option>
+                      <option value="bash">bash</option>
+                      <option value="edit">edit</option>
+                      <option value="write">write</option>
+                      <option value="lint">lint</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label for="deactivate-after">…as of</label>
+                    <select id="deactivate-after">
+                      <option value="0">the start of the run</option>
+                      <option value="1">after turn 1</option>
+                      <option value="2" selected>after turn 2</option>
+                      <option value="3">after turn 3</option>
+                    </select>
+                  </div>
+                </div>
+                <p class="small">A deactivated tool is <strong>still registered</strong>. It is just no longer active, so its next call fails — deactivated, not unregistered.</p>
+                <button type="button" id="unregister-attempt" class="secondary">Try unregisterTool("edit")</button>
+                <p class="small" id="unregister-result" hidden></p>
+              </fieldset>
+
+              <fieldset>
+                <legend>A tool_call guard</legend>
+                <label for="guard">A handler that can block a call</label>
+                <select id="guard">
+                  <option value="none" selected>no guard</option>
+                  <option value="edit">block edit</option>
+                  <option value="bash">block bash</option>
+                  <option value="bash-terminate">block bash, and vote to terminate</option>
+                  <option value="edit-terminate">block edit, and vote to terminate</option>
+                </select>
+                <p class="small"><code>terminate</code> is a vote the loop only honours when <em>every</em> finalized result in the batch agrees — and the batch, not the setting, decides. Turn 2 carries two calls (bash + read), so a bash vote there is ignored; turn 4 carries a solo bash, so the same vote stops the run at turn 4; turn 3 carries a solo edit, so an edit vote stops it at turn 3.</p>
+              </fieldset>
+
+              <fieldset>
+                <legend>Space and time</legend>
+                <label for="fork">Fork the session</label>
+                <select id="fork">
+                  <option value="none" selected>do not fork</option>
+                  <option value="turn-1">after turn 1</option>
+                  <option value="turn-2">after turn 2</option>
+                  <option value="turn-3">after turn 3</option>
+                </select>
+                <p class="small">A fork writes a new session file from an earlier entry and gives it a different branch. The file that ran keeps the branch the new one left behind.</p>
+                <label for="cut">Compaction cut <output id="cut-value" for="cut">…</output></label>
+                <input type="range" id="cut" min="0" max="10" step="1" value="4">
+                <p class="small">The cut is a position in the active branch: that entry becomes <code>firstKeptEntryId</code>, everything before it is replaced by the summary when the context is rebuilt, and every entry stays in the file.</p>
+              </fieldset>
+            </section>
+
+            <section aria-labelledby="explorer-numbers">
+              <h3 id="explorer-numbers">Numbers</h3>
+              <p id="explorer-status" class="notice" role="status" aria-live="polite">Computing the graph…</p>
+              <dl id="explorer-metrics" class="metrics"></dl>
+              <p class="small" id="cut-line"></p>
+              <p class="small">The token counts are constants chosen so the mechanics are visible; they are not measurements. Context is the prompt plus the active branch, minus whatever the <code>context</code> handler redacted.</p>
+            </section>
+          </div>
+
+          <h3>The graph</h3>
+          <p class="small">Two session files, their entries in order, and where the compaction cut falls on the active branch. An entry with an amber edge was abandoned by the fork and is still readable; one with a grey edge is replaced by the summary when the context is rebuilt, and is still in the file.</p>
+          <p class="small" id="branch-line"></p>
+          <div id="tree" class="tree-files"></div>
+
+          <h3>The simulated run</h3>
+          <p class="small">One line per thing the harness did, in order, with the plugin and tool decisions in place. A request's context is the prompt plus everything in the active branch at that moment.</p>
+          <ol id="explorer-trace" class="trace"></ol>
+
+          <h3>Notes on this state</h3>
+          <ul id="explorer-notes" class="small"></ul>
+
+          <h3>What this does not model</h3>
+          <ul>
+            <li><strong>The model.</strong> The scripted assistant makes the same four turns whatever you do. A real model reacts to a blocked or failed call — that reaction is model behaviour, not a harness mechanic, and inventing it here would be inventing evidence.</li>
+            <li><strong>Hook side effects beyond the arithmetic.</strong> A plugin's effect is one number each: tokens redacted, tokens stamped, tokens annotated, schema tokens added, dispatches fired. Real handlers can do anything, including nothing, and the page cannot tell you which.</li>
+            <li><strong>The controls' reach into the forked branch.</strong> The alternative branch taken at a fork point is rendered as executed calls with their raw token counts, whatever the guard, deactivation and offer controls say. Those controls act on the recorded run in file A; the replay is a fixed alternative path, not a second simulation.</li>
+            <li><strong>Hook ordering beyond load order.</strong> Handlers within one extension dispatch in the order they were registered; the explorer models one handler per plugin.</li>
+            <li><strong>Real tokenisation.</strong> Every count is a constant. A real redaction saves whatever the redacted text actually costs, which may be nothing if the model's tokeniser disagrees with my arithmetic.</li>
+            <li><strong>The files on disk.</strong> The fork and the compaction are rendered as if they had been written; nothing is serialised, and <code>tokensBefore</code>, the compaction's <code>systemMessage</code> checkpoint and branch summaries are not drawn.</li>
+            <li><strong>Reload.</strong> There is no button for it. A reload rebuilds the whole runtime, which is not a property of the graph — it is why the graph cannot be changed in place.</li>
+          </ul>
+        </section>
+
         <section id="malleable">
           <h2>Malleable software: what can you reshape without a deploy?</h2>
-          <p>"Malleable software" is a useful phrase only if it comes with a boundary. Here the boundary is <em>where the value is read</em>: per request, at process start, or baked into the package. That gives three rungs, and the difference between them is usually a restart, not a rewrite.</p>
+          <p>"Malleable software" is a useful phrase only if it comes with a boundary. Here the boundary is <em>where the value is read</em>: per request, per runtime, at process start, or baked into the package. That gives the rungs below, and the difference between them is usually a reload or a restart, not a rewrite.</p>
+
+          <h3>Three verdicts, stated up front</h3>
+          <p>Applied to the three questions people actually ask about a harness like this one, the answers are not all the same shape, and two of the three are conditional:</p>
+          <div class="table-scroll"><table>
+            <thead><tr><th>Claim</th><th>Verdict</th><th>At what granularity</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>A plugin can be hot-swapped</td>
+                <td><strong>EXISTS</strong></td>
+                <td>The <em>whole runtime</em>, at once. A reload rebuilds the loop in-process — every extension re-imported, the transcript preserved — and there is no way to reload one plugin.</td>
+              </tr>
+              <tr>
+                <td>Tools can be mutated live</td>
+                <td><strong>PARTIAL</strong></td>
+                <td>Add: yes — at load, or later from a handler or a command, because <code>registerTool</code> refreshes the runtime. Replace: works because the registry is a map, and is undocumented. Remove: no API at all — <code>setActiveTools</code> deactivates, and the tool stays registered.</td>
+              </tr>
+              <tr>
+                <td>The prompt can be re-woven mid-run</td>
+                <td><strong>PARTIAL</strong></td>
+                <td><code>before_agent_start</code> fires <em>once per user prompt</em>, which is a single call site per run. Per-request rewriting is <code>context</code>, <code>context_with_system</code> and <code>before_provider_request</code>. Re-rendering the prompt's sections between turns does not exist.</td>
+              </tr>
+            </tbody>
+          </table></div>
+          <p>And the things that are simply not there, said plainly because each of them is a plausible guess: there is <strong>no</strong> <code>unregisterTool</code>; <strong>no</strong> reload command over RPC; <strong>no</strong> way for a tool to reload the runtime itself; <strong>no</strong> way for a hook to reach a dispatch already in progress; <strong>no</strong> single <code>terminate</code> that stops a batch; and <strong>no</strong> sandbox around an extension.</p>
+
+          <h3>What that means for software you can mould live</h3>
+          <p>Sort what you want to change by what it takes to make the change visible. This is the table I would put on the wall before designing anything that calls itself malleable:</p>
+          <div class="table-scroll"><table>
+            <thead><tr><th>What you want to reshape</th><th>What it takes</th><th>Why</th></tr></thead>
+            <tbody>
+              <tr><td>Which tools the model may use, right now</td><td><strong>Nothing</strong> — <code>setActiveTools</code></td><td>The runtime rebuilds the prompt from the active set, so the next request carries a different schema. The tool stays registered.</td></tr>
+              <tr><td>What the model sees of the past</td><td><strong>An entry</strong> — a compaction, or a <code>context_edit</code></td><td>Both append to the branch. Neither deletes anything, and both are relative to the branch you are on.</td></tr>
+              <tr><td>The loop's behaviour inside a request</td><td><strong>A hook</strong> — <code>context</code>, <code>context_with_system</code>, <code>before_provider_request</code></td><td>These fire per request, which is the only place per-request behaviour can live.</td></tr>
+              <tr><td>The prompt's structure between turns</td><td><strong>Code</strong> — it does not exist</td><td><code>before_agent_start</code> is one call site per user prompt. There is no per-turn prompt re-render to hook.</td></tr>
+              <tr><td>A whole extension — its hooks, its tools and its commands</td><td><strong>A reload</strong> of the runtime, or a restart</td><td>The extension set is read when the runtime is built. A reload rebuilds it in-process; a restart rebuilds it from scratch.</td></tr>
+              <tr><td>The provider's wire format, the built-in tools' behaviour</td><td><strong>Code</strong>, then a restart</td><td>Adapters and built-ins are the package. This is the rung where a mistake reaches every lane at once.</td></tr>
+            </tbody>
+          </table></div>
+
+          <h3>The rungs</h3>
           <div class="table-scroll"><table>
             <thead><tr><th>Rung</th><th>What changes</th><th>How it takes effect</th><th>What it costs to be wrong</th></tr></thead>
             <tbody>
               <tr>
                 <td><strong>Hot</strong></td>
-                <td>The model, the thinking level, compaction (on/off or now), and <code>models.json</code> on the next <code>/model</code></td>
-                <td>RPC: <code>set_model</code>, <code>set_thinking_level</code>, <code>compact</code>, <code>set_auto_compaction</code>; <code>models.json</code> is re-read on <code>/model</code></td>
+                <td>The model, the thinking level, compaction (on/off or now), the active tool set, and <code>models.json</code> — opening <code>/model</code> reloads that file</td>
+                <td>RPC: <code>set_model</code>, <code>set_thinking_level</code>, <code>compact</code>, <code>set_auto_compaction</code>; <code>setActiveTools</code> inside an extension; opening <code>/model</code> reloads <code>models.json</code></td>
                 <td>One bad run. The process keeps running and the next request uses the new value.</td>
+              </tr>
+              <tr>
+                <td><strong>Reload</strong></td>
+                <td>Extensions, skills, prompt templates, themes, keybindings, context files</td>
+                <td><code>/reload</code>, in the TUI — or <code>ctx.reload()</code> from an extension command handler. In-process: the runtime is rebuilt and the transcript is kept.</td>
+                <td>Every extension is re-imported at once, and every <code>pi</code> or <code>ctx</code> object your code kept is stale.</td>
               </tr>
               <tr>
                 <td><strong>Restart</strong></td>
@@ -232,7 +570,7 @@
               </tr>
             </tbody>
           </table></div>
-          <p>The middle rung is where most "malleable" claims quietly fail. Editing an extension's TypeScript and expecting the next headless run to pick it up does not work: the extension set is read when the process starts. Only the interactive TUI has a <code>/reload</code>. So the honest statement is "extensions are malleable with a restart", not "extensions are malleable".</p>
+          <p>The reload rung is where most "malleable" claims go wrong in one direction or the other. It is more than the sceptics say — the runtime really is rebuilt in place, the transcript really is preserved, and it is not a restart — and less than the enthusiasts say: it is not per-plugin, it is not complete (every extension is re-imported whether you touched it or not), and in this fleet's headless lanes it is not reachable at all. Editing an extension's TypeScript and expecting the next headless run to pick it up does not work, because the extension set is read when the runtime is built and nothing in the RPC or SDK surface issues a reload. Over RPC the only route is an extension command handler calling <code>ctx.reload()</code>, and this fleet's SDK host binds extensions without command actions, which turns that call into a silent no-op. So the honest statement for a headless lane is "extensions are malleable with a restart", and the honest statement for the TUI is "extensions are malleable, all of them at once".</p>
 
           <h3>The extensibility ladder</h3>
           <p>The same boundary sorts the ways you can extend the harness. Roughly in order of how much of the loop you get to change:</p>
@@ -269,13 +607,13 @@
 
         <section id="limits">
           <h2>Honest limits, stated as corrections</h2>
-          <p>Four claims about harnesses like this one are common, plausible, and wrong. Each one is wrong in a way that changes what you should build.</p>
+          <p>Six claims about harnesses like this one are common, plausible, and wrong. Each one is wrong in a way that changes what you should build.</p>
 
           <h3>1. "The agent runs in a sandbox."</h3>
           <p>There is no sandbox and no container. Tools execute with the user's operating-system permissions. Schema validation is not a security boundary; it is a shape check. The isolation in this fleet is operational — worktrees, role tool allowlists, branch ownership, the reaper — and every one of those is a convention enforced by code that runs <em>around</em> the tool, not by the kernel around the process. A role whose allowlist omits <code>write</code> is a role that has agreed not to write; give it <code>bash</code> and it can still write.</p>
 
           <h3>2. "Edit the extension and the next run picks it up."</h3>
-          <p>False in headless RPC. The extension set is read when the process starts; only the interactive TUI's <code>/reload</code> re-reads it. In a systemd-managed headless lane, changing an extension's TypeScript means restarting the process. Plan the restart into the change instead of being surprised by it — this is the single most common way a "malleable" tool turns out to be "malleable after a deploy".</p>
+          <p>False in headless RPC, and the near-miss is what makes it confusing. The extension set is read when the runtime is built, and a reload does rebuild it — but <code>/reload</code> is a TUI command. The RPC command list has no reload, so over RPC the only route is an extension command handler calling <code>ctx.reload()</code>, and a host that binds extensions without command actions resolves that call against a no-op. This fleet's SDK host binds them that way, so in a systemd-managed headless lane changing an extension's TypeScript means restarting the process. Plan the restart into the change instead of being surprised by it — this is the single most common way a "malleable" tool turns out to be "malleable after a deploy".</p>
 
           <h3>3. "DeepSeek takes the same reasoning settings as OpenAI."</h3>
           <p>It does not, and the mistake is quiet. Thinking is switched on by a <code>thinking</code> object that the <code>deepseek</code> thinking format emits; <code>reasoning_effort</code> travels <em>alongside</em> it rather than replacing it (the adapter does not exclude DeepSeek from effort support), and the length field is <code>max_tokens</code>, not <code>max_completion_tokens</code>. Point an OpenAI-format model entry at DeepSeek and the effort field still goes out with no <code>thinking</code> object at all: the request is accepted, nothing errors, and the model is not thinking the way you asked. Silent accepted-but-ignored fields are exactly what a schema assertion in your own test suite is for.</p>
@@ -283,21 +621,30 @@
           <h3>4. "The reviewer can't write, so the reviewer is safe."</h3>
           <p>A reviewer lane with no <code>write</code> and no <code>edit</code> is restricted by <em>tool allowlist omission plus prompts</em>. That is a good and cheap restriction, and it is not an operating-system block. If a reviewer is given <code>bash</code>, the shell can write. The honest version of the claim is: "the reviewer has no way to write <em>through the tool protocol</em>, and its instructions say not to try any other way". If you need more than that, take the tools away or run it somewhere with real permissions.</p>
 
+          <h3>5. "One tool returning terminate ends the run."</h3>
+          <p>It does not, and it does not even end the batch. Every call in the batch still executes and every result is still appended; what changes is the step after it. The harness skips its automatic follow-up request only when <em>every</em> finalized result in that batch asked to terminate, so a single vote inside a two-call batch is ignored. The <a href="#explorer">explorer</a> has the setting in both shapes on purpose, and it also shows the twist: blocking <code>bash</code> votes inside turn 2's two-call batch and the run carries on — but turn 4 is a solo bash, so that batch is unanimous and the run stops there. Blocking <code>edit</code> votes inside a one-call batch and it stops at turn 3. Whether a vote counts is a property of the batch, never of the setting.</p>
+
+          <h3>6. "Compaction deletes history."</h3>
+          <p>It appends. A compaction is a new entry holding the summary, <code>tokensBefore</code> and a <code>firstKeptEntryId</code>; when the context is rebuilt, the entries before that id are replaced by the summary and the raw entries stay in the file. A retain-none compaction stores its <em>own</em> id in <code>firstKeptEntryId</code> so nothing before it survives into the context — and the file is still whole. What compaction deletes is context, not history, and a fork from before the compaction still sees everything.</p>
+
           <h3>What this page does not claim</h3>
-          <p>The token counts in the simulation are constants chosen so the mechanics are visible at a few thousand tokens; they are not measurements of a real run. The demo context windows are small on purpose for the same reason. Real billing, real latency, provider caching, tokeniser differences and model behaviour are all outside the simulation. Nothing here was benchmarked: the page describes a harness this fleet runs and the code you can read in it, not a performance claim about any model.</p>
+          <p>The token counts in both simulations are constants chosen so the mechanics are visible at a few thousand tokens; they are not measurements of a real run. The demo context windows are small on purpose for the same reason. Real billing, real latency, provider caching, tokeniser differences and model behaviour are all outside the simulations — including the scripted assistant in the explorer, which does not react to a blocked or failed call the way a model would. Nothing here was benchmarked: the page describes a harness this fleet runs and the code you can read in it, not a performance claim about any model.</p>
         </section>
 
         <section id="evidence">
           <h2>Where this comes from</h2>
           <p>The claims above describe the harness as this fleet has it configured, read from its own source rather than from a public announcement: the package <code>@earendil-works/pi-coding-agent</code> and its <code>pi-agent-core</code> and <code>pi-ai</code> dependencies; the lane host in <code>remote/lane-host.mjs</code>; the lane role prompts assembled from <code>roles/common.md</code> and <code>roles/&lt;role&gt;.md</code>; and the provider adapter whose DeepSeek settings are named in the table above. The playground's scripted transcript lives in <code>site/harness/sim.js</code> and is the only input to its arithmetic.</p>
-          <p>There is no version pin on this page, and that is a limitation: a harness changes faster than a page does. If a name here has moved (an RPC method, a setting key, a flag), the source in the package is the authority and this page is the summary that was true when it was written.</p>
+          <p>The plugin surface in <a href="#plugins">section 4</a> comes from that package's own documentation at version <code>0.87.1</code>: <code>docs/extensions.md</code> for the hook set and the API shape, <code>docs/sessions.md</code> and <code>docs/session-format.md</code> for the tree, <code>firstKeptEntryId</code> and the fork/clone distinction, <code>docs/compaction.md</code> for the retained range, <code>docs/models.md</code> for the one hot-rung claim that involves a file read — "opening <code>/model</code> reloads the file", <code>docs/rpc-commands.md</code> and <code>docs/sdk.md</code> for the two non-TUI audiences and the reload that is missing from one of them, and <code>examples/dynamic-tools</code> for a tool registered from an extension. Where the page says something is undocumented — replacing a tool by name — that is because it is not in those files; it is in the shipped <code>dist/</code>, which is a different kind of evidence. The absence of <code>unregisterTool</code> was checked the same way: zero hits across <code>dist/</code>, <code>docs/</code> and <code>examples/</code>.</p>
+          <p>The explorer's scripted run and its arithmetic live in <code>site/harness/plugins.js</code>; <code>site/harness/explorer.js</code> renders whatever that returns, so a number on the page that disagrees with a control is a bug in one of those two files rather than a stale screenshot.</p>
+          <p>There is no version pin on this page, and that is a limitation: a harness changes faster than a page does. If a name here has moved (an RPC method, a setting key, a flag, a hook), the source in the package is the authority and this page is the summary that was true when it was written.</p>
         </section>
 
       </article>
     </div>
   </main>
 
-  <footer>A working notebook, not a promise of correctness. Researched October 2026. <a href="https://github.com/PaulKinlan/learnings">Source &amp; limitations</a>. No analytics. The playground simulates; it calls nothing.</footer>
+  <footer>A working notebook, not a promise of correctness. Researched October 2026. <a href="https://github.com/PaulKinlan/learnings">Source &amp; limitations</a>. No analytics. The playground and the explorer simulate; they call nothing.</footer>
   <script type="module" src="./app.js"></script>
+  <script type="module" src="./explorer.js"></script>
 </body>
 </html>
