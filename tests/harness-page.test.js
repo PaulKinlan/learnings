@@ -309,6 +309,18 @@ test("harness playground: each control changes the trace and the numbers, and no
         control.dispatchEvent(new Event("input", { bubbles: true }));
         return control.value;
       }, id, value);
+    // A real mouse press on the track, at a chosen fraction of its width: the only way to show a
+    // slider is wired to the renderer without setting .value from script.
+    const clickRangeAt = async (id, fraction) => {
+      const at = await page.evaluate((controlId, portion) => {
+        const control = document.getElementById(controlId);
+        control.scrollIntoView({ block: "center" });
+        const box = control.getBoundingClientRect();
+        return { x: box.x + box.width * portion, y: box.y + box.height / 2 };
+      }, id, fraction);
+      await page.clickAt(at.x, at.y);
+      return page.evaluate((controlId) => Number(document.getElementById(controlId).value), id);
+    };
     // "The line came from reserveTokens": parse the number the page printed and check the
     // arithmetic itself, for whatever the control happens to be set to.
     const compactionLine = async () => {
@@ -397,12 +409,16 @@ test("harness playground: each control changes the trace and the numbers, and no
     assert.notEqual(sequential.metrics, parallel.metrics, "and a bigger bill");
     await setSelect("batch", "parallel");
 
-    // 5. reserveTokens, with a real click on the range and then exact values.
-    const beforeReserve = await compactionLine();
-    await page.click("#reserve");
-    const afterClick = await compactionLine();
-    assert.equal(afterClick.above, afterClick.window - afterClick.reserve, "the label still derives after a real drag");
-    assert.notEqual(afterClick.reserve, beforeReserve.reserve, "clicking the range moves it");
+    // 5. reserveTokens, with real presses on the range's track and then exact values.
+    const lowClick = await clickRangeAt("reserve", 0.2);
+    const lowLine = await compactionLine();
+    assert.equal(lowLine.reserve, lowClick, "a real press moves the slider");
+    assert.equal(lowLine.above, lowLine.window - lowClick, "and the printed line is window - the slider");
+    const highClick = await clickRangeAt("reserve", 0.8);
+    const highLine = await compactionLine();
+    assert.ok(highClick > lowClick, `a press further along the track reserves more (${lowClick} → ${highClick})`);
+    assert.equal(highLine.above, highLine.window - highClick);
+    assert.notEqual(lowLine.above, highLine.above, "the trace's compaction line moved with the control");
     await setRange("reserve", 0);
     const noReserve = await compactionLine();
     assert.equal(noReserve.above, noReserve.window, "a zero reserve puts the line at the window's edge");
