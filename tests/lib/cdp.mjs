@@ -134,6 +134,13 @@ export async function launch({ width = 1000, height = 800, profile = null, fakeM
       binary,
       [
         "--headless=new",
+        // GitHub-hosted runners do not grant the unprivileged user-namespace privileges the
+        // Chromium sandbox needs, so it exits immediately
+        // ("chromium exited early (null)") and both nn-stack-focus and playground fail in
+        // CI while passing locally (learnings-rokl CI report, 2026-11-06). Scoped to CI so
+        // the sandbox stays on for real dev machines: on the runner the container is already
+        // the isolation boundary, and this process only ever loads our own site over loopback.
+        ...(process.env.CI ? ["--no-sandbox"] : []),
         ...(fakeMedia ? ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] : []),
         "--disable-gpu",
         "--no-first-run",
