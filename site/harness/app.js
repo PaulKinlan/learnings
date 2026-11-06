@@ -88,17 +88,29 @@ function entry(event, run) {
         node("p", "ev-line", `context ${number(event.before)} is past the line at ${number(event.threshold)}, but ${event.reason}`),
       );
       break;
-    case "request":
+    case "request": {
+      const windowTokens = event.window ?? run.model.contextWindow;
+      const over = event.contextTokens > windowTokens;
+      if (over) item.classList.add("ev-over");
       item.append(
         node(
           "p",
           "ev-title",
           event.status === "429"
             ? `request #${event.index} · HTTP 429`
-            : `request #${event.index} · context ${number(event.contextTokens)} / ${number(event.window ?? run.model.contextWindow)}`,
+            : `request #${event.index} · context ${number(event.contextTokens)} / ${number(windowTokens)}`,
         ),
-        bar(event.contextTokens, event.window ?? run.model.contextWindow, event.threshold),
+        bar(event.contextTokens, windowTokens, event.threshold),
       );
+      if (over) {
+        item.append(
+          node(
+            "p",
+            "ev-warn",
+            `over the window by ${number(event.contextTokens - windowTokens)} tokens: nothing was left to compact (see the skipped note above), and the bar stops at 100% — a real request this size would be refused or truncated by the provider.`,
+          ),
+        );
+      }
       if (event.note) item.append(node("p", "ev-note", event.note));
       if (event.status === "ok") {
         item.append(
@@ -110,6 +122,7 @@ function entry(event, run) {
         );
       }
       break;
+    }
     case "retry":
       item.append(
         node("p", "ev-title", `retry · attempt ${event.attempt} after HTTP ${event.status}`),

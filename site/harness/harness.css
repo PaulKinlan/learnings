@@ -130,3 +130,17 @@
 .article dd {
   overflow-wrap: anywhere;
 }
+
+/* A request the compaction could not bring back under the window: the bar is capped at 100%, so the
+   number and this row are what tell the reader it happened. */
+.ev-over .ev-title {
+  color: #8a1f00;
+}
+
+.ev-warn {
+  margin: 0.2rem 0 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #8a1f00;
+  overflow-wrap: anywhere;
+}

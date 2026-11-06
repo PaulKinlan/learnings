@@ -12,8 +12,9 @@
  *   - one turn = one assistant response + its tool calls + their results, appended to the
  *     transcript, then another model request if the assistant asked for tools;
  *   - `agent_end` closes one run, `agent_settled` says no automatic work remains;
- *   - compaction fires when `contextTokens > contextWindow - reserveTokens`, keeps
- *     `keepRecentTokens` from the end untouched, and replaces the older turns with a summary;
+ *   - compaction fires when `contextTokens > contextWindow - reserveTokens` (the reserve is the room
+ *     left for the model's response), keeps `keepRecentTokens` from the end untouched, and replaces
+ *     the older turns with a summary;
  *   - a tool that is not in the run's allowlist is not executed: the assistant gets an
  *     `isError: true` result back instead;
  *   - a tool error does not end the run, but an assistant response with no tool calls does.
@@ -65,8 +66,9 @@ export const TURN_TOKENS = {
 /** The summary that replaces compacted turns: a fixed preamble plus a fraction of what it read. */
 export const SUMMARY_TOKENS = { base: 400, ratio: 0.15 };
 
-/** The scripted run. Each step is one assistant response: the calls it carries, and the result
- *  each call returns. A step with no calls is the closing answer that ends the run. */
+/** The scripted run. Each step is one assistant response that carries tool calls, and the result
+ *  each call returns. The closing answer is not a step: the loop adds it after the script runs out,
+ *  which is the same rule the harness follows — no tool calls, no next request. */
 export const SCRIPT = [
   {
     calls: [
@@ -90,7 +92,6 @@ export const SCRIPT = [
   {
     calls: [{ tool: "bash", target: "npm test -- tests/lane-host.test.js", resultTokens: 900 }],
   },
-  { calls: [] },
 ];
 
 /** The turn after which a mid-run prompt arrives. Turn 1 is the first assistant response. */
@@ -101,6 +102,8 @@ export const defaultAllowlist = () => TOOLS.filter((tool) => tool.defaultOn).map
 const byId = (list, id, fallbackId) => list.find((entry) => entry.id === id) ?? byId(list, fallbackId) ?? list[0];
 const toolById = (id) => TOOLS.find((tool) => tool.id === id);
 const total = (messages) => messages.reduce((sum, message) => sum + message.tokens, 0);
+/** The trace's sentences carry numbers, so they are written the way the rest of the page writes them. */
+const count = (value) => value.toLocaleString("en-US");
 
 /** Clamp to the range and step the control advertises, so a hand-built call and a slider agree. */
 function clampStep(value, min, max, step) {
@@ -195,9 +198,9 @@ export function simulateRun(options = {}) {
     if (!older.length) {
       const reason =
         systemTokens >= threshold
-          ? `the system prompt and tool schemas alone (${systemTokens} tokens) are already past the line, and compaction only rewrites messages`
+          ? `the system prompt and tool schemas alone (${count(systemTokens)} tokens) are already past the line, and compaction only rewrites messages`
           : keepRecentTokens >= total(messages)
-            ? `keepRecentTokens (${keepRecentTokens}) covers the whole transcript, so there is nothing older to summarise`
+            ? `keepRecentTokens (${count(keepRecentTokens)}) covers the whole transcript, so there is nothing older to summarise`
             : "the newest message alone exceeds the kept window, and a summary cannot replace it";
       events.push({ kind: "compaction-skipped", before, threshold, keepRecentTokens, reason });
       return;

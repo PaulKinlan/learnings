@@ -172,6 +172,29 @@ test("thinking level buys reasoning tokens, which are re-sent on every later req
   assert.equal(bills[0].metrics.reasoningTokens, 0);
 });
 
+test("a run ends with exactly one closing answer, not a scripted one and a loop one", () => {
+  for (const options of [{}, { batchMode: "sequential" }, { tools: ["read", "bash"] }, { prompt: "follow-up" }]) {
+    const run = simulateRun(options);
+    const answers = run.events.filter((event) => event.kind === "assistant" && event.calls.length === 0);
+    // A follow-up legitimately buys a second run, and so a second answer; anything else is a double-bill.
+    assert.equal(answers.length, options.prompt === "follow-up" ? 2 : 1, JSON.stringify(options));
+    const tail = run.events.slice(-3).map((event) => event.kind);
+    assert.deepEqual(tail, ["assistant", "run-end", "settled"], "the closing answer is the last request's reply");
+  }
+});
+
+test("a request can be over the window when the kept tail leaves nothing to compact, and it is reported", () => {
+  const run = simulateRun({ thinking: "high", keepRecentTokens: LITE.contextWindow });
+  const requests = run.events.filter((event) => event.kind === "request");
+  const over = requests.filter((event) => event.contextTokens > LITE.contextWindow);
+  assert.ok(over.length > 0, "the transcript grows past a window nothing may be dropped from");
+  assert.ok(
+    run.events.some((event) => event.kind === "compaction-skipped"),
+    "and the reason is on the trace rather than left implicit",
+  );
+  assert.ok(run.metrics.peakContext > LITE.contextWindow, "the metrics say so too");
+});
+
 test("a run is deterministic: the same controls produce the same trace", () => {
   const controls = { model: PRO.id, thinking: "high", reserveTokens: 4096, keepRecentTokens: 1024 };
   assert.deepEqual(simulateRun(controls), simulateRun(controls));
@@ -343,6 +366,14 @@ test("harness playground: each control changes the trace and the numbers, and no
     assert.match(initial.trace, /agent_end — this run is closed/);
     assert.match(initial.trace, /agent_settled — no automatic work remains/);
     assert.match(initial.inputs, /base prompt 900 tokens/, "the simulation's constants are published on the page");
+    const firstPaint = await page.evaluate(() => ({
+      reserve: document.querySelector("#reserve").value,
+      reserveOut: document.querySelector("#reserve-value").textContent,
+      keep: document.querySelector("#keep").value,
+      keepOut: document.querySelector("#keep-value").textContent,
+    }));
+    assert.equal(firstPaint.reserveOut, firstPaint.reserve, "the reserve output is filled by the first render");
+    assert.equal(firstPaint.keepOut, firstPaint.keep, "and so is the keep output");
     const defaultLine = await compactionLine();
     assert.equal(defaultLine.above, defaultLine.window - defaultLine.reserve, "line = window - reserve");
     const defaultReserve = await page.evaluate(() => Number(document.querySelector("#reserve").value));
@@ -473,6 +504,17 @@ test("harness playground: each control changes the trace and the numbers, and no
     assert.equal((followed.trace.match(/agent_settled — no automatic work remains/g) ?? []).length, 2, "a follow-up settles twice");
     assert.equal(await metric("Runs"), "2");
     await setSelect("prompt", "none");
+
+    // A configuration that cannot compact anything leaves requests over the window; the trace has
+    // to say so, because the bar is capped at 100%.
+    await setSelect("model", "deepseek-v4-lite");
+    await setSelect("thinking", "high");
+    await setRange("keep", LITE.contextWindow);
+    const overWindow = await snapshot();
+    assert.match(overWindow.trace, /over the window by [\d,]+ tokens/, "an over-window request is explained");
+    assert.match(overWindow.trace, /nothing was left to compact/, "and the reason is named");
+    await setRange("keep", 4096);
+    await setSelect("thinking", "low");
 
     // A phone-width column must not push the page sideways; the trace's long identifiers are the
     // usual cause, and the tables are already inside their own scroll container.

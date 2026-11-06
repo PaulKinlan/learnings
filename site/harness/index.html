@@ -65,7 +65,7 @@
 
         <section id="what">
           <h2>What the harness actually is here</h2>
-          <p>The harness is <code>@earendil-works/pi-coding-agent</code>, with <code>pi-agent-core</code> and <code>pi-ai</code> underneath it. It is not a chat application and it is not a sandbox. It is a Node process that owns four things: the <strong>loop</strong> that decides when to call the model again, the <strong>tool registry</strong> that turns the model's requests into local processes, the <strong>transcript</strong> that is re-sent on every request, and the <strong>prompt assembly</strong> that decides what the model is told.</p>
+          <p>The harness is <code>@earendil-works/pi-coding-agent</code>, with <code>pi-agent-core</code> and <code>pi-ai</code> underneath it. It is a Node process that owns four things: the <strong>loop</strong> that decides when to call the model again, the <strong>tool registry</strong> that turns the model's requests into local processes, the <strong>transcript</strong> that is re-sent on every request, and the <strong>prompt assembly</strong> that decides what the model is told.</p>
           <p>In this fleet it runs <em>headless</em>, under systemd, with no terminal attached. Its parent process is <code>remote/lane-host.mjs</code>, which speaks to it over JSON lines over a pipe: one JSON object per line in, one per line out. The model itself is a remote HTTP endpoint (DeepSeek, reached through the exe.dev HTTPS proxy). Everything else on this page — the loop, the tools, the transcript, the compaction, the prompts — is local code you can read, restart and change.</p>
           <p>That split is the whole point. Swapping the model is a configuration change. Swapping the loop is a code change. The interesting engineering is all in the second category, and most writing about agents collapses the two.</p>
 
@@ -78,7 +78,7 @@
           </ol>
           <p>One <strong>turn</strong> is one assistant response plus the tool calls it carried plus their results — appended, not replaced. A turn is the unit the transcript grows by, and therefore the unit the bill grows by, because step 1 re-sends the whole transcript on every request. The playground below exists mostly to make that sentence concrete.</p>
           <p>Two names matter and they are not synonyms. <code>agent_end</code> closes <em>one run</em>: the assistant produced a response with no tool calls. <code>agent_settled</code> is stronger: no automatic work remains — no retry pending, no compaction scheduled, no steering message queued, no follow-up waiting. A run can end while the agent is not settled, and that gap is where four of the mechanics on this page live.</p>
-          <p>Compaction is the loop's answer to a finite context window. It fires when the context exceeds the window minus a reserve — <code>contextTokens &gt; contextWindow - reserveTokens</code> — keeps the most recent <code>keepRecentTokens</code> worth of the transcript untouched from the end, and replaces everything older with a summary. It is a lossy operation performed by a model, which is why the reserve exists: the reserve is the room the summary request itself needs.</p>
+          <p>Compaction is the loop's answer to a finite context window. It fires when the context exceeds the window minus a reserve — <code>contextTokens &gt; contextWindow - reserveTokens</code> — keeps the most recent <code>keepRecentTokens</code> worth of the transcript untouched from the end, and replaces everything older with a summary. It is a lossy operation performed by a model, and the reserve is what leaves that model room to answer — pi's documentation says the reserve "leaves room for the LLM's response", and its default is 16,384 tokens. The playground's demo windows are scaled down, so its default reserve is smaller too.</p>
         </section>
 
         <section id="anatomy">
@@ -90,16 +90,16 @@
 
           <h3>The tool protocol</h3>
           <p>Each tool declares its arguments as a <strong>TypeBox</strong> schema, and the harness validates every call against that schema <em>before</em> <code>execute()</code> runs. A malformed call never reaches the tool. The built-ins are <code>read</code>, <code>bash</code>, <code>powershell</code>, <code>edit</code>, <code>write</code>, <code>grep</code>, <code>find</code> and <code>ls</code>; the default allowlist is <code>read</code>, <code>bash</code>, <code>edit</code> and <code>write</code>. A run's allowlist comes from <code>-t</code>/<code>--tools</code>, from settings, or from a subagent's own declaration — and a tool that is not on it is not offered to the model at all.</p>
-          <p>Two behaviours are worth knowing because they shape what a failure looks like. Errors are <strong>thrown</strong> and returned to the model as a tool result with <code>isError: true</code> — a failing tool does not crash the run, it hands the model a bad result and the loop continues. And a tool can return <code>terminate: true</code>, which ends the current batch immediately: the remaining calls in that batch are not executed and their results are not produced. That is how a single call can shorten a turn.</p>
+          <p>Two behaviours are worth knowing because they shape what a failure looks like. Errors are <strong>thrown</strong> and returned to the model as a tool result with <code>isError: true</code> — a failing tool does not crash the run, it hands the model a bad result and the loop continues. And a tool can return <code>terminate: true</code>, which does <em>not</em> stop the batch: every call in it still executes and every result is still appended. What changes is the next step — the harness skips its automatic follow-up model request, and only when <em>every</em> completed tool in that batch returned <code>terminate: true</code> (<code>shouldTerminateToolBatch</code> is an <code>every()</code> over the finished calls). One tool asking to terminate is a vote, not a veto.</p>
           <p>The consequence is that "the tool failed" and "the model knows the tool failed" are different facts. The harness guarantees the second one only.</p>
 
           <h3>Prompt assembly</h3>
-          <p>The prompt is assembled, in order, from: a base prompt; the project's <strong>hierarchical</strong> context files (<code>AGENTS.md</code> and <code>CLAUDE.md</code>, discovered up the directory tree); anything passed as <code>--append-system-prompt</code>; the tool definitions; and the skill descriptions. Lanes add one more layer: <code>roles/common.md</code> plus <code>roles/&lt;role&gt;.md</code> are assembled into the role text before the harness ever sees it.</p>
-          <p>This is why a tool allowlist change is also a <em>prompt</em> change: every tool definition is JSON Schema in the context window. Drop <code>write</code> and the prompt gets smaller and the model cannot call it; add <code>grep</code> and the prompt gets bigger and the tool appears. The playground prices that, because it is easy to forget that an allowlist is not free.</p>
+          <p>Two layers, not one list. The <strong>system prompt</strong> is built from Pi's base instructions and the context files it discovers (<code>AGENTS.md</code> and <code>CLAUDE.md</code> up the directory tree; <code>SYSTEM.md</code> replaces the base text, <code>APPEND_SYSTEM.md</code> adds to it, and <code>--append-system-prompt</code> adds one more from the command line, with the project's <code>.pi/</code> copy taking precedence). The <strong>request</strong> carries more beside that prompt: the tool definitions and the skill descriptions. Full skill instructions load on demand, and extensions can add instructions or transform the context before it is sent. Lanes add one more layer above all of it: <code>roles/common.md</code> plus <code>roles/&lt;role&gt;.md</code> are assembled into the role text before the harness ever sees it.</p>
+          <p>The schematic version — base prompt, context files, role text, tool schemas, skill descriptions, in that order — is the mental model this page and its playground use. The source is the authority on the order, and it counts tools and skills as request-carried rather than as prompt steps.</p>
+          <p>Either way, a tool allowlist change is also a <em>prompt</em> change: every tool definition is JSON Schema in the context window. Drop <code>write</code> and the request gets smaller and the model cannot call it; add <code>grep</code> and the request gets bigger and the tool appears. The playground prices that (an approximation, not a measurement), because it is easy to forget that an allowlist is not free.</p>
 
           <h3>Isolation, stated plainly</h3>
-          <p><strong>This harness is not a sandbox and there is no container.</strong> Tools run with the user's operating-system permissions. A <code>bash</code> call can read your home directory, your SSH keys and your environment; an <code>edit</code> call can write anywhere that user can write. Nothing in the loop, the schema validation or the transcript interception changes that. Schema validation checks that a call is <em>shaped</em> correctly, not that it is safe.</p>
-          <p>What this fleet has is <strong>operational isolation</strong>, and it is worth naming precisely because the word "isolation" invites the wrong inference:</p>
+          <p>There is no sandbox and there is no container: every tool runs with the user's operating-system permissions (<a href="#limits">correction 1</a> says what follows from that). What this fleet has instead is <strong>operational isolation</strong>, and it is worth naming precisely because the word "isolation" invites the wrong inference:</p>
           <div class="table-scroll"><table>
             <thead><tr><th>Mechanism</th><th>What it actually does</th><th>What it does not do</th></tr></thead>
             <tbody>
@@ -109,7 +109,7 @@
               <tr><td>The reaper</td><td>Kills orphaned processes and browsers left by a lane that died.</td><td>Does not bound what a live lane may do while it runs.</td></tr>
             </tbody>
           </table></div>
-          <p>Read that table as a list of conventions enforced by code you control, not as a security boundary enforced by the kernel. If you need the second thing, you need a container, a VM or a separate machine — and then the harness is the same harness, just somewhere safer.</p>
+          <p>Read that table as a list of conventions enforced by code you control, not as a security boundary enforced by the kernel. If you need the second thing, you need a container, a VM or a separate machine.</p>
         </section>
 
         <section id="playground">
@@ -150,11 +150,12 @@
                   </select>
                 </div>
                 <div>
-                  <label for="autoretry">Retry policy</label>
-                  <select id="autoretry">
+                  <label for="autoretry">Retry policy <span class="small">(inert until a failure is injected)</span></label>
+                  <select id="autoretry" aria-describedby="autoretry-note">
                     <option value="on" selected>auto-retry on 429</option>
                     <option value="off">no auto-retry</option>
                   </select>
+                  <p class="small" id="autoretry-note">With no injected failure there is nothing to retry, so this changes nothing on its own.</p>
                 </div>
                 <div>
                   <label for="prompt">A prompt arrives</label>
@@ -167,7 +168,7 @@
                 <div>
                   <label for="reserve">reserveTokens <output id="reserve-value" for="reserve">8192</output></label>
                   <input type="range" id="reserve" min="0" max="15360" step="512" value="8192">
-                  <p class="small">Compaction fires when contextTokens &gt; window − reserveTokens.</p>
+                  <p class="small">Compaction fires when contextTokens &gt; window − reserveTokens. The reserve is what leaves the summarising model room to answer, so a bigger reserve moves the line down and compacts earlier.</p>
                 </div>
                 <div>
                   <label for="keep">keepRecentTokens <output id="keep-value" for="keep">4096</output></label>
@@ -200,7 +201,7 @@
           </div>
 
           <h3>The trace</h3>
-          <p class="small">One entry per thing the harness did, in order. Each request shows the context it sent against the window, with a marker at the compaction line.</p>
+          <p class="small">One entry per thing the harness did, in order. Each request shows the context it sent against the window, with a marker at the compaction line. If a request is over the window — which happens when <code>keepRecentTokens</code> leaves nothing to compact — the bar stops at 100% and the entry says so; a real provider would refuse or truncate that request.</p>
           <ol id="trace" class="trace"></ol>
           <p class="small">Not simulated, deliberately: what the model would actually say or choose; real latency; provider caching; any failure other than a 429; and tokenisation. The scripted assistant has one blocked branch (a write-class tool it may not call) and otherwise does not react to anything — including the steering message, whose effect on a real model is a model behaviour, not a loop mechanic.</p>
         </section>
@@ -220,7 +221,7 @@
               <tr>
                 <td><strong>Restart</strong></td>
                 <td>CLI flags and environment, the set of extensions loaded in headless RPC, and <code>settings.json</code></td>
-                <td>Restart the process; the values are read at startup.</td>
+                <td>Restart the process. In a headless lane these are read at startup: there is no RPC command that rewrites settings, so a settings change takes a restart to be seen.</td>
                 <td>An interrupted run and a cold context. Nothing is lost that was not in the transcript.</td>
               </tr>
               <tr>
@@ -237,13 +238,13 @@
           <p>The same boundary sorts the ways you can extend the harness. Roughly in order of how much of the loop you get to change:</p>
           <ol>
             <li><strong>Extensions</strong> (<code>.ts</code>) — full access: register tools, hook events, change what the loop does.</li>
+            <li><strong>Custom providers</strong> — a new wire protocol for a new endpoint. This is an extension too, not a rung below one: <code>pi.registerProvider()</code> is called from an extension factory and inherits its loading, trust and reload behaviour.</li>
             <li><strong>Custom tools</strong> (<code>pi.registerTool</code>) — a tool with a schema, without owning the loop.</li>
             <li><strong>Skills</strong> (<code>SKILL.md</code>) — instructions and procedures the model can load; no new code paths.</li>
             <li><strong>Prompt templates</strong> — a reusable starting prompt.</li>
-            <li><strong>Custom providers</strong> — a new wire protocol for a new endpoint.</li>
-            <li><strong><code>models.json</code></strong> — a new model on an existing protocol: base URL, token limits, and which wire quirks to speak.</li>
+            <li><strong><code>models.json</code></strong> — a new model on an existing protocol: base URL, token limits, and which wire quirks to speak. The provider docs send you here first when the service already speaks a supported API.</li>
           </ol>
-          <p>Each rung is a real product decision, not a taste. A skill that would solve the problem is better than an extension, because a skill is readable by the person who inherits it and an extension is code you now maintain. The ladder is also a map of where bugs hide: the lower the rung, the more the answer is "it depends on the model"; the higher, the more it is "it depends on you".</p>
+          <p>Each rung is a real product decision, not a taste. A skill that would solve the problem is better than an extension, because a skill is readable by the person who inherits it and an extension is code you now maintain. The list is also a map of where bugs hide: the further down you go, the less of the loop you own and the more the answer is "it depends on the model"; the higher up, the more it is "it depends on you".</p>
         </section>
 
         <section id="deepseek">
@@ -256,19 +257,14 @@
               <tr><td>TypeBox validation, allowlists, <code>isError</code>, <code>terminate</code></td><td>Harness</td><td>No</td></tr>
               <tr><td>Prompt assembly, context files, skills</td><td>Harness + fleet roles</td><td>No</td></tr>
               <tr><td>Compaction thresholds and the summary</td><td>Harness</td><td>No</td></tr>
-              <tr><td>How "thinking" is requested</td><td>Provider adapter</td><td><strong>Yes</strong> — a <code>thinking</code> object, not OpenAI's <code>reasoning_effort</code></td></tr>
-              <tr><td>Whether reasoning text comes back on the assistant message</td><td>Provider adapter</td><td><strong>Yes</strong> — it must be echoed back</td></tr>
+              <tr><td>How thinking is requested</td><td>Provider adapter</td><td><strong>Yes</strong> — <code>thinkingFormat: "deepseek"</code> emits <code>{thinking: {type: "enabled"}}</code>, and <code>reasoning_effort</code> is passed alongside it</td></tr>
+              <tr><td>Whether reasoning text comes back on the assistant message</td><td>Provider adapter</td><td><strong>Yes</strong> — <code>requiresReasoningContentOnAssistantMessages</code>, it must be echoed back</td></tr>
               <tr><td>Output length field</td><td>Provider adapter</td><td><strong>Yes</strong> — <code>max_tokens</code></td></tr>
-              <tr><td>Credit check and network path</td><td>Adapter + deployment</td><td><strong>Yes</strong> — a balance endpoint and the exe.dev proxy</td></tr>
+              <tr><td>Provider error classification and network path</td><td>Lane host + deployment</td><td><strong>Yes</strong> — a regex over the provider's error text, and the exe.dev proxy</td></tr>
             </tbody>
           </table></div>
-          <p>The three wire differences that actually bite when you wire a new model up:</p>
-          <ol>
-            <li><strong>Thinking is a mode, not an effort.</strong> The adapter uses <code>thinkingFormat: "deepseek"</code> and emits <code>{thinking: {type: "enabled"}}</code>. Copying an OpenAI config and setting <code>reasoning_effort</code> produces a request that is accepted and quietly does not enable thinking. There is no error, which is the worst kind of wrong.</li>
-            <li><strong>Reasoning content is state you have to keep.</strong> <code>requiresReasoningContentOnAssistantMessages: true</code> means the assistant's reasoning text must be sent back on the next request. Drop it and the conversation is not merely less detailed, it is a different conversation. It also means reasoning tokens are paid for twice: as output when produced, and as input on every later request in the run, until a compaction summarises them away. The playground's thinking control is wired to exactly that mechanic — and because more thinking also means more context, it can trigger more compaction, which is why the numbers move in both directions there.</li>
-            <li><strong>The length field is <code>max_tokens</code>.</strong> Not <code>max_completion_tokens</code>. Sending the OpenAI field is another silent no-op: the request succeeds, the cap is not applied where you expected, and the truncation you asked for does not happen.</li>
-          </ol>
-          <p>Two operational ones: the adapter exposes DeepSeek's <strong>balance endpoint</strong>, which is how a lane can tell "out of credit" from "rate limited" before a run fails halfway; and outbound calls go through the <strong>exe.dev HTTPS proxy</strong>, which is a deployment fact rather than a protocol one — but it is the reason a run that works in a terminal can fail under systemd.</p>
+          <p>One of those has a price attached, and the playground is wired to it. <code>requiresReasoningContentOnAssistantMessages</code> means the assistant's reasoning text must be sent back on the next request: drop it and the conversation is not merely less detailed, it is a different conversation. It also means reasoning tokens are paid for twice — as output when produced, and as input on every later request in the run, until a compaction summarises them away. The playground's thinking control is exactly that mechanic, and because more thinking also means more context it can trigger more compaction, which is why the numbers move in both directions there.</p>
+          <p>Operational detail rather than protocol: outbound calls go through the <strong>exe.dev HTTPS proxy</strong>, which is the reason a run that works in a terminal can fail under systemd. And there is no credit-check API in play — the lane host classifies the provider's <em>error text</em> with a regex (quota, rate limit, insufficient, balance, credit, payment, 402, 429) and, after two consecutive such errors, cools that provider down for the whole VM and moves the lane to the next model in its role's rotation. That is how "out of credit" and "rate limited" are told apart here: both arrive as an error string, and the lane acts on the words.</p>
         </section>
 
         <section id="limits">
@@ -282,7 +278,7 @@
           <p>False in headless RPC. The extension set is read when the process starts; only the interactive TUI's <code>/reload</code> re-reads it. In a systemd-managed headless lane, changing an extension's TypeScript means restarting the process. Plan the restart into the change instead of being surprised by it — this is the single most common way a "malleable" tool turns out to be "malleable after a deploy".</p>
 
           <h3>3. "DeepSeek takes the same reasoning settings as OpenAI."</h3>
-          <p>It does not. Thinking is enabled by a <code>thinking</code> object through the <code>deepseek</code> thinking format, not by OpenAI's <code>reasoning_effort</code>, and the output cap is <code>max_tokens</code>, not <code>max_completion_tokens</code>. Both mistakes fail silently: the request is accepted and the setting does nothing. Silent accepted-but-ignored fields are exactly what a schema assertion in your own test suite is for.</p>
+          <p>It does not, and the mistake is quiet. Thinking is switched on by a <code>thinking</code> object that only the <code>deepseek</code> thinking format emits; <code>reasoning_effort</code> travels <em>alongside</em> it rather than replacing it (the adapter does not exclude DeepSeek from effort support), and the length field is <code>max_tokens</code>, not <code>max_completion_tokens</code>. Point an OpenAI-format model entry at DeepSeek and the effort field still goes out with no <code>thinking</code> object at all: the request is accepted, nothing errors, and the model is not thinking the way you asked. Silent accepted-but-ignored fields are exactly what a schema assertion in your own test suite is for.</p>
 
           <h3>4. "The reviewer can't write, so the reviewer is safe."</h3>
           <p>A reviewer lane with no <code>write</code> and no <code>edit</code> is restricted by <em>tool allowlist omission plus prompts</em>. That is a good and cheap restriction, and it is not an operating-system block. If a reviewer is given <code>bash</code>, the shell can write. The honest version of the claim is: "the reviewer has no way to write <em>through the tool protocol</em>, and its instructions say not to try any other way". If you need more than that, take the tools away or run it somewhere with real permissions.</p>
