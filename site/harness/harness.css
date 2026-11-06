@@ -264,3 +264,10 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* An entry the summary has replaced still exists, so it is dimmed rather than struck through: the
+   reader has to be able to see that the text is still there. */
+.entry-replaced .entry-label,
+.entry-replaced .entry-id {
+  color: #6b8298;
+}

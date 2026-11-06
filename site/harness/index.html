@@ -213,7 +213,7 @@
 
         <section id="plugins">
           <h2>Plugins: the surface an extension actually gets</h2>
-          <p>Everything above was the harness as a product. This section is the harness as an API. The version under discussion is <code>0.87.1</code>, and the names below are the names in its <code>dist/</code> and its <code>docs/</code> — <code>extensions.md</code> for the surface, <code>rpc-commands.md</code> and <code>sdk.md</code> for the two non-TUI audiences.</p>
+          <p>Everything above was the harness as a product. This section is the harness as an API. The version under discussion is <code>0.87.1</code>, and the names below are the names in its <code>dist/</code> and its <code>docs/</code>: <code>extensions.md</code> for the surface, and <code>rpc-commands.md</code> plus <code>sdk.md</code> for the two ways to drive it without a terminal.</p>
           <p>An extension is a module with one default export: a factory that receives <code>pi</code> and registers what it wants to be called for. There is no manifest, no config file and no sandbox to configure.</p>
           <pre><code>export default function (pi) {
   const stop = pi.on("tool_call", (event) => {
@@ -231,7 +231,7 @@
             <thead><tr><th>You get</th><th>What is in it</th></tr></thead>
             <tbody>
               <tr><td><code>pi</code> (<code>ExtensionAPI</code>)</td><td><code>on(hook, handler)</code> — which returns an unsubscribe — plus the registration calls: <code>registerTool</code>, <code>registerCommand</code>, <code>registerShortcut</code>, <code>registerFlag</code>, <code>registerMessageRenderer</code>, <code>registerEntryRenderer</code>, <code>registerProvider</code>, <code>sendMessage</code>, <code>sendUserMessage</code>, <code>appendEntry</code>.</td></tr>
-              <tr><td><code>ctx</code> (<code>ExtensionContext</code>), per dispatch</td><td><code>ui</code>, <code>mode</code>, <code>cwd</code>, <code>sessionManager</code> (read-only), <code>modelRegistry</code>, <code>model</code>, <code>scopedModels</code>, <code>thinkingLevel</code>, <code>isIdle()</code>, <code>signal</code>, <code>hasPendingMessages()</code>, <code>getContextUsage()</code>, <code>compact()</code>, <code>getSystemPrompt()</code>, <code>abort()</code>, <code>shutdown()</code>.</td></tr>
+              <tr><td><code>ctx</code> (<code>ExtensionContext</code>), per dispatch</td><td><code>ui</code>, <code>mode</code>, <code>hasUI()</code>, <code>cwd</code>, <code>sessionManager</code> (read-only), <code>modelRegistry</code>, <code>model</code>, <code>scopedModels</code>, <code>thinkingLevel</code>, <code>isIdle()</code>, <code>isProjectTrusted()</code>, <code>signal</code>, <code>hasPendingMessages()</code>, <code>getContextUsage()</code>, <code>compact()</code>, <code>getSystemPrompt()</code>, <code>abort()</code>, <code>shutdown()</code>.</td></tr>
               <tr><td><code>ctx</code> in a <em>command</em> handler</td><td>The same, plus <code>waitForIdle</code>, <code>newSession</code>, <code>fork</code>, <code>navigateTree</code>, <code>switchSession</code>, <code>reload</code>. These are command-only because calling them from a lifecycle handler can deadlock the loop.</td></tr>
             </tbody>
           </table></div>
@@ -260,7 +260,7 @@
               <tr><td>context and provider</td><td><code>before_provider_request</code></td><td>with the request payload about to go out</td><td>returns a replacement payload: the last per-request rewriting point</td></tr>
               <tr><td>context and provider</td><td><code>before_provider_headers</code></td><td>with the outgoing HTTP headers</td><td>mutates the headers in place</td></tr>
               <tr><td>context and provider</td><td><code>after_provider_response</code></td><td>after the provider answers</td><td>nothing — observes</td></tr>
-              <tr><td>context and provider</td><td><code>before_agent_start</code></td><td><strong>once per user prompt</strong>, before the loop starts</td><td>appends messages, or replaces the complete system prompt for the run (later handlers see the override)</td></tr>
+              <tr><td>agent and turn</td><td><code>before_agent_start</code></td><td><strong>once per user prompt</strong>, before the loop starts</td><td>appends messages, or replaces the system prompt the run that is starting will use — later handlers observe the override</td></tr>
               <tr><td>agent and turn</td><td><code>agent_start</code></td><td>when a run starts</td><td>nothing — observes</td></tr>
               <tr><td>agent and turn</td><td><code>agent_end</code></td><td>when a run ends: the assistant made no tool calls</td><td>nothing — observes</td></tr>
               <tr><td>agent and turn</td><td><code>agent_before_settle</code></td><td>just before settling, when automatic work may still be pending</td><td>returns a boundary result: appended entries, and whether to continue</td></tr>
@@ -282,7 +282,7 @@
               <tr><td>input and shell</td><td><code>ui_prompt_start</code> / <code>ui_prompt_end</code></td><td>around an interactive prompt</td><td>nothing — observes; a headless mode has no UI, so these never fire there</td></tr>
             </tbody>
           </table></div>
-          <p>Read the last column as the honest map of influence. The hooks that can <em>change</em> something are a small minority: <code>tool_call</code>, <code>tool_result</code>, <code>context</code>, <code>context_with_system</code>, <code>before_provider_request</code>, <code>message_end</code>, <code>before_agent_start</code>, the four <code>session_before_*</code> cancellation points, the two boundary hooks, and the input hooks. The rest are instrumentation, and instrumentation is most of what a working extension does.</p>
+          <p>Read the last column as the honest map of influence. The hooks that can <em>change</em> something are a minority, and they cluster at four places: the decision hooks (<code>project_trust</code>, <code>resources_discover</code>, <code>cache_warming_decision</code>, <code>before_provider_headers</code>); the four <code>session_before_*</code> cancellation points; the per-request rewriting chain (<code>context</code>, <code>context_with_system</code>, <code>before_provider_request</code>); and the four that see real content — <code>before_agent_start</code>, <code>message_end</code>, <code>tool_call</code>, <code>tool_result</code> — plus the two boundary hooks (<code>turn_end</code>, <code>agent_before_settle</code>) and the input hooks. The rest are instrumentation, and instrumentation is most of what a working extension does.</p>
 
           <h3>The registry: add works, replace is undocumented, removal does not exist</h3>
           <p><code>registerTool</code> writes into the extension's tool map and then refreshes the runtime's tool list, which is why a tool registered at load is callable straight away — the shipped <code>dynamic-tools</code> example is exactly this. The interesting part is what happens around the edges.</p>
