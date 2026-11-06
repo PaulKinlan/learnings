@@ -144,3 +144,123 @@
   color: #8a1f00;
   overflow-wrap: anywhere;
 }
+
+/* The plugin explorer's additions. The load-order buttons wrap rather than shrink, and the graph
+   is two files side by side that stack on a phone. */
+.plugin-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.6rem 0;
+}
+
+.plugin-buttons button {
+  min-height: 40px;
+  padding: 0.4rem 0.8rem;
+}
+
+.plugin-order {
+  margin: 1rem 0;
+  padding-left: 1.2rem;
+}
+
+.plugin-order li {
+  margin: 0.5rem 0;
+}
+
+.plugin-order .ev-title,
+.plugin-order .ev-note {
+  margin: 0.1rem 0;
+}
+
+.tree-files {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+  gap: 1.5rem;
+  margin: 1rem 0 2rem;
+  align-items: start;
+}
+
+.file {
+  background: #f4f9fd;
+  border: 1px solid var(--line);
+  padding: 0.9rem 1rem;
+  min-width: 0;
+}
+
+.file h4 {
+  margin: 0 0 0.2rem;
+  font-size: 1rem;
+  color: #142d44;
+}
+
+.entries {
+  list-style: none;
+  margin: 0.7rem 0 0;
+  padding: 0;
+}
+
+/* One entry: the id, what it holds, what it costs. The left edge carries the state — amber for a
+   branch the fork abandoned, grey for an entry the summary has replaced. */
+.entry {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.15rem 0.6rem;
+  align-items: baseline;
+  padding: 0.4rem 0.5rem;
+  border-left: 3px solid #4c8fc4;
+  border-bottom: 1px solid #dbe6ef;
+  font-size: 0.9rem;
+}
+
+.entry-id {
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.entry-label {
+  overflow-wrap: anywhere;
+}
+
+.entry-tokens {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.entry-flag,
+.entry-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.entry-flag {
+  font-weight: 650;
+  color: #8a1f00;
+}
+
+.entry-abandoned {
+  border-left-color: #ad5500;
+  background: #fff8ef;
+}
+
+.entry-replaced {
+  border-left-color: #9fb4c6;
+  background: #eef4f9;
+}
+
+.entry-summary {
+  border-left-color: #ad5500;
+  background: #fdf1dd;
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .tree-files {
+    grid-template-columns: 1fr;
+  }
+}
