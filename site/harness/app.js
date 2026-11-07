@@ -268,7 +268,7 @@ function drain() {
   const rows = result.unwind?.rows ?? [];
   state = result;
   // The record panels are rendered from the finished state; the ledger animation runs over the
-  // rows the reducer actually unwound.
+  // rows the reducer unwound.
   running = true;
   if (rows.length) {
     animate(rows, () => {
