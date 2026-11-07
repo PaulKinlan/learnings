@@ -13,7 +13,7 @@
  *   - an unloading provider waits for its dependents' effects to finish first (fiber.ts `_unload`).
  *
  * What is modelled away, deliberately: config schemas, the loader and patch layers, real module
- * loading, real time, and every token count (those are illustrative — the page says so).
+ * loading, real time, and every token count (those are illustrative, and the page says so).
  */
 
 /**
@@ -361,7 +361,7 @@ export function unmount(state, id) {
 
 /**
  * Swap the `ctx.shell` provider. The consumer is not edited: it loses the service, unloads, sees
- * the new provider, and reloads — which is why its registrations end up at the end of the ledger.
+ * the new provider, and reloads, which is why its registrations end up at the end of the ledger.
  * @param {ReturnType<typeof initialRuntime>} state
  * @param {"bash-local" | "bash-sandbox"} id
  */
@@ -439,7 +439,7 @@ export function unmountFork(state) {
  * Run one turn.
  *
  * `agent/pre-step` decides whether the claimed input enters the step. A rejected (or rewritten
- * empty) first claim closes a durable turn with no step — the turn events are logged either way.
+ * empty) first claim closes a durable turn with no step; the turn events are logged either way.
  * @param {ReturnType<typeof initialRuntime>} state
  * @param {{preStep?: "enter" | "reject"}} [options]
  */
