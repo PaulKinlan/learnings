@@ -840,10 +840,13 @@ test('decideImage cuts off a provider that never answers for direct callers that
   t.after(() => { globalThis.fetch = originalFetch; });
 
   // Bounded, so the reverted mutation reports a failed assertion instead of hanging the suite.
+  // Deliberately ref'd: while the race is pending this timer is the only thing holding the event
+  // loop open, because AbortSignal.timeout's own timer is unref'd. Unref'd as well, nothing refs the
+  // loop, node drains it, and the run dies with "Promise resolution is still pending but the event
+  // loop has already resolved" before the abort can fire (learnings-ndz, node 22 in CI).
   let hangTimer;
   const hung = new Promise(resolve => {
     hangTimer = setTimeout(() => resolve({ state: 'hung' }), 5000);
-    hangTimer.unref();
   });
   t.after(() => clearTimeout(hangTimer));
 
