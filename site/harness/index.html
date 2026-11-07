@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval' 'sha256-0msSpu3ktmVy5IVi13zUu6JTIRI342v7S7Ymf3EvVLk='; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-0msSpu3ktmVy5IVi13zUu6JTIRI342v7S7Ymf3EvVLk='; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
   <meta name="referrer" content="no-referrer">
-  <title>The harness, and software you can reshape · Learnings</title>
-  <meta name="description" content="A deep dive into the DeepSeek coding harness: the turn loop, the tool protocol, prompt assembly, what isolation actually is here, the plugin surface an extension gets, the space and time a run lives in, the hot/reload/restart/code ladder of malleable software, and two deterministic simulations — one that prices batching, compaction and retries, one that lets you add a hook, deactivate a tool and fork a session.">
+  <title>dsh, Cordis, and software you can reshape · Learnings</title>
+  <meta name="description" content="How the open-source DeepSeek Harness (dsh) is built on Cordis: the context tree, revertible effects and reactive coeffects, the step-and-turn model — and what a malleable, user-customizable program looks like, with a deterministic playground that mounts, hot-swaps and unwinds real registrations.">
   <link rel="stylesheet" href="../style.css">
   <link rel="stylesheet" href="./harness.css">
   <!-- Speculation Rules: the sha256 in the CSP script-src above must be regenerated if this block changes -->
@@ -42,609 +42,397 @@
       <a href="../celld/">celld &amp; DOs</a>
       <a href="../decision-models/">Decision Models</a>
       <a href="../opt-chronicles/">OPT Chronicles</a>
+      <a href="#tree">Cordis tree</a>
+      <a href="#kernel">Runtime kernel</a>
+      <a href="#malleable">Malleable programs</a>
       <a href="#playground">Playground</a>
-      <a href="#plugins">Plugins</a>
-      <a href="#explorer">Plugin explorer</a>
     </nav>
   </header>
 
   <main id="main">
-    <h1>The harness, and software you can reshape</h1>
-    <p class="lead">An agent is a loop, a tool protocol and a prompt, wrapped in whatever isolation you actually built. This page takes the DeepSeek harness running in this fleet apart, and then hands you the controls: a simulated run you can re-price by changing one setting at a time, and a plugin explorer where you can add a hook, deactivate a tool and fork a session.</p>
-    <p class="notice"><strong>This page calls nothing.</strong> The playground and the plugin explorer below are deterministic simulations: no key, no network, no model, no extension loaded. Every number they show is computed from the controls and a scripted transcript. The <a href="#playground">playground section</a> and the <a href="#explorer">explorer section</a> each say exactly which mechanics they do and do not model.</p>
+    <h1>dsh, Cordis, and software you can reshape</h1>
+    <p class="lead">DeepSeek Harness is an open-source agent harness with no privileged core: the loop, the tool registry, the session log, the model adapters and the permission policies are all plugins on one context tree. This page reads that tree out of the source — the framework underneath it, the effect and coeffect machinery that makes a plugin removable, the step-and-turn model that runs on top — and then hands you the controls, so you can mount, swap and unwind the registrations yourself.</p>
+    <p class="notice"><strong>No model is called.</strong> The <a href="#playground">playground</a> is a deterministic model of the Cordis and dsh mechanics this page describes: no key, no network, no model, no plugin loaded. It computes every count and every state word from the controls, and its <a href="#playground-limits">“what this does not model”</a> list says exactly where it stops.</p>
 
     <div class="reading">
       <aside class="toc" aria-label="Contents">
-        <a href="#what">1. What the harness is here</a>
-        <a href="#anatomy">2. Anatomy</a>
-        <a href="#playground">3. Playground</a>
-        <a href="#plugins">4. Plugins</a>
-        <a href="#spatiotemporal">5. Space and time</a>
-        <a href="#explorer">6. Plugin explorer</a>
-        <a href="#malleable">7. Malleable software</a>
-        <a href="#deepseek">8. DeepSeek vs generic</a>
-        <a href="#limits">9. Honest limits</a>
+        <a href="#part1">Part 1 — How dsh is built with Cordis</a>
+        <a href="#what">1. What dsh is</a>
+        <a href="#paper">2. Spatiotemporal composability</a>
+        <a href="#tree">3. Context, Service, Plugin</a>
+        <a href="#kernel">4. The runtime kernel</a>
+        <a href="#compose">5. How dsh decomposes</a>
+        <a href="#scope">6. Scopes and lifetimes</a>
+        <a href="#part2">Part 2 — Malleable programs</a>
+        <a href="#malleable">7. The swap surface</a>
+        <a href="#effects">8. Revertible effect trees</a>
+        <a href="#rules">9. What to copy</a>
+        <a href="#playground">10. Playground</a>
+        <a href="#limits">11. Limits and corrections</a>
         <a href="#evidence">Where this comes from</a>
       </aside>
+
       <article class="article">
 
-        <section id="what">
-          <h2>What the harness actually is here</h2>
-          <p>The harness is <code>@earendil-works/pi-coding-agent</code>, with <code>pi-agent-core</code> and <code>pi-ai</code> underneath it. It is a Node process that owns four things: the <strong>loop</strong> that decides when to call the model again, the <strong>tool registry</strong> that turns the model's requests into local processes, the <strong>transcript</strong> that is re-sent on every request, and the <strong>prompt assembly</strong> that decides what the model is told.</p>
-          <p>In this fleet it runs <em>headless</em>, under systemd, with no terminal attached. Its parent process is <code>remote/lane-host.mjs</code>, which speaks to it over JSON lines over a pipe: one JSON object per line in, one per line out. The model itself is a remote HTTP endpoint (DeepSeek, reached through the exe.dev HTTPS proxy). Everything else on this page — the loop, the tools, the transcript, the compaction, the prompts — is local code you can read, restart and change.</p>
-          <p>That split is the whole point. Swapping the model is a configuration change. Swapping the loop is a code change. The interesting engineering is all in the second category, and most writing about agents collapses the two.</p>
+        <h2 id="part1">Part 1 — How dsh is built with Cordis</h2>
 
-          <h3>The loop, in plain language</h3>
-          <ol>
-            <li>Build a prompt: the base instructions, the lane's role text, the project's context files, the task, the transcript so far, and the JSON Schema of every tool this run may use.</li>
-            <li><code>POST</code> it to the provider. The reply is text, tool calls, or both.</li>
-            <li>If there are tool calls: validate each argument object against its TypeBox schema, run the tools locally under your operating-system permissions, append the results to the transcript.</li>
-            <li>If the assistant made any tool call, go back to step 1. If it made none, the run is over.</li>
-          </ol>
-          <p>One <strong>turn</strong> is one assistant response plus the tool calls it carried plus their results — appended, not replaced. A turn is the unit the transcript grows by, and therefore the unit the bill grows by, because step 1 re-sends the whole transcript on every request. The playground below exists mostly to make that sentence concrete.</p>
-          <p>Two names matter and they are not synonyms. <code>agent_end</code> closes <em>one run</em>: the assistant produced a response with no tool calls. <code>agent_settled</code> is stronger: no automatic work remains — no retry pending, no compaction scheduled, no steering message queued, no follow-up waiting. A run can end while the agent is not settled, and that gap is where four of the mechanics on this page live.</p>
-          <p>Compaction is the loop's answer to a finite context window. It fires when the context exceeds the window minus a reserve — <code>contextTokens &gt; contextWindow - reserveTokens</code> — keeps the most recent <code>keepRecentTokens</code> worth of the transcript untouched from the end, and replaces everything older with a summary. It is a lossy operation performed by a model, and the reserve is what leaves that model room to answer — pi's documentation says the reserve "leaves room for the LLM's response", and its default is 16,384 tokens. The playground's demo windows are scaled down, so its default reserve is smaller too.</p>
-        </section>
+        <h3 id="what">1. What dsh is</h3>
+        <p><strong>DeepSeek Harness</strong> (<code>dsh</code>) is an open-source agent harness from DeepSeek AI, MIT-licensed, written in TypeScript, and in <em>developer preview</em> — its README says so in capitals: “THERE WILL BE COMPATIBILITY-BREAKING CHANGES.” You start it with <code>npx @deepseek-ai/dsh web</code>, which serves a Web UI on <code>http://127.0.0.1:3080</code> by default. Everything on this page is read from a clone of <code>github.com/deepseek-ai/deepseek-harness</code> at commit <code>fcc0ad4</code>, not from an announcement.</p>
+        <p>Two sentences from the README are the whole thesis, and the rest of this page is their consequences:</p>
+        <blockquote><p>“It is built on an <strong>everything-is-a-plugin</strong> architecture and powered by [Cordis]” — <code>README.md:7</code></p></blockquote>
+        <p>Cordis is not a library dsh happens to use. It is vendored into the repository as nine packages (<code>vendor/README.md</code>): the foundation libraries <code>@deepseek-ai/cosmokit</code> 1.9.0 and <code>@deepseek-ai/schemastery</code> 3.19.0, then <code>@deepseek-ai/cordis</code> 4.1.0 with six plugin packages — loader, include and group at 1.1.0, timer at 1.2.0, hmr at 1.1.0 and logger-console at 1.1.0, all under the same <code>@deepseek-ai/cordis-plugin-*</code> scope. The product is a composition of plugins on top of them. The stack, from the metal up:</p>
+        <div class="stack" role="img" aria-label="Stack: the dsh CLI launches a named profile; a profile stacks bundles; the first bundle is dsh-base; every layer is Cordis plugins on one context tree; Cordis is the vendored framework underneath.">
+          <div class="stack-row"><span class="stack-label">Launcher</span><span class="stack-body"><code>@deepseek-ai/dsh</code> — <code>dsh --profile web</code> composes the tree, then boots it</span></div>
+          <div class="stack-row"><span class="stack-label">Profile</span><span class="stack-body">a named composition in the Harness home: the bundles it stacks, out-of-tree plugins, and the user's own <code>cordis.patch.yml</code></span></div>
+          <div class="stack-row"><span class="stack-label">Bundles</span><span class="stack-body"><code>dsh-base</code> first, then <code>dsh-web-app</code> / <code>dsh-headless</code> / <code>dsh-sdk-app</code> / <code>dsh-acp-app</code>. <code>dsh-sdk-minimal</code> is the exception: one bundle owns its complete explicit tree and does <em>not</em> apply <code>dsh-base</code></span></div>
+          <div class="stack-row"><span class="stack-label">Plugins</span><span class="stack-body">the model adapters, tools, session log, sandbox policy, settings, creds, telemetry, the agent loop</span></div>
+          <div class="stack-row stack-base"><span class="stack-label">Cordis</span><span class="stack-body">context tree, services, typed events, reversible effects — the framework every row above is a plugin of</span></div>
+        </div>
+        <p>The words are the architecture doc's, not a diagram of my own: a <strong>profile</strong> is “a named composition stored in the Harness home… it lists the bundles it stacks, holds any out-of-tree plugins it installs, and keeps the user's own <code>cordis.patch.yml</code>”, and a <strong>bundle</strong> “is a distribution format for Cordis config rows and the code they mount, so whatever it inserts stays patchable by the layers above it” (<code>docs/architecture.md</code>). <code>dsh-base</code> is “the shared first layer of the <code>web</code>, <code>headless</code>, <code>sdk</code>, and <code>acp</code> profiles”: model adapters, tools, persistence, sandbox and approval policy, settings, credentials, telemetry. Each of those is a plugin on the same context tree as the next.</p>
 
-        <section id="anatomy">
-          <h2>Anatomy: four parts, and which one you can change</h2>
+        <h3 id="paper">2. Spatiotemporal composability, in the framework's own terms</h3>
+        <p>Cordis is the implementation of a paper by Yifan Shi, Wei Zhang and Tianyi Cui (Peking University and DeepSeek-AI): <a href="https://arxiv.org/abs/2608.25512"><em>A Programming Paradigm for Spatiotemporal Composability</em></a> (arXiv 2608.25512). The title is where the word comes from, and the abstract defines both axes — and reading both definitions literally is what keeps the word honest. Read them:</p>
+        <blockquote>
+          <p>“<strong>temporal composability</strong>, the ability to completely revert a component's side effects upon removal, and <strong>spatial composability</strong>, the ability to declare and reactively manage inter-component dependencies.”</p>
+          <p>“we formalize <strong>revertible effects</strong>, in which every context transformation carries an inverse that the runtime holds, establishing temporal composability local to one component. We formalize <strong>reactive coeffects</strong>, in which every context change is classified against a component's coeffect specification to drive its activation and deactivation, establishing spatial composability local to one component.”</p>
+        </blockquote>
+        <p>Then the two are unified, which is the actual claim of the paper:</p>
+        <blockquote><p>“We then unify the effect context and the coeffect context into a single context type and mediate every effect and coeffect through it, yielding a discipline we call the context paradigm; the mediation induces an observational equivalence up to which the effects of distinct components interleave without disturbing one another.”</p></blockquote>
+        <p>So the trick is not two systems. There is one context type carrying both halves: an <em>effect context</em> that remembers what each component changed so removal can invert it (time), and a <em>coeffect context</em> that holds each component's declaration of what it requires, checked against every change, so the component can be switched on and off (space). The paper's contributions, in its own abstract's terms, are a calculus of dynamic composition and a metatheory carrying “spatiotemporal composability from a single component to a whole system of interleaved components”; Cordis is described as “a meta-framework of spatiotemporal composability that provides a core library with effect tracking and coeffect resolution, as well as a declarative component loader with configuration reconciliation and hot module replacement.”</p>
+        <div class="table-scroll"><table>
+          <thead><tr><th>Axis</th><th>The paper's word</th><th>What it buys a program</th><th>Where dsh shows it</th></tr></thead>
+          <tbody>
+            <tr><td>Temporal</td><td>revertible effects — “every context transformation carries an inverse that the runtime holds”</td><td>A component can be removed completely: its registrations, listeners and services go away because each carried an inverse.</td><td>Unmounting a plugin, restarting a fiber, hot-swapping a module (<a href="#kernel">§4</a>, <a href="#effects">§8</a>)</td></tr>
+            <tr><td>Spatial</td><td>reactive coeffects — “every context change is classified against a component's coeffect specification to drive its activation and deactivation”</td><td>A component declares what it needs and never has to be sequenced by hand: it activates when the requirement is met and deactivates when it is not.</td><td><code>inject</code>, <code>ctx.&lt;key&gt;</code> service claims, per-agent scopes (<a href="#tree">§3</a>, <a href="#scope">§6</a>)</td></tr>
+          </tbody>
+        </table></div>
+        <p class="notice"><strong>Two things it does not mean.</strong> “Spatiotemporal” here is not sandboxing, and it is not replay. Sandboxing confines a process's file access; the Cordis paper is about when a component may be active and how its departure is undone. Replay reconstructs a session from a log; the paper's temporal axis is the runtime holding an inverse for each registration, not re-running history. dsh has both sandboxes and an append-only session log, and both are separate mechanisms from the one this word names. <span class="small">Sourcing note: only the paper's abstract page was reachable from here (the arXiv HTML view 404s, and the PDF's subset-encoded fonts did not extract to text), so the formal claims above are quoted from the abstract and I have not paraphrased theorem statements I could not read. The mechanisms themselves are verifiable in the vendored source, which is what §4 does.</span></p>
 
-          <h3>The loop</h3>
-          <p>The loop is small and unglamorous: it is a <code>while</code> whose only decision is whether the last assistant message asked for tools. Everything people find mysterious about agents — the retries, the compaction, the interrupts — happens around that decision, not inside it. Auto-retry wraps the provider call. Compaction runs before a request. Steering and follow-ups are queued messages that decide whether the loop may stop.</p>
-          <p>What the loop does <em>not</em> do is verify the model's work, keep a goal alive, or notice that it is looping. Those are either prompts, or tools the model may call, or your own code outside the harness.</p>
+        <h3 id="tree">3. The Cordis context tree: Context, Service, Plugin</h3>
+        <p>Three concepts carry the whole framework, and the vendored source states each of them in a comment above the code.</p>
+        <div class="table-scroll"><table>
+          <thead><tr><th>Concept</th><th>The source's own words</th><th>What it is in practice</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>Context</strong></td>
+              <td>“Root and child dependency containers for Cordis plugins. A context is a proxy: normal property reads go through the service resolver, while <code>extend()</code>, <code>isolate()</code>, and <code>intercept()</code> create scoped child contexts without mutating their parent.” (<code>vendor/cordis/src/context.ts</code>)</td>
+              <td>Every API is reached through <code>ctx</code>: <code>ctx.tools</code>, <code>ctx.on(...)</code>, <code>ctx.effect(...)</code>, <code>ctx.plugin(...)</code>. There is one root context, and children are cheap shadows of it.</td>
+            </tr>
+            <tr>
+              <td><strong>Service</strong></td>
+              <td>“Base class for services that expose a named API on <code>ctx</code>. Subclasses call <code>super(ctx, name)</code> from their constructor. The service is registered immediately and is automatically removed with the owning fiber.” (<code>vendor/cordis/src/service.ts</code>)</td>
+              <td>A stable <code>ctx.&lt;key&gt;</code> that other plugins find by name: <code>ctx.sessions</code>, <code>ctx.tools</code>, <code>ctx.llm</code>, <code>ctx.shell</code>.</td>
+            </tr>
+            <tr>
+              <td><strong>Plugin</strong></td>
+              <td>“A plugin is a object that implements Service. It can be a function with optional <code>inject</code> and <code>apply(ctx)</code> fields, or a <code>Service</code> subclass whose lifecycle Cordis mounts into the current context.” (<code>docs/cordis-primer.md</code>)</td>
+              <td>The unit of distribution and of removal. A plugin loaded once is a <em>fiber</em>: “one loaded plugin instance: its lifecycle state, validated config, and registered effects” (<code>docs/cordis-api/fiber.md</code>).</td>
+            </tr>
+          </tbody>
+        </table></div>
+        <p>The five ideas the primer teaches fit on one screen, and the fourth is a table worth reproducing exactly, because the dispatch mode is part of an event's contract rather than a detail of its call site:</p>
+        <div class="table-scroll"><table>
+          <thead><tr><th>Mode</th><th>Awaited?</th><th>Dispatch order</th><th>Has return value?</th></tr></thead>
+          <tbody>
+            <tr><td><code>emit</code></td><td>No</td><td>listeners observe in registration order</td><td>No</td></tr>
+            <tr><td><code>waterfall</code></td><td>No</td><td>listeners observe in registration order</td><td>Yes</td></tr>
+            <tr><td><code>parallel</code></td><td>Yes</td><td>all listeners observe the event in parallel</td><td>No</td></tr>
+            <tr><td><code>serial</code></td><td>Yes</td><td>listeners observe in registration order</td><td>Yes</td></tr>
+            <tr><td><code>bail</code></td><td>No</td><td>listeners observe in registration order until one bails</td><td>Yes</td></tr>
+          </tbody>
+        </table></div>
+        <p>A waterfall is around-middleware: “A listener receives <code>(...args, next)</code>. Call <code>next()</code> to delegate the possibly wrapped result to the next service; return without <code>next()</code> to short-circuit.” That sentence is why dsh can veto a claimed message from a plugin without the loop knowing the plugin exists.</p>
+        <p>And the line that makes the spatial axis concrete, from the bundle that composes the shipped product: <strong>“Row order carries no load semantics (activation is service-availability driven)”</strong> (<code>packages/bundle/base/cordis.patch.yml</code>). <code>dsh-base</code>'s patch lists 99 rows in whatever order reads well; what decides when each activates is the services it declares it needs. There is no boot sequence to get right.</p>
 
-          <h3>The tool protocol</h3>
-          <p>Each tool declares its arguments as a <strong>TypeBox</strong> schema, and the harness validates every call against that schema <em>before</em> <code>execute()</code> runs. A malformed call never reaches the tool. The built-ins are <code>read</code>, <code>bash</code>, <code>powershell</code>, <code>edit</code>, <code>write</code>, <code>grep</code>, <code>find</code> and <code>ls</code>; the default allowlist is <code>read</code>, <code>bash</code>, <code>edit</code> and <code>write</code>. A run's allowlist comes from <code>-t</code>/<code>--tools</code>, from settings, or from a subagent's own declaration — and a tool that is not on it is not offered to the model at all.</p>
-          <p>Two behaviours are worth knowing because they shape what a failure looks like. Errors are <strong>thrown</strong> and returned to the model as a tool result with <code>isError: true</code> — a failing tool does not crash the run, it hands the model a bad result and the loop continues. And a tool can return <code>terminate: true</code>, which does <em>not</em> stop the batch: every call in it still executes and every result is still appended. What changes is the next step — the harness skips its automatic follow-up model request, and only when <em>every</em> completed tool in that batch returned <code>terminate: true</code> (<code>shouldTerminateToolBatch</code> is an <code>every()</code> over the finished calls). One tool asking to terminate is a vote, not a veto.</p>
-          <p>The consequence is that "the tool failed" and "the model knows the tool failed" are different facts. The harness guarantees the second one only.</p>
+        <h3 id="kernel">4. The runtime kernel, read from the vendored source</h3>
+        <p>This section is the one a reviewer should check hardest, so every claim carries a file and the method it comes from. Everything below is from <code>vendor/cordis/src/</code> at <code>fcc0ad4</code>.</p>
 
-          <h3>Prompt assembly</h3>
-          <p>Two layers, not one list. The <strong>system prompt</strong> is built from Pi's base instructions and the context files it discovers (<code>AGENTS.md</code> and <code>CLAUDE.md</code> up the directory tree; <code>SYSTEM.md</code> replaces the base text, <code>APPEND_SYSTEM.md</code> adds to it, and <code>--append-system-prompt</code> adds one more from the command line, with the trusted project <code>.pi/</code> copy taking precedence). The <strong>request</strong> carries more beside that prompt: the tool definitions and the skill descriptions. Full skill instructions load on demand, and extensions can add instructions or transform the context before it is sent. Lanes add one more layer above all of it: <code>roles/common.md</code> plus <code>roles/&lt;role&gt;.md</code> are assembled into the role text before the harness ever sees it.</p>
-          <p>The schematic version — base prompt, context files, role text, tool schemas, skill descriptions, in that order — is the mental model this page and its playground use. The source is the authority on the order, and it counts tools and skills as request-carried rather than as prompt steps.</p>
-          <p>Either way, a tool allowlist change is also a <em>prompt</em> change: every tool definition is JSON Schema in the context window. Drop <code>write</code> and the request gets smaller and the model cannot call it; add <code>grep</code> and the request gets bigger and the tool appears. The playground prices that (an approximation, not a measurement), because it is easy to forget that an allowlist is not free.</p>
-
-          <h3>Isolation, stated plainly</h3>
-          <p>There is no sandbox and there is no container: every tool runs with the user's operating-system permissions (<a href="#limits">correction 1</a> says what follows from that). What this fleet has instead is <strong>operational isolation</strong>, and it is worth naming precisely because the word "isolation" invites the wrong inference:</p>
-          <div class="table-scroll"><table>
-            <thead><tr><th>Mechanism</th><th>What it actually does</th><th>What it does not do</th></tr></thead>
-            <tbody>
-              <tr><td>Git worktrees</td><td>Each lane works in its own checkout on its own branch, so two lanes cannot edit the same files or the same working tree.</td><td>Does not restrict what a process may read or write elsewhere on the disk.</td></tr>
-              <tr><td>Role tool allowlists</td><td>A reviewer lane is given no <code>write</code> and no <code>edit</code>, so it cannot change the tree through the tool protocol.</td><td>Does not stop a <code>bash</code> call from writing the same file. It is a policy about tools, not a permission boundary.</td></tr>
-              <tr><td>Branch ownership</td><td>One writer per branch; a reviewer never pushes to the writer's branch.</td><td>Does not prevent a force-push if the credentials allow it.</td></tr>
-              <tr><td>The reaper</td><td>Kills orphaned processes and browsers left by a lane that died.</td><td>Does not bound what a live lane may do while it runs.</td></tr>
-            </tbody>
-          </table></div>
-          <p>Read that table as a list of conventions enforced by code you control, not as a security boundary enforced by the kernel. If you need the second thing, you need a container, a VM or a separate machine.</p>
-        </section>
-
-        <section id="playground">
-          <h2>Playground: a run you can take apart</h2>
-          <p><strong>This is a deterministic simulation of the loop's mechanics.</strong> No model is called, no key is used and no request leaves this page. The scripted transcript is in <code>sim.js</code>; the controls change how it is billed and where the run's boundaries fall. Change one control at a time and watch the trace and the numbers move together.</p>
-
-          <div class="workbench">
-            <section class="settings" aria-labelledby="controls-heading">
-              <h3 id="controls-heading">Controls</h3>
-              <div class="fields">
-                <div>
-                  <label for="model">Model (demo context window)</label>
-                  <select id="model">
-                    <option value="deepseek-v4-lite" selected>deepseek-v4-lite (16,384)</option>
-                    <option value="deepseek-v4-pro">deepseek-v4-pro (32,768)</option>
-                  </select>
-                </div>
-                <div>
-                  <label for="thinking">Thinking level</label>
-                  <select id="thinking">
-                    <option value="off">off</option>
-                    <option value="low" selected>low</option>
-                    <option value="high">high</option>
-                  </select>
-                </div>
-                <div>
-                  <label for="batch">Tool calls per response</label>
-                  <select id="batch">
-                    <option value="parallel" selected>parallel (one batch)</option>
-                    <option value="sequential">sequential (one call)</option>
-                  </select>
-                </div>
-                <div>
-                  <label for="failure">Injected failure</label>
-                  <select id="failure">
-                    <option value="none" selected>none</option>
-                    <option value="request-2">HTTP 429 on request 2</option>
-                  </select>
-                </div>
-                <div>
-                  <label for="autoretry">Retry policy <span class="small">(inert until a failure is injected)</span></label>
-                  <select id="autoretry" aria-describedby="autoretry-note">
-                    <option value="on" selected>auto-retry on 429</option>
-                    <option value="off">no auto-retry</option>
-                  </select>
-                  <p class="small" id="autoretry-note">With no injected failure there is nothing to retry, so this changes nothing on its own.</p>
-                </div>
-                <div>
-                  <label for="prompt">A prompt arrives</label>
-                  <select id="prompt">
-                    <option value="none" selected>never</option>
-                    <option value="steer">after turn 2, as a steer</option>
-                    <option value="follow-up">after the run settles, as a follow-up</option>
-                  </select>
-                </div>
-                <div>
-                  <label for="reserve">reserveTokens <output id="reserve-value" for="reserve">8192</output></label>
-                  <input type="range" id="reserve" min="0" max="15360" step="512" value="8192">
-                  <p class="small">Compaction fires when contextTokens &gt; window − reserveTokens. The reserve is what leaves the summarising model room to answer, so a bigger reserve moves the line down and compacts earlier.</p>
-                </div>
-                <div>
-                  <label for="keep">keepRecentTokens <output id="keep-value" for="keep">4096</output></label>
-                  <input type="range" id="keep" min="0" max="16384" step="256" value="4096">
-                  <p class="small">The tail summarising leaves untouched, counted from the end.</p>
-                </div>
-              </div>
-              <fieldset>
-                <legend>Tool allowlist</legend>
-                <div class="tool-list">
-                  <label><input type="checkbox" id="tool-read" value="read" checked> <code>read</code></label>
-                  <label><input type="checkbox" id="tool-bash" value="bash" checked> <code>bash</code></label>
-                  <label><input type="checkbox" id="tool-edit" value="edit" checked> <code>edit</code></label>
-                  <label><input type="checkbox" id="tool-write" value="write" checked> <code>write</code></label>
-                  <label><input type="checkbox" id="tool-grep" value="grep"> <code>grep</code></label>
-                  <label><input type="checkbox" id="tool-find" value="find"> <code>find</code></label>
-                </div>
-                <p class="small">The first four are the harness's defaults. A tool that is not listed is not offered to the model — and the scripted run still tries one, so you can see what an unavailable tool looks like from the outside.</p>
-              </fieldset>
-            </section>
-
-            <section aria-labelledby="numbers-heading">
-              <h3 id="numbers-heading">Numbers</h3>
-              <p id="status" class="notice" role="status" aria-live="polite">Running the simulation…</p>
-              <dl id="metrics" class="metrics"></dl>
-              <p class="small" id="compaction-line"></p>
-              <p class="small">Billed input tokens sum the context actually sent, once per successful request. A refused (429) request is counted as a request and billed at zero, because it was refused before any output. A real provider may also charge less than this: context caching and prompt caching are not modelled here.</p>
-              <p class="small" id="sim-inputs"></p>
-            </section>
-          </div>
-
-          <h3>The trace</h3>
-          <p class="small">One entry per thing the harness did, in order. Each request shows the context it sent against the window, with a marker at the compaction line. If a request is over the window — which happens when <code>keepRecentTokens</code> leaves nothing to compact — the bar stops at 100% and the entry says so; a real provider would refuse or truncate that request.</p>
-          <ol id="trace" class="trace"></ol>
-          <p class="small">Not simulated, deliberately: what the model would actually say or choose; real latency; provider caching; any failure other than a 429; and tokenisation. The scripted assistant has one blocked branch (a write-class tool it may not call) and otherwise does not react to anything — including the steering message, whose effect on a real model is a model behaviour, not a loop mechanic.</p>
-        </section>
-
-        <section id="plugins">
-          <h2>Plugins: the surface an extension actually gets</h2>
-          <p>Everything above was the harness as a product. This section is the harness as an API. The version under discussion is <code>0.87.1</code>, and the names below are the names in its <code>dist/</code> and its <code>docs/</code>: <code>extensions.md</code> for the surface, and <code>rpc-commands.md</code> plus <code>sdk.md</code> for the two ways to drive it without a terminal.</p>
-          <p>An extension is a module with one default export: a factory that receives <code>pi</code> and registers what it wants to be called for. There is no manifest, no config file and no sandbox to configure.</p>
-          <pre><code>export default function (pi) {
-  const stop = pi.on("tool_call", (event) => {
-    if (event.toolName === "edit" || event.toolName === "write") {
-      return { block: true, reason: "this lane reviews; it does not write" };
-    }
-  });
-  // stop() unsubscribes this handler. The extension itself stays loaded: there is
-  // no way to unload one plugin short of rebuilding the whole runtime.
+        <h4>Registration is an effect, and the effect holds the inverse</h4>
+        <p><code>ctx.effect(execute, label)</code> runs <code>execute</code> immediately and collects the disposer it produces. The doc comment on the method is the contract:</p>
+        <blockquote><p>“<code>execute</code> runs immediately; the disposers it produces are collected and run (in reverse order) either when the returned disposer is called or when the fiber unloads, whichever comes first. Calling the disposer twice is a no-op.” — <code>vendor/cordis/src/fiber.ts</code>, <code>ctx.effect()</code></p></blockquote>
+        <p>The implementation is short enough to be the explanation: one effect's disposers are spliced out and walked in reverse, chained so an async teardown finishes before the next begins.</p>
+        <pre><code>for (const disposable of disposables.splice(0).reverse()) {
+  if (task) task = task.then(() => runDisposable(disposable))
+  else { … }
 }</code></pre>
-          <p>That sample is the whole shape. What makes it worth writing down is not the factory but the two objects it is handed, and the fact that they are not a boundary.</p>
+        <p><strong>Is it LIFO?</strong> Within one fiber, yes: the fiber's own list returns in reverse registration order — <code>clear()</code> in <code>vendor/cordis/src/utils.ts</code> ends with <code>return values.reverse()</code>, and the type doc says “Disposers run in reverse registration order when the owning fiber unloads”. But be precise about the shape, because it is not a single global stack:</p>
+        <ul>
+          <li><strong>Inside one effect</strong>, disposers run strictly one after another, in reverse order (the chained <code>task.then(...)</code> above).</li>
+          <li><strong>Across one fiber's top-level effects</strong>, the list is handed out in reverse order but started concurrently: <code>_unload()</code> does <code>await Promise.all(this._disposables.clear().map(async (dispose) =&gt; …))</code>. Reverse <em>order</em>, overlapping <em>execution</em>.</li>
+          <li><strong>Across fibers</strong>, a provider waits: “Dependents are notified when this fiber leaves <code>ACTIVE</code>, but may still access its services during their own teardown, so the effects of this fiber are only disposed after every dependent has unloaded” (<code>fiber.ts</code>, <code>_unload()</code>). The order <em>among sibling dependents</em> is not promised anywhere.</li>
+        </ul>
 
-          <h3>Two objects: the API, and the context of one dispatch</h3>
-          <div class="table-scroll"><table>
-            <thead><tr><th>You get</th><th>What is in it</th></tr></thead>
-            <tbody>
-              <tr><td><code>pi</code> (<code>ExtensionAPI</code>)</td><td><code>on(hook, handler)</code> — which returns an unsubscribe — plus the registration calls (<code>registerTool</code>, <code>registerCommand</code>, <code>registerShortcut</code>, <code>registerFlag</code>, <code>registerMessageRenderer</code>, <code>registerMarkdownTransformer</code>, <code>registerEntryRenderer</code>, <code>registerProvider</code> / <code>unregisterProvider</code>), the session and state calls (<code>sendMessage</code>, <code>sendUserMessage</code>, <code>appendEntry</code>, <code>setSessionName</code> / <code>getSessionName</code>, <code>setLabel</code>), <code>exec</code>, the live getters and setters (<code>getFlag</code>, <code>getActiveTools</code> / <code>getAllTools</code> / <code>setActiveTools</code>, <code>getCommands</code>, <code>setModel</code>, <code>getThinkingLevel</code> / <code>setThinkingLevel</code>), and the shared <code>events</code> bus. <code>setActiveTools</code> is the one the deactivation control below is modelled on.</td></tr>
-              <tr><td><code>ctx</code> (<code>ExtensionContext</code>), per dispatch</td><td><code>ui</code>, <code>mode</code>, <code>hasUI</code>, <code>cwd</code>, <code>sessionManager</code> (read-only), <code>modelRegistry</code>, <code>model</code>, <code>scopedModels</code>, <code>thinkingLevel</code>, <code>isIdle()</code>, <code>isProjectTrusted()</code>, <code>signal</code>, <code>hasPendingMessages()</code>, <code>getContextUsage()</code>, <code>compact()</code>, <code>getSystemPrompt()</code>, <code>abort()</code>, <code>shutdown()</code>.</td></tr>
-              <tr><td><code>ctx</code> in a <em>command</em> handler</td><td>The same, plus <code>waitForIdle</code>, <code>newSession</code>, <code>fork</code>, <code>navigateTree</code>, <code>switchSession</code>, <code>reload</code>. These are command-only because calling them from a lifecycle handler can deadlock the loop.</td></tr>
-            </tbody>
-          </table></div>
-          <p>That last row is the design tell. The powerful verbs — replace the session, fork, move the leaf, rebuild the runtime — are not in the context of a lifecycle hook. A hook can <em>ask</em> for things; a command handler can <em>do</em> them. If you find yourself wanting <code>ctx.fork()</code> inside a <code>turn_end</code> handler, the shape of the API is telling you that you want a command.</p>
+        <h4>Dependency resolution is reactive, and activation and deactivation are one code path</h4>
+        <p>A fiber computes a dependency “epoch” from the uid of each implementation it injected; when that string changes, the same function either reloads or unloads it:</p>
+        <pre><code>_refresh() {
+  let epoch = `${this._revision}`
+  for (const name of Object.keys(this.inject)) {
+    const impl = this._store[name]
+    if (!impl) { epoch = INACTIVE; break }
+    epoch += ':' + impl.uid
+  }
+  this._setEpoch(epoch)
+}</code></pre>
+        <p><code>_setEpoch</code> then runs <code>_reload()</code> when the fiber was inactive and can now be satisfied, and <code>_unload()</code> in the other direction. That is the coeffect mechanism in one function: “every context change is classified against a component's coeffect specification to drive its activation and deactivation.” The public form of the same idea is <code>ctx.inject(deps, callback)</code>, whose doc says the callback “is unloaded and re-run whenever a required service changes”.</p>
+        <p>And a missing provider is not an error: the fiber sits in <code>PENDING</code>. The lifecycle enum is explicit about the states — <code>PENDING</code> — waiting for required services; <code>LOADING</code> — the callback is running; <code>ACTIVE</code> — loaded and providing; <code>FAILED</code>; <code>UNLOADING</code> — disposers are running; <code>DISPOSED</code> — the fiber was removed and cannot restart.</p>
 
-          <h3>The hooks, grouped by when they fire</h3>
-          <p>Handlers are dispatched in extension load order, and the list of handlers is snapshotted when a dispatch starts — so a change made by one handler does not affect the dispatch it is already inside. The full set, with what each one is allowed to move:</p>
-          <div class="table-scroll"><table>
-            <thead><tr><th>Phase</th><th>Hook</th><th>When it fires</th><th>What a handler can change</th></tr></thead>
-            <tbody>
-              <tr><td>load and trust</td><td><code>project_trust</code></td><td>when Pi has to decide whether a project directory is trusted</td><td>returns a trust decision; the first handler with a definite answer wins</td></tr>
-              <tr><td>load and trust</td><td><code>resources_discover</code></td><td>when Pi loads skills, prompt templates and themes</td><td>adds <code>skillPaths</code>, <code>promptPaths</code>, <code>themePaths</code></td></tr>
-              <tr><td>session</td><td><code>session_start</code></td><td>when a session starts, resumes, or is reloaded (the event carries the reason)</td><td>nothing — it observes; the transcript is already what it is</td></tr>
-              <tr><td>session</td><td><code>session_info_changed</code></td><td>when the session's name or metadata changes</td><td>nothing — observes</td></tr>
-              <tr><td>session</td><td><code>session_before_switch</code></td><td>before switching to another session file</td><td>cancels the switch</td></tr>
-              <tr><td>session</td><td><code>session_before_fork</code></td><td>before forking at a chosen entry</td><td>cancels, or skips restoring the conversation in the new file</td></tr>
-              <tr><td>session</td><td><code>session_before_tree</code></td><td>before the leaf moves inside the tree</td><td>cancels, or attaches a summary to the branch you enter</td></tr>
-              <tr><td>session</td><td><code>session_tree</code></td><td>after the leaf has moved</td><td>nothing — observes</td></tr>
-              <tr><td>session</td><td><code>session_before_compact</code></td><td>before a compaction, with the branch entries in hand</td><td>cancels, or supplies its own compaction result</td></tr>
-              <tr><td>session</td><td><code>session_compact</code></td><td>after the compaction entry is written</td><td>nothing — observes</td></tr>
-              <tr><td>session</td><td><code>session_compact_failed</code></td><td>when the summarising request fails</td><td>nothing — observes</td></tr>
-              <tr><td>session</td><td><code>session_shutdown</code></td><td>when the runtime shuts down, including <code>reason: "reload"</code></td><td>nothing — observes</td></tr>
-              <tr><td>context and provider</td><td><code>context</code></td><td>before every model request, with the message list</td><td>returns replacement messages — but Pi restores the leading system message, so this hook cannot rewrite the prompt</td></tr>
-              <tr><td>context and provider</td><td><code>context_with_system</code></td><td>after <code>context</code>, with the system message visible</td><td>returns replacement messages <em>including</em> the system prompt; that is the difference between the two hooks</td></tr>
-              <tr><td>context and provider</td><td><code>cache_warming_decision</code></td><td>when Pi decides whether to warm the prompt cache</td><td>returns an action</td></tr>
-              <tr><td>context and provider</td><td><code>before_provider_request</code></td><td>with the request payload about to go out</td><td>returns a replacement payload: the last per-request rewriting point</td></tr>
-              <tr><td>context and provider</td><td><code>before_provider_headers</code></td><td>with the outgoing HTTP headers</td><td>mutates the headers in place</td></tr>
-              <tr><td>context and provider</td><td><code>after_provider_response</code></td><td>after the provider answers</td><td>nothing — observes</td></tr>
-              <tr><td>agent and turn</td><td><code>before_agent_start</code></td><td><strong>once per user prompt</strong>, before the loop starts</td><td>appends messages, or replaces the system prompt the run that is starting will use — later handlers observe the override</td></tr>
-              <tr><td>agent and turn</td><td><code>agent_start</code></td><td>when a run starts</td><td>nothing — observes</td></tr>
-              <tr><td>agent and turn</td><td><code>agent_end</code></td><td>when an agent loop ends, whatever its stop reason — including error and abort, so it is not a success signal</td><td>nothing — observes</td></tr>
-              <tr><td>agent and turn</td><td><code>agent_before_settle</code></td><td>just before settling, when automatic work may still be pending</td><td>returns a boundary result: appended entries, and whether to continue</td></tr>
-              <tr><td>agent and turn</td><td><code>agent_settled</code></td><td>when no automatic work remains</td><td>nothing — observes</td></tr>
-              <tr><td>agent and turn</td><td><code>turn_start</code></td><td>at the start of each turn</td><td>nothing — observes</td></tr>
-              <tr><td>agent and turn</td><td><code>turn_end</code></td><td>at the end of each turn, with that turn's tool results</td><td>returns a boundary result: appended entries, and whether the loop should continue</td></tr>
-              <tr><td>messages</td><td><code>message_start</code></td><td>as a message begins</td><td>nothing — observes</td></tr>
-              <tr><td>messages</td><td><code>message_update</code></td><td>on every streamed update of a message</td><td>nothing — observes (this is the streaming hook)</td></tr>
-              <tr><td>messages</td><td><code>message_end</code></td><td>when a message is finalized</td><td>replaces it, provided the replacement keeps the same role</td></tr>
-              <tr><td>tools</td><td><code>tool_call</code></td><td>before a tool runs, <em>after</em> its arguments validated</td><td>returns <code>{ block, reason, terminate }</code>, or mutates <code>event.input</code> in place; a handler that throws also blocks the call</td></tr>
-              <tr><td>tools</td><td><code>tool_result</code></td><td>after the tool returns</td><td>rewrites <code>content</code>, <code>details</code>, <code>isError</code>, <code>usage</code>; handlers compose, each seeing the previous one's result</td></tr>
-              <tr><td>tools</td><td><code>tool_execution_start</code></td><td>when a tool starts running</td><td>nothing — observes</td></tr>
-              <tr><td>tools</td><td><code>tool_execution_update</code></td><td>on partial output from a running tool</td><td>nothing — observes</td></tr>
-              <tr><td>tools</td><td><code>tool_execution_end</code></td><td>when a tool finishes</td><td>nothing — observes</td></tr>
-              <tr><td>model and thinking</td><td><code>model_select</code></td><td>after the model changes</td><td>nothing — observes</td></tr>
-              <tr><td>model and thinking</td><td><code>thinking_level_select</code></td><td>after the thinking level changes</td><td>nothing — observes</td></tr>
-              <tr><td>input and shell</td><td><code>input</code></td><td>when text arrives from the UI</td><td>transforms it, or handles it and stops it reaching the model</td></tr>
-              <tr><td>input and shell</td><td><code>user_bash</code></td><td>when the user runs a shell command directly</td><td>supplies the operations to run, or a finished result</td></tr>
-              <tr><td>input and shell</td><td><code>ui_prompt_start</code> / <code>ui_prompt_end</code></td><td>around an interactive prompt</td><td>nothing — observes; they fire when a UI is bound (the TUI and RPC bind one), and not in a binding that has none</td></tr>
-            </tbody>
-          </table></div>
-          <p>Read the last column as the honest map of influence. The hooks that can <em>change</em> something are a minority, and they cluster at four places: the decision hooks (<code>project_trust</code>, <code>resources_discover</code>, <code>cache_warming_decision</code>, <code>before_provider_headers</code>); the four <code>session_before_*</code> cancellation points; the per-request rewriting chain (<code>context</code>, <code>context_with_system</code>, <code>before_provider_request</code>); and the four that see real content — <code>before_agent_start</code>, <code>message_end</code>, <code>tool_call</code>, <code>tool_result</code> — plus the two boundary hooks (<code>turn_end</code>, <code>agent_before_settle</code>) and the input hooks. The rest are instrumentation, and instrumentation is most of what a working extension does.</p>
+        <h4>Every listener is an effect, which is why nothing has to be unsubscribed by hand</h4>
+        <blockquote><p>“The listener is removed automatically when the fiber unloads.” — <code>vendor/cordis/src/events.ts</code>, <code>on()</code></p></blockquote>
+        <p>The mechanism is one line: <code>register()</code> wraps the listener install in <code>this.ctx.fiber.effect(() =&gt; { hooks.push(...); return () =&gt; this.unregister(name, callback) }, label)</code>. A plugin cannot install a listener and forget it, because the listener is owned by the fiber that installed it.</p>
+        <p>Timers get the same treatment only if you go through the framework's timer service. <code>cordis-plugin-timer</code> implements <code>ctx.timeout</code> as an effect that returns <code>() =&gt; clearTimeout(timer)</code>, and <code>ctx.interval</code> likewise. A raw <code>setInterval</code> in plugin code is <em>not</em> captured by the kernel — see the table below.</p>
+        <div class="table-scroll"><table>
+          <thead><tr><th>The classic Node/JS plugin failure</th><th>What Cordis actually does about it</th><th>What it does not do</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Lingering event listeners</strong> after a plugin is removed</td><td><code>ctx.on()</code> is registered through <code>ctx.fiber.effect()</code> and returns the unregister call as its disposer; the fiber's teardown runs it.</td><td>It does not track listeners registered outside a context — a module-level <code>process.on</code> is still yours to clean up.</td></tr>
+            <tr><td><strong>Leaked singletons</strong> that outlive their owner</td><td>A <code>Service</code> registers itself in the constructor and “is automatically removed with the owning fiber”; the binding is a disposal, not a module-level variable.</td><td>It does not stop a plugin from stashing a service in a module-scope variable; the object stays alive if you keep a reference.</td></tr>
+            <tr><td><strong>Orphaned intervals/timeouts</strong></td><td><code>ctx.timeout()</code> / <code>ctx.interval()</code> are effects whose disposer clears the timer, and a disposed pending <code>ctx.timeout(delay)</code> rejects rather than leaking.</td><td>A bare <code>setInterval</code> is invisible to the kernel. “Use the timer service” is a convention the framework supports, not a sandbox it enforces.</td></tr>
+            <tr><td><strong>Torn-down components still receiving work</strong></td><td>A provider's effects are disposed only after its dependents unload, and an <code>INACTIVE_EFFECT</code> error is thrown if a plugin tries to register on a dead context.</td><td>In-flight async work is not cancelled for you; a plugin's own async body needs its own cancellation and its own disposer.</td></tr>
+          </tbody>
+        </table></div>
 
-          <h3>The registry: add works, replace is undocumented, removal does not exist</h3>
-          <p><code>registerTool</code> writes into the extension's tool map and then calls the runtime's tool-list refresh, so a tool is callable as soon as it is registered: at load, or later from a handler or a command. The refresh is only needed post-bind, which is exactly why a registration made from a command handler takes effect without a reload. The shipped <code>dynamic-tools</code> example does both halves: its own header describes it as "registering tools after session initialization", it registers one tool during <code>session_start</code>, and it registers more at runtime from a <code>/add-echo-tool</code> command. The interesting part is what happens around the edges of that.</p>
-          <div class="table-scroll"><table>
-            <thead><tr><th>What you want</th><th>Possible?</th><th>How</th><th>The catch</th></tr></thead>
-            <tbody>
-              <tr><td>Add a tool while the process runs</td><td><strong>Yes</strong></td><td><code>pi.registerTool(...)</code>, at load or later from a handler or a command</td><td>The runtime's tool list is refreshed post-bind, so the tool is callable as soon as it is registered. The shipped <code>dynamic-tools</code> example registers at <code>session_start</code> and again at runtime from <code>/add-echo-tool</code>.</td></tr>
-              <tr><td>Replace a tool by name</td><td>Works, undocumented</td><td><code>registerTool</code> again with the same name</td><td>It is a map set, so the new definition wins — but no documentation promises it and no diagnostic reports it.</td></tr>
-              <tr><td>Shadow a built-in</td><td><strong>Yes</strong></td><td>register a tool with a built-in's name</td><td>Extension tools shadow built-ins by name, silently.</td></tr>
-              <tr><td>Beat another extension to a name</td><td>First-loaded wins</td><td>be earlier in the load order</td><td>Silently. Tool names are the one registry without a conflict diagnostic; shortcuts and commands have diagnostics.</td></tr>
-              <tr><td>Remove a tool</td><td><strong>No</strong></td><td>—</td><td>There is no <code>unregisterTool</code>: zero hits across this version's <code>dist/</code>, <code>docs/</code> and <code>examples/</code>. <code>setActiveTools</code> deactivation is the supported thing, and the tool stays registered.</td></tr>
-              <tr><td>Not offer a tool at all</td><td><strong>Yes</strong>, at construction</td><td><code>tools</code> / <code>noTools</code> / <code>excludeTools</code></td><td>A name that is not allowed is never in the schema, so the model cannot call it — that is a session-level decision, not a runtime one.</td></tr>
-            </tbody>
-          </table></div>
-          <p>So "live tool mutation" is not one capability, it is three. Adding is real. Replacing works because a map is a map. Removing is not in the API at all, and the two things that look like it are not it: <code>setActiveTools</code> changes what the model is offered while the definition stays in the registry, and deleting the extension file only takes effect on a reload of the whole runtime. The <a href="#explorer">explorer</a> below has a button for the removal, so you can watch it find nothing.</p>
+        <h3 id="compose">5. How dsh decomposes the agent runtime across that tree</h3>
+        <p>The architecture doc says it twice, and both sentences are worth having in view while reading the table:</p>
+        <blockquote>
+          <p>“Every part of the product is a plugin, including the model adapter, the tool registry, the session log, and the agent loop itself, so each is replaceable from configuration.” — <code>docs/architecture.md:9</code></p>
+          <p>“There is no privileged core to patch: you extend dsh by mounting a plugin beside the others, and registrations are effects that unwind when their plugin unloads.” — <code>docs/architecture.md:11</code></p>
+        </blockquote>
+        <p>Which plugin claims which key, from the architecture doc's own core-package table and the generated capability graph:</p>
+        <div class="table-scroll"><table>
+          <thead><tr><th>Part of the product</th><th>Package</th><th><code>ctx</code> key</th><th>What it owns</th></tr></thead>
+          <tbody>
+            <tr><td>Agent execution loop</td><td><code>@deepseek-ai/dsh-agent-loop</code></td><td><code>ctx.agentLoop</code></td><td>the default driver implementing the <code>Agent</code> interface: claims input, assembles, streams, executes tools, decides whether to stop</td></tr>
+            <tr><td>Live agent registry</td><td><code>@deepseek-ai/dsh-agent</code></td><td><code>ctx.agents</code></td><td>create/resume/dispose handles, <code>agent/*</code> events, per-agent scoped registrations</td></tr>
+            <tr><td>Tool registry</td><td><code>@deepseek-ai/dsh-tools</code></td><td><code>ctx.tools</code></td><td>the scoped tool registry and the guarded execution pipeline (allow / deny / ask)</td></tr>
+            <tr><td>Session log</td><td><code>@deepseek-ai/dsh-session</code></td><td><code>ctx.sessions</code></td><td>the append-only <code>SessionEvent</code> log and the in-memory store; everything model-visible is logged</td></tr>
+            <tr><td>Prompt assembly</td><td><code>@deepseek-ai/dsh-system-prompt</code></td><td><code>ctx.systemPrompt</code></td><td>prompt sections and tool schemas, assembled per step</td></tr>
+            <tr><td>Model calls (the router)</td><td><code>@deepseek-ai/dsh-llm</code> + adapters such as <code>dsh-llm-deepseek</code>, <code>dsh-llm-pi-ai</code>, <code>dsh-llm-replay</code></td><td><code>ctx.llm</code></td><td>the provider-neutral stream seam; each adapter registers a provider, and every caller talks to the seam</td></tr>
+            <tr><td>Permission policies</td><td><code>@deepseek-ai/dsh-user-approval</code>, <code>@deepseek-ai/dsh-permission-presets</code></td><td><code>ctx.approval</code>, <code>ctx.permissionPresets</code></td><td>ask-before-risky-actions and the read-only / workspace-write / danger-full-access table; <code>dsh-sandbox-policy</code> is the config row that selects the sandbox mode those presets name</td></tr>
+          </tbody>
+        </table></div>
+        <p>The policies are the part people assume is welded in. In <code>dsh-base</code>'s patch the approval policy is a config field on a row — <code>policy: (process.env.DSH_PERMISSION_MODE ?? 'workspace-write') === 'danger-full-access' ? 'never' : 'ask'</code> — and the presets are a table on another row. Changing the posture is changing a plugin's config, not editing the loop.</p>
+        <p>What that buys, stated by the architecture doc itself: “Seams are why one provider swap changes the whole product. Filesystem and subprocess providers share one execution world, so pointing them at a remote sandbox moves Bash, PTY, and LSP with them, with no provider forks.”</p>
 
-          <h3>What an extension is not</h3>
-          <p>An extension is code the harness calls. It is not a sandbox, and the API does not pretend otherwise:</p>
-          <ul>
-            <li><strong>Same operating-system permissions.</strong> A tool registered by an extension runs where the process runs, with the process's credentials.</li>
-            <li><strong>It can read everything the harness can.</strong> Prompts, tool calls and their arguments, tool results, files, session history, and any credential the process holds. A redaction plugin is a promise, not an enforcement.</li>
-            <li><strong>It gets a read-only view of the session.</strong> <code>ctx.sessionManager</code> is exposed, but the verbs that replace a session are command-only.</li>
-            <li><strong>It is not isolated from other extensions.</strong> One extension can shadow another's tool name, and load order is the only arbitration.</li>
-          </ul>
-          <p>Errors are handled generously, with two exceptions that matter. A handler that throws is caught, and the failure becomes an <code>extension_error</code> record — the loop continues. But a failure in a <code>tool_call</code> handler <em>blocks</em> the tool, because the harness would rather not run a tool than run one it could not check. And a throw inside a tool's own <code>execute()</code> becomes an error result for the model, which is the same shape as any other tool failure.</p>
+        <h4>The step, the turn, and the events between them</h4>
+        <p>“A <strong>step</strong> is one model request plus the tools it calls. A <strong>turn</strong> is zero or more steps: it opens before its first input is claimed and closes once nothing is owed.” — <code>docs/architecture.md</code></p>
+        <p>The flow, condensed to the durable and interceptable points:</p>
+        <pre><code>turn/start
+  claim next-step input + one queued message
+  assemble prompt sections + step-admitted tool schemas
+  → agent/pre-step            reject | enter(messages)
+  step/start
+  agent/request → prepareCall()
+  llm/stream → assistant/message
+  tool/call → tools/pre-execute → tools/execute → tools/post-execute → tool/result
+  step/end
+  another request owed, or input arrived → next step
+  → agent/turn-stopping
+turn/end</code></pre>
+        <p>The events live in three domains, and the domain decides what a listener may do with the fact: <strong>session events</strong> are durable, appended to the log and broadcast through <code>session/event</code>; <strong>agent events</strong> (<code>agent/*</code>) carry a live <code>Agent</code> — inbox, step, status, request, validation, continuation — for work in flight; <strong>capability events</strong> (<code>fs/*</code>, <code>tools/*</code>, <code>telemetry/*</code>) attach policy and adapters to a seam without importing the loop.</p>
+        <p>Dispatch mode is part of that contract. <code>agent/pre-step</code>, <code>agent/request</code>, <code>llm/stream</code> and the three <code>tools/*</code> events are <strong>waterfalls</strong>, whose listeners must call <code>next()</code> to delegate; <code>agent/turn-stopping</code> is <strong>serial</strong> and has no <code>next()</code>. That is the difference between “you may veto or rewrite this” and “you may observe the decision that was made”.</p>
+        <p>Which makes the rejection semantics worth stating exactly: “<code>agent/pre-step</code> listeners accept, rewrite, or reject claimed messages; a rejected or empty first claim closes a durable turn without a step.” A turn that asks the model nothing is still a fact in the log — which is why the playground's rejection control grows the session while the step count stays at zero.</p>
+        <p>Above turns sits the goal. <code>dsh-goal</code> persists one objective across turns, resume, fork and restarts; <code>dsh-goal-round-driver</code> “automatically continues an active goal in the same session while the agent is idle… Each round gives the model another turn toward the objective”, bounded by a round cap that defaults to 256 and whose exhaustion records the blocker code <code>round-limit</code>. So goal ⊃ rounds ⊃ turns ⊃ steps is a real composition of four packages — not a hierarchy the docs draw as a diagram, and not one package nesting another.</p>
 
-          <h3><code>/reload</code>: one command, three audiences</h3>
-          <p><code>/reload</code> reloads keybindings, extensions, skills, prompt templates, themes and context files. It is also the sharpest example on this page of a feature that exists and is still not available where you need it.</p>
-          <div class="table-scroll"><table>
-            <thead><tr><th>Audience</th><th>Can it reload?</th><th>Why</th></tr></thead>
-            <tbody>
-              <tr><td>The interactive TUI</td><td><strong>Yes</strong></td><td><code>/reload</code> is a TUI command. It re-reads the extension set and rebuilds the runtime in place.</td></tr>
-              <tr><td>A process driven over RPC</td><td>Only through an extension command</td><td>The RPC command list in <code>rpc-commands.md</code> has no reload command. The one route is an extension command handler calling <code>ctx.reload()</code> — which means the extension you want to reload has to be the thing that reloads.</td></tr>
-              <tr><td>An embedder binding extensions without command actions</td><td><strong>No</strong> — silently</td><td>If the host does not bind command actions, <code>ctx.reload()</code> resolves against a no-op handler. The fleet's SDK host binds extensions this way, so a reload there is a silent no-op rather than an error.</td></tr>
-            </tbody>
-          </table></div>
-          <p>What a reload actually does is worth being precise about, because three wrong versions of it are in circulation. It shuts the runtime down with <code>session_shutdown { reason: "reload" }</code>, re-imports <strong>every</strong> extension with the module cache cleared (jiti runs with <code>moduleCache: false</code>), and starts again with <code>session_start { reason: "reload" }</code>. The transcript is preserved — this is not a new session — and the process keeps running, so it is not a restart either. What it is <em>not</em> is per-plugin: there is no way to reload one extension. Everything is re-imported, which is why every <code>pi</code> and <code>ctx</code> object captured before the reload is stale, and why the runtime tells you not to touch a <code>ctx</code> after <code>await ctx.reload()</code>.</p>
-          <p>One more asymmetry, because it explains a design choice: <strong>a tool cannot reload the runtime.</strong> Tools are handed an <code>ExtensionContext</code>, which has <code>compact()</code> and <code>getContextUsage()</code> but no <code>reload()</code>. The documented workaround is to queue a follow-up command and let a command handler do it — the same "hooks ask, commands act" split as above.</p>
+        <h3 id="scope">6. Scopes and lifetimes: what actually gets its own context</h3>
+        <p>This is the paragraph to check hardest, because the intuitive picture — every conversation, or every turn, is a child context with its own plugin lifetime — is <strong>not</strong> what the source does. There is no <code>ctx.fork()</code> anywhere in the vendored framework: a case-insensitive search for <code>fork</code> over <code>vendor/cordis/src/</code> returns nothing. What Cordis gives you is three child-context constructors and one ownership rule.</p>
+        <ul>
+          <li><code>ctx.extend(meta)</code> — “Create a child context with extra metadata… The child prototypally inherits every property of this context… The parent is not mutated.”</li>
+          <li><code>ctx.isolate(name, label)</code> — “Create a child context with an independent service scope for <code>name</code>… a different implementation can be provided without affecting the parent scope.”</li>
+          <li><code>ctx.intercept(name, config)</code> — per-plugin config for plugins started below that context.</li>
+          <li><code>ctx.plugin(...)</code> returns a fiber whose <code>dispose()</code> unwinds that plugin's registrations — after its dependents have unloaded (<a href="#kernel">§4</a>), so a provider never tears down underneath a dependent that is still using it.</li>
+        </ul>
+        <p>On top of that, <code>dsh-scope</code> mints a <em>scoped registration context</em>: <code>createScope(ctx, key)</code> calls <code>ctx.plugin(scope)</code>, then returns <code>fiber.ctx.extend({ [kScope]: key })</code>, so everything registered through it is “both scope-visible and scope-lifetime”. The registries in the core group build on it: “a tool registered through <code>agent.ctx</code> is visible only to that agent”.</p>
+        <p>So the real lifetime model is:</p>
+        <div class="table-scroll"><table>
+          <thead><tr><th>Entity</th><th>Is it a Cordis context?</th><th>Lifetime</th></tr></thead>
+          <tbody>
+            <tr><td>The application</td><td>One root <code>Context</code></td><td>the process</td></tr>
+            <tr><td>A plugin</td><td>A fiber whose <code>ctx</code> is <code>parent.extend({ fiber })</code></td><td>mount → dispose; reload on config or code change</td></tr>
+            <tr><td>An agent preset's service row</td><td>An <code>isolate()</code> child context — “a service row there needs an <code>isolate</code> realm” (<code>docs/architecture.md</code>)</td><td>as long as the preset is composed</td></tr><tr><td>A profile's plugin set</td><td>Not a child context: later bundles and <code>cordis.patch.yml</code> layers replace rows by id (<a href="#malleable">§7</a>)</td><td>as long as the profile is composed</td></tr>
+            <tr><td>An agent</td><td><strong>Yes</strong> — a scoped context minted per agent (<code>createScope(loopCtx, this)</code> in <code>agent-loop/src/agent.ts</code>), not a new root</td><td><code>ctx.agents.create()</code> / <code>resume()</code> → <code>dispose()</code>; the handle “stops the loop, unregisters, removes the session, unwinds the scope”</td></tr>
+            <tr><td>A turn</td><td><strong>No.</strong> A durable sequence in one long-lived agent: <code>turn/start</code> … <code>turn/end</code> in the session log</td><td>data, not a context — it does not mount or unmount anything</td></tr>
+            <tr><td>A subagent</td><td>A separate agent, so a separate scope — and possibly a separate process or product</td><td>its own session and handle; providers range from spawn-in-process to ACP/Codex/Claude Code</td></tr>
+          </tbody>
+        </table></div>
+        <p>An earlier draft of this page — and the mental model behind a lot of writing about plugin harnesses — said a turn is a Cordis subcontext with its own plugin lifetime. The sources do not support that: a turn is a durable data structure inside one agent's lifetime, and the unit that gets an isolated registration context is the <em>agent</em>. The distinction matters when you design an extension: per-turn behaviour is an event listener on <code>agent/*</code>, not a plugin you mount for a turn.</p>
+        <p>dsh also ships the tree inspector that the last table describes: <code>dsh-experimental-inspector</code> publishes a <code>CordisTreeSnapshot</code> in which “every Fiber is a child of <code>fiber.parent</code>, owns exactly one Context child for <code>fiber.ctx</code>… Context-only <code>extend()</code>, <code>isolate()</code>, and <code>intercept()</code> layers remain direct Context descendants.” That is the tree this page's playground draws a small model of.</p>
+
+        <h2 id="part2">Part 2 — Malleable, user-customizable programs</h2>
+
+        <h3 id="malleable">7. The swap surface: what “reshapable” means here</h3>
+        <p>A malleable program is one where the interesting decisions are configuration rather than code you cannot reach. dsh is a worked example, because each of these is a seam with a declared interface, one or more provider packages, and consumers that name only the interface:</p>
+        <div class="table-scroll"><table>
+          <thead><tr><th>Capability</th><th>Seam (definition)</th><th>Providers you can swap between</th><th>Consumer that does not change</th></tr></thead>
+          <tbody>
+            <tr><td>Shell execution</td><td><code>dsh-shell</code> (<code>ctx.shell</code>)</td><td><code>dsh-bash-local</code> (the process's own authority) · <code>dsh-bash-sandbox</code> (confines every command via <code>ctx.sandbox</code>)</td><td><code>dsh-tool-bash</code></td></tr>
+            <tr><td>Filesystem</td><td><code>dsh-fs</code> (<code>ctx.fs</code>)</td><td><code>dsh-fs-local</code> · <code>dsh-fs-sandbox</code> · <code>dsh-fs-ssh</code></td><td><code>dsh-tool-fs</code></td></tr>
+            <tr><td>Confinement</td><td><code>dsh-sandbox</code> (<code>ctx.sandbox</code>)</td><td><code>dsh-sandbox-local</code> (bwrap, landlock, Seatbelt, Windows ACL) · <code>dsh-sandbox-ssh</code> · policy via <code>dsh-sandbox-policy</code></td><td>every consumer that wraps argv before spawning</td></tr>
+            <tr><td>Model access</td><td><code>dsh-llm</code> (<code>ctx.llm</code>)</td><td><code>dsh-llm-deepseek</code> · <code>dsh-llm-pi-ai</code> · <code>dsh-llm-replay</code></td><td>the agent loop and compaction</td></tr>
+            <tr><td>Condensation</td><td><code>dsh-compaction</code> (backend)</td><td><code>dsh-compaction-basic</code>, plus <code>image-offload</code> and <code>tool-result-pruner</code> in front of it</td><td>the loop's pressure path</td></tr>
+            <tr><td>The loop itself</td><td><code>ctx.agentLoop</code></td><td>any package that registers an <code>Agent</code> factory</td><td><code>ctx.agents</code>, the UI, hooks, orchestrators</td></tr>
+          </tbody>
+        </table></div>
+        <p>The mechanism that makes a swap a <em>user</em> action is the patch layer: “A patch targets a row by id and replaces its whole config, or inserts new rows.” A profile's ordered bundles, its <code>cordis.patch.yml</code>, the home patch, then <code>--patch</code> overlays are applied to an empty entry list; <code>dsh --profile web --dump-config</code> prints the result, and “any row it prints can be replaced by a patch of your own.”</p>
+        <p>And the runtime version of the same idea is <code>dsh-plugin-manager</code>: “Enable or disable individual plugin entries, select installed bundles, and install or remove external bundles. With HMR enabled in YAML, configuration changes apply immediately; without HMR, the running composition remains until restart. Changes affect every session using the profile.”</p>
+
+        <h3 id="effects">8. Revertible effect trees, and what survives a swap</h3>
+        <p>A user-installed behaviour is an effect like any other: it registers a listener, a prompt section, a tool, an adapter — each through <code>ctx.effect()</code> or <code>ctx.on()</code> — and unmounting takes them back in reverse order. That is the same machinery §4 quoted, so what it guarantees is exactly what §4 said and no more:</p>
+        <ul>
+          <li><strong>Guaranteed:</strong> every registration made through the context has an owner (the fiber), disposal is a single code path, a fiber's own registrations come off in reverse registration order, a provider's effects are disposed only after its dependents unload, and double disposal is a no-op.</li>
+          <li><strong>Not guaranteed:</strong> that the heap is empty afterwards. “Zero leaks” is a property of the plugin's own diligence — timers through <code>ctx.timeout()</code> / <code>ctx.interval()</code>, listeners through <code>ctx.on</code>, no module-level caches — not a theorem the kernel enforces. A plugin that keeps a global reference, a bare <code>setInterval</code>, or an uncancelled promise leaks, and the framework will not notice.</li>
+        </ul>
+        <p>Hot-swapping is where this becomes visible. The vendored HMR plugin (<code>@deepseek-ai/cordis-plugin-hmr</code>) “watches source files, traces Node's module graph, clears affected module caches, and reloads only the plugin entries that depend on changed application files”; dsh's own <code>dsh-hmr</code> is the same service under <code>ctx.hmr</code> with one coordinated queue for module changes, Include refreshes and profile configuration. Profile recompositions “also replace plugins whose loaded files below the profile directory changed on disk… therefore takes effect without a restart at the next such recomposition”, and a replacement that fails to load “stops the previous plugin and is reported as <code>failed</code> with its load error instead of as a restart” — a plugin does not half-load.</p>
+        <p>What survives a swap is the part of the program that lives in a <em>different</em> plugin. The session is the canonical case: “Model-visible means logged. Every model request must be reconstructable from the log”, and “Fork, resume, transcripts, telemetry, and persistence all derive from these durable settlements.” Swap the loop, swap the shell provider, swap the compaction strategy — the session log is owned by <code>dsh-session</code> and the transcript is derived from it, so the conversation does not move. What does <em>not</em> survive is anything the swapped plugin was holding in memory: in-flight async work, a queue built up inside the old loop, a cached summary that only existed as a field on the old instance. Those are re-derived or lost, and the honest design rule is to put anything that must outlive a swap into the log.</p>
+        <p>The restart boundary, from the docs rather than from optimism: HMR is config-only by default in <code>dsh-base</code> (<code>config: { root: [] }</code> — profile configuration reloads, module roots are opt-in), headless/SDK/ACP bundles disable it in YAML, and source watching requires <code>root: ["."]</code>. Installing packages runs outside HMR's queue, and the boot docs say some resolution changes still need one: “Installation mappings and local overrides still require a restart.” So: configuration and plugin code can be live; package installation and broken loads wait for a restart or a corrected file.</p>
+
+        <h3 id="rules">9. What a builder should copy</h3>
+        <ol>
+          <li><strong>Every registration returns a disposer, and the runtime holds it.</strong> Not a convention documented in a guide — a return type. If an API can add something, its return value should remove it, and the owner should be an object with a lifecycle (<code>ctx.effect()</code> here).</li>
+          <li><strong>Capabilities are seams with three roles.</strong> A definition, one or more providers, and consumers that name only the definition. A seam you cannot swap has not been designed; it has been named.</li>
+          <li><strong>Dependencies are declared, not sequenced.</strong> “Load order is expressed through service requirements rather than manual boot sequencing.” If your plugin system needs a boot order, it is a dependency graph drawn by hand.</li>
+          <li><strong>Activation and deactivation are the same code path.</strong> Compute an epoch from what a component needs; reload when it changes, unload when it does not hold. That is the whole coeffect mechanism, and it is ~20 lines.</li>
+          <li><strong>State that must outlive a swap lives in a log, not in the component.</strong> Event-sourced state is what makes hot-swapping safe rather than merely possible: the component can be replaced because it was never the owner of the record.</li>
+          <li><strong>Make the tree inspectable.</strong> dsh ships an inspector that exports the fiber tree as a snapshot; a plugin system whose composition cannot be printed is one you debug by restarting.</li>
+        </ol>
+
+        <h3 id="playground">10. Playground: build and reshape a running program</h3>
+        <p><strong>No model is called.</strong> This is a deterministic model of the mechanics above: a plugin set, its registrations, a session log, a goal, and the seams — with every count computed from the controls by <code>runtime.js</code> and rendered by <code>app.js</code>. The panels are the claim: mount and unmount to watch registrations unwind, add or remove a provider to watch a dependent activate or deactivate, swap the shell seam, hot-swap the loop, run a turn, run a goal into its round cap, and mount a provider inside an isolated scope.</p>
+
+        <section class="settings" aria-labelledby="plugins-title">
+          <h3 id="plugins-title" class="settings-heading">A. Mount and unmount plugins</h3>
+          <p>The list is the composition, not a menu of features. Press a button to unmount an active plugin: its registrations come off the ledger one at a time, in reverse registration order, and any plugin that was depending on a service it provided deactivates first. Press it again to mount it: it re-registers at the end of the ledger.</p>
+          <div id="plugin-list" class="plugin-list"></div>
+          <p id="runtime-status" class="status">Loading the composition…</p>
+          <p class="small" id="inactive"></p>
         </section>
 
-        <section id="spatiotemporal">
-          <h2>Space and time: where a run lives, and what it can revisit</h2>
-          <p>The loop is one process with one transcript, so it is easy to talk about "the agent" as a thing that is simply there. It is not: it has a place on the filesystem, and it has a history it can move around in. Two axes, and most of the ways multi-agent systems go wrong are one axis being mistaken for the other.</p>
-
-          <h3>The spatial axis: what is a boundary and what is a convention</h3>
-          <p>This fleet says "lane" a lot. A lane is not a container. What actually separates two lanes is a short list, and only the first three items on it are enforced by something other than text:</p>
-          <div class="table-scroll"><table>
-            <thead><tr><th>Boundary</th><th>Hard or convention?</th><th>What actually enforces it</th></tr></thead>
-            <tbody>
-              <tr><td>One <code>pi</code> process per lane</td><td><strong>Hard</strong></td><td>The operating system. Two lanes are two processes with separate memory; a tool call in one cannot touch the other's loop.</td></tr>
-              <tr><td>One session file per session</td><td><strong>Hard</strong></td><td>The history lives in one file, and a fork writes a <em>second</em> file. That is why a replay cannot damage the original.</td></tr>
-              <tr><td>The tool allowlist</td><td><strong>Hard for the protocol</strong></td><td>A tool that is not offered is not in the schema and the loop cannot call it. It says nothing about <code>bash</code>, which can write the same bytes with no tool involved.</td></tr>
-              <tr><td>A git worktree</td><td>Convention</td><td>One checkout per branch keeps two lanes from editing the same files. It does not fence processes, and it is not a permission.</td></tr>
-              <tr><td>The working directory</td><td>Convention, and the weakest one</td><td>The harness is launched with <code>cwd</code> set to the journal directory for <em>every</em> lane; the worktree arrives as <code>FLEET_WORKDIR</code> in the prompt text. "Where am I" is a sentence the model is told, not a syscall that constrains it.</td></tr>
-              <tr><td>Role separation</td><td>Convention</td><td>Role text plus an allowlist: a reviewer gets no <code>write</code> and no <code>edit</code> and is told not to shell out. Enforced by code around the tool and by instructions inside the prompt.</td></tr>
-              <tr><td>A subagent</td><td>Hard for the process, and not resumable</td><td>The shipped subagent example runs <code>--mode json -p --no-session</code>: a one-shot child process with no session to return to. Calling it a "nested resumable session" would be wrong on both words.</td></tr>
-            </tbody>
-          </table></div>
-          <p>Two consequences, and both are load-bearing. First: a plugin loaded in two processes is two independent plugins — hook state is per process, and the load order in one lane says nothing about the other. Second: the only things two lanes genuinely share are the ones with a hard boundary of their own — a git remote and the beads database. Everything else that looks shared is two copies plus a convention about who writes when.</p>
-
-          <h3>The temporal axis: a tree, not a transcript</h3>
-          <p>A session file is a tree. Every entry has an <code>id</code> and a <code>parentId</code>, and the <strong>active branch</strong> — the path from the root to the current leaf — is what the model is sent. Not the tree: the branch. That one sentence is the whole mechanism behind re-entry, replay and compaction, and it is also the sentence most descriptions of "agent memory" get wrong.</p>
-          <ul>
-            <li><strong>Re-entry is real.</strong> <code>/tree</code> moves the leaf <em>within the same file</em>. Submit a different message at that point and you have a second branch; the first is not erased, because nothing was ever a linear log to truncate.</li>
-            <li><strong>Replay is real.</strong> <code>/fork</code> writes a <em>new</em> session file whose header names the parent session, with the branch from an earlier entry. <code>/clone</code> copies the active branch into a new session. The original file is untouched in both cases.</li>
-            <li><strong>Leaving a branch can leave a note.</strong> Pi can summarise the branch you leave and attach that summary to the branch you enter, so the work is available without every message of it.</li>
-            <li><strong>Rewind is not.</strong> There is no undo. Moving the leaf changes what happens next; it does not change what happened.</li>
-          </ul>
-          <p>Compaction is the same idea applied to one dimension. It writes a <em>new</em> entry of type <code>compaction</code> holding the summary, <code>tokensBefore</code>, and <code>firstKeptEntryId</code>; when the context is rebuilt, everything before <code>firstKeptEntryId</code> is replaced by the summary and the entries from it onwards are sent as they are. The raw entries stay in the file. A "retain-none" compaction is the edge case: it stores its own id in <code>firstKeptEntryId</code>, so no preceding entry survives into the context, and the file is still whole.</p>
-          <p><code>context_edit</code> is the third member of the family, and it is the one most easily misread. It appends an entry that changes what the model <em>sees from that point on</em> — it is branch-relative, and it does not rewrite history. A tool result you edited out with a context edit is still in the file, and a fork from before the edit still sees it.</p>
-          <p>Put together: the harness has a real sense of "where" (process, file, allowlist) and a real sense of "when" (tree, branch, compaction cut). What it does not have is a way to make either of them invisible. Every rewrite leaves an entry; every boundary is either a kernel fact or a sentence in a prompt.</p>
-
-          <h3>How the two compose</h3>
-          <div class="table-scroll"><table>
-            <thead><tr><th>Setup</th><th>What is separate</th><th>What is shared</th><th>What it is good for</th></tr></thead>
-            <tbody>
-              <tr><td>Two lanes</td><td>Two processes, two worktrees, two session files, two tool allowlists</td><td>The git remote and the beads database — and nothing else</td><td>Parallel work on one repository without a merge per tool call. Convergence happens through <code>git</code>, deliberately and late.</td></tr>
-              <tr><td>One session forked at a turn</td><td>Two session files, two branches</td><td>One process, one worktree, one tool set</td><td>Replay: try the other repair, keep the first attempt readable, and compare afterwards without a checkout.</td></tr>
-              <tr><td>One session, compacted</td><td>Nothing — one file, one branch</td><td>Everything, including the entries the summary replaced</td><td>A long run that keeps going: the model's context shrinks, the file does not.</td></tr>
-            </tbody>
-          </table></div>
-          <p>The mistake to avoid is using the spatial axis for a temporal problem. Restarting a process to get a fresh transcript throws away the history you might have wanted to compare against; forking a session gives you the fresh context while keeping the original file, at the cost of nothing but disk. And the reverse mistake is just as common: expecting a fork to give you isolation, when both files are in the same worktree, the same process and the same tool set.</p>
+        <section class="settings" aria-labelledby="ledger-title">
+          <h3 id="ledger-title" class="settings-heading">B. The effect ledger</h3>
+          <p><strong><output id="effect-count" for="effect-ledger">0</output> registrations are live.</strong> Each row is one place where a plugin changed the context, and the inverse the runtime holds for it. The counts here are the ones a reviewer can check: they come from the model, and they return to zero when the last plugin is unmounted.</p>
+          <ol id="effect-ledger" class="effect-list"></ol>
+          <h4 id="unwind-title" class="unwind-title">Nothing has unwound yet.</h4>
+          <ol id="unwind" class="effect-list effect-unwound"></ol>
         </section>
 
-        <section id="explorer">
-          <h2>Plugin explorer: add a hook, deactivate a tool, fork a session</h2>
-          <p><strong>This is a deterministic simulation of the plugin surface and the session graph.</strong> No extension is loaded, no model is called, no key is used and nothing leaves this page. <code>plugins.js</code> holds the scripted run and the arithmetic; <code>explorer.js</code> renders whatever it returns.</p>
-          <p>Six controls, and each one is a mechanic from the two sections above:</p>
-          <ul>
-            <li><strong>Add a plugin</strong> — an extension that hooks something. Watch the load order, the dispatch count, and what that hook did to the run's numbers. A hook that only observes moves no numbers, which is the honest result and worth seeing once.</li>
-            <li><strong>Offer or withhold a tool</strong> — the construction-time allowlist. A tool that is not offered is not in the schema, so the scripted assistant's call to it fails as "not offered".</li>
-            <li><strong>Deactivate a tool mid-run</strong> — <code>setActiveTools</code>. The tool stays registered; the next call to it fails. This is labelled <em>deactivated, not unregistered</em> everywhere it appears, because that distinction is the whole point.</li>
-            <li><strong>Guard a call</strong> — a <code>tool_call</code> handler returning <code>{ block: true }</code>, with and without <code>terminate</code>. The two terminate options exist to show that a vote is not a veto: blocking <code>bash</code> votes inside a two-call batch and the loop carries on past turn 2 — until turn 4, where bash is the only call in its batch and the same vote is unanimous, so the run does stop there; blocking <code>edit</code> votes inside a one-call batch and the run stops at turn 3.</li>
-            <li><strong>Fork the session</strong> — the chosen turn decides the prefix, a new file gets the other branch, and file A keeps the branch it abandoned.</li>
-            <li><strong>Move the compaction cut</strong> — <code>firstKeptEntryId</code> slides down the active branch: everything above it becomes the summary, and the numbers move with it.</li>
-          </ul>
+        <section class="settings" aria-labelledby="tree-title">
+          <h3 id="tree-title" class="settings-heading">C. The services on the root context</h3>
+          <p>Which plugin currently claims each <code>ctx</code> key. A key with no provider is not a crash: consumers that inject it go <code>PENDING</code>, which is <code>dsh-tool-fs</code> waiting for <code>ctx.fs</code> if you mount it before its provider.</p>
+          <dl id="services" class="metrics"></dl>
+          <p id="registry" class="small"></p>
+        </section>
 
-          <div class="workbench">
-            <section class="settings" aria-labelledby="explorer-controls">
-              <h3 id="explorer-controls">Controls</h3>
-
-              <fieldset>
-                <legend>Plugins, in load order</legend>
-                <div class="plugin-buttons">
-                  <button type="button" id="add-turn-logger" class="secondary">+ turn-logger</button>
-                  <button type="button" id="add-context-redactor" class="secondary">+ context-redactor</button>
-                  <button type="button" id="add-prompt-stamp" class="secondary">+ prompt-stamp</button>
-                  <button type="button" id="add-result-annotator" class="secondary">+ result-annotator</button>
-                  <button type="button" id="add-lint-tool" class="secondary">+ lint-tool</button>
-                </div>
-                <p class="small">Each button appends an extension to the load order. Hooks dispatch in that order, and the list is snapshotted when a dispatch starts — so order matters and a mid-dispatch change does not.</p>
-                <ol id="plugin-order" class="plugin-order"></ol>
-                <button type="button" id="plugin-clear" class="secondary">clear the load set</button>
-                <p class="small">This clears the explorer's own state. In a real lane the set is fixed when the runtime is built: changing it means a reload of the whole runtime, or a restart.</p>
-              </fieldset>
-
-              <fieldset>
-                <legend>Tools: offered, and active</legend>
-                <div class="tool-list">
-                  <label><input type="checkbox" id="explore-tool-read" value="read" checked> <code>read</code></label>
-                  <label><input type="checkbox" id="explore-tool-bash" value="bash" checked> <code>bash</code></label>
-                  <label><input type="checkbox" id="explore-tool-edit" value="edit" checked> <code>edit</code></label>
-                  <label><input type="checkbox" id="explore-tool-write" value="write" checked> <code>write</code></label>
-                  <label><input type="checkbox" id="explore-tool-lint" value="lint" checked> <code>lint</code></label>
-                </div>
-                <p class="small">The first four are built-ins. <code>lint</code> is not: it exists only once the <code>lint-tool</code> plugin registers it. Offering a name nothing registered gives you neither a schema nor a call.</p>
-                <div class="fields">
-                  <div>
-                    <label for="deactivate-tool">Deactivate a tool</label>
-                    <select id="deactivate-tool">
-                      <option value="" selected>nothing deactivated</option>
-                      <option value="read">read</option>
-                      <option value="bash">bash</option>
-                      <option value="edit">edit</option>
-                      <option value="write">write</option>
-                      <option value="lint">lint</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label for="deactivate-after">…as of</label>
-                    <select id="deactivate-after">
-                      <option value="0">the start of the run</option>
-                      <option value="1">after turn 1</option>
-                      <option value="2" selected>after turn 2</option>
-                      <option value="3">after turn 3</option>
-                    </select>
-                  </div>
-                </div>
-                <p class="small">A deactivated tool is <strong>still registered</strong>. It is just no longer active, so its next call fails — deactivated, not unregistered.</p>
-                <button type="button" id="unregister-attempt" class="secondary">Try unregisterTool("edit")</button>
-                <p class="small" id="unregister-result" hidden></p>
-              </fieldset>
-
-              <fieldset>
-                <legend>A tool_call guard</legend>
-                <label for="guard">A handler that can block a call</label>
-                <select id="guard">
-                  <option value="none" selected>no guard</option>
-                  <option value="edit">block edit</option>
-                  <option value="bash">block bash</option>
-                  <option value="bash-terminate">block bash, and vote to terminate</option>
-                  <option value="edit-terminate">block edit, and vote to terminate</option>
-                </select>
-                <p class="small"><code>terminate</code> is a vote the loop only honours when <em>every</em> finalized result in the batch agrees — and the batch, not the setting, decides. Turn 2 carries two calls (bash + read), so a bash vote there is ignored; turn 4 carries a solo bash, so the same vote stops the run at turn 4; turn 3 carries a solo edit, so an edit vote stops it at turn 3.</p>
-              </fieldset>
-
-              <fieldset>
-                <legend>Space and time</legend>
-                <label for="fork">Fork the session</label>
-                <select id="fork">
-                  <option value="none" selected>do not fork</option>
-                  <option value="turn-1">after turn 1</option>
-                  <option value="turn-2">after turn 2</option>
-                  <option value="turn-3">after turn 3</option>
-                </select>
-                <p class="small">A fork writes a new session file from an earlier entry and gives it a different branch. The file that ran keeps the branch the new one left behind.</p>
-                <label for="cut">Compaction cut <output id="cut-value" for="cut">…</output></label>
-                <input type="range" id="cut" min="0" max="10" step="1" value="4">
-                <p class="small">The cut is a position in the active branch: that entry becomes <code>firstKeptEntryId</code>, everything before it is replaced by the summary when the context is rebuilt, and every entry stays in the file.</p>
-              </fieldset>
-            </section>
-
-            <section aria-labelledby="explorer-numbers">
-              <h3 id="explorer-numbers">Numbers</h3>
-              <p id="explorer-status" class="notice" role="status" aria-live="polite">Computing the graph…</p>
-              <dl id="explorer-metrics" class="metrics"></dl>
-              <p class="small" id="cut-line"></p>
-              <p class="small">The token counts are constants chosen so the mechanics are visible; they are not measurements. Context is the prompt plus the active branch, minus whatever the <code>context</code> handler redacted.</p>
-            </section>
+        <section class="settings" aria-labelledby="swap-title">
+          <h3 id="swap-title" class="settings-heading">D. Hot-swap the agent loop, and swap the shell seam</h3>
+          <p>The loop is a plugin. Swapping its module unloads the current fiber — every registration unwinds — and mounts the new generation in the same context. <strong>The session log does not move</strong>: it belongs to <code>dsh-session</code>, which is not the plugin being swapped. The shell control swaps <code>ctx.shell</code> between <code>dsh-bash-local</code> and <code>dsh-bash-sandbox</code>; <code>dsh-tool-bash</code> is not edited, it loses the service, unloads, sees the new provider and reloads — which is why its three rows jump to the end of the ledger.</p>
+          <div class="actions">
+            <button id="hot-swap-loop" type="button">Hot-swap dsh-agent-loop</button>
+            <button id="swap-shell" type="button" class="secondary">Swap ctx.shell provider</button>
+            <button id="reset" type="button" class="secondary">Reboot the composition</button>
           </div>
-
-          <h3>The graph</h3>
-          <p class="small">Two session files, their entries in order, and where the compaction cut falls on the active branch. An entry with an amber edge was abandoned by the fork and is still readable; one with a grey edge is replaced by the summary when the context is rebuilt, and is still in the file.</p>
-          <p class="small" id="branch-line"></p>
-          <div id="tree" class="tree-files"></div>
-
-          <h3>The simulated run</h3>
-          <p class="small">One line per thing the harness did, in order, with the plugin and tool decisions in place. A request's context is the prompt plus everything in the active branch at that moment.</p>
-          <ol id="explorer-trace" class="trace"></ol>
-
-          <h3>Notes on this state</h3>
-          <ul id="explorer-notes" class="small"></ul>
-
-          <h3>What this does not model</h3>
-          <ul>
-            <li><strong>The model.</strong> The scripted assistant makes the same four turns whatever you do. A real model reacts to a blocked or failed call — that reaction is model behaviour, not a harness mechanic, and inventing it here would be inventing evidence.</li>
-            <li><strong>Hook side effects beyond the arithmetic.</strong> A plugin's effect is one number each: tokens redacted, tokens stamped, tokens annotated, schema tokens added, dispatches fired. Real handlers can do anything, including nothing, and the page cannot tell you which.</li>
-            <li><strong>The controls' reach into the forked branch.</strong> The alternative branch taken at a fork point is rendered as executed calls with their raw token counts, whatever the guard, deactivation and offer controls say. Those controls act on the recorded run in file A; the replay is a fixed alternative path, not a second simulation.</li>
-            <li><strong>Hook ordering beyond load order.</strong> Handlers within one extension dispatch in the order they were registered; the explorer models one handler per plugin.</li>
-            <li><strong>Real tokenisation.</strong> Every count is a constant. A real redaction saves whatever the redacted text actually costs, which may be nothing if the model's tokeniser disagrees with my arithmetic.</li>
-            <li><strong>The files on disk.</strong> The fork and the compaction are rendered as if they had been written; nothing is serialised, and <code>tokensBefore</code>, the compaction's <code>systemMessage</code> checkpoint and branch summaries are not drawn.</li>
-            <li><strong>Reload.</strong> There is no button for it. A reload rebuilds the whole runtime, which is not a property of the graph — it is why the graph cannot be changed in place.</li>
-          </ul>
+          <p id="swap-status" class="status"></p>
+          <p id="session-status" class="small"></p>
+          <ol id="session-tail" class="event-list"></ol>
         </section>
 
-        <section id="malleable">
-          <h2>Malleable software: what can you reshape without a deploy?</h2>
-          <p>"Malleable software" is a useful phrase only if it comes with a boundary. Here the boundary is <em>where the value is read</em>: per request, per runtime, at process start, or baked into the package. That gives the rungs below, and the difference between them is usually a reload or a restart, not a rewrite.</p>
-
-          <h3>Three verdicts, stated up front</h3>
-          <p>Applied to the three questions people actually ask about a harness like this one, the answers are not all the same shape, and two of the three are conditional:</p>
-          <div class="table-scroll"><table>
-            <thead><tr><th>Claim</th><th>Verdict</th><th>At what granularity</th></tr></thead>
-            <tbody>
-              <tr>
-                <td>A plugin can be hot-swapped</td>
-                <td><strong>EXISTS</strong></td>
-                <td>The <em>whole runtime</em>, at once. A reload rebuilds the loop in-process — every extension re-imported, the transcript preserved — and there is no way to reload one plugin.</td>
-              </tr>
-              <tr>
-                <td>Tools can be mutated live</td>
-                <td><strong>PARTIAL</strong></td>
-                <td>Add: yes — at load, or later from a handler or a command, because <code>registerTool</code> refreshes the runtime. Replace: works because the registry is a map, and is undocumented. Remove: no API at all — <code>setActiveTools</code> deactivates, and the tool stays registered.</td>
-              </tr>
-              <tr>
-                <td>The prompt can be re-woven mid-run</td>
-                <td><strong>PARTIAL</strong></td>
-                <td><code>before_agent_start</code> fires <em>once per user prompt</em>, which is a single call site per run. Per-request rewriting is <code>context</code>, <code>context_with_system</code> and <code>before_provider_request</code>. Re-rendering the prompt's sections between turns does not exist.</td>
-              </tr>
-            </tbody>
-          </table></div>
-          <p>And the things that are simply not there, said plainly because each of them is a plausible guess: there is <strong>no</strong> <code>unregisterTool</code>; <strong>no</strong> reload command over RPC; <strong>no</strong> way for a tool to reload the runtime itself; <strong>no</strong> way for a hook to reach a dispatch already in progress; <strong>no</strong> single <code>terminate</code> that stops a batch; and <strong>no</strong> sandbox around an extension.</p>
-
-          <h3>What that means for software you can mould live</h3>
-          <p>Sort what you want to change by what it takes to make the change visible. This is the table I would put on the wall before designing anything that calls itself malleable:</p>
-          <div class="table-scroll"><table>
-            <thead><tr><th>What you want to reshape</th><th>What it takes</th><th>Why</th></tr></thead>
-            <tbody>
-              <tr><td>Which tools the model may use, right now</td><td><strong>Nothing</strong> — <code>setActiveTools</code></td><td>The runtime rebuilds the prompt from the active set, so the next request carries a different schema. The tool stays registered.</td></tr>
-              <tr><td>What the model sees of the past</td><td><strong>An entry</strong> — a compaction, or a <code>context_edit</code></td><td>Both append to the branch. Neither deletes anything, and both are relative to the branch you are on.</td></tr>
-              <tr><td>The loop's behaviour inside a request</td><td><strong>A hook</strong> — <code>context</code>, <code>context_with_system</code>, <code>before_provider_request</code></td><td>These fire per request, which is the only place per-request behaviour can live.</td></tr>
-              <tr><td>The prompt's structure between turns</td><td><strong>Code</strong> — it does not exist</td><td><code>before_agent_start</code> is one call site per user prompt. There is no per-turn prompt re-render to hook.</td></tr>
-              <tr><td>A whole extension — its hooks, its tools and its commands</td><td><strong>A reload</strong> of the runtime, or a restart</td><td>The extension set is read when the runtime is built. A reload rebuilds it in-process; a restart rebuilds it from scratch.</td></tr>
-              <tr><td>The provider's wire format, the built-in tools' behaviour</td><td><strong>Code</strong>, then a restart</td><td>Adapters and built-ins are the package. This is the rung where a mistake reaches every lane at once.</td></tr>
-            </tbody>
-          </table></div>
-
-          <h3>The rungs</h3>
-          <div class="table-scroll"><table>
-            <thead><tr><th>Rung</th><th>What changes</th><th>How it takes effect</th><th>What it costs to be wrong</th></tr></thead>
-            <tbody>
-              <tr>
-                <td><strong>Hot</strong></td>
-                <td>The model, the thinking level, compaction (on/off or now), the active tool set, and <code>models.json</code> — opening <code>/model</code> reloads that file</td>
-                <td>RPC: <code>set_model</code>, <code>set_thinking_level</code>, <code>compact</code>, <code>set_auto_compaction</code>; <code>setActiveTools</code> inside an extension; opening <code>/model</code> reloads <code>models.json</code></td>
-                <td>One bad run. The process keeps running and the next request uses the new value.</td>
-              </tr>
-              <tr>
-                <td><strong>Reload</strong></td>
-                <td>Extensions, skills, prompt templates, themes, keybindings, context files</td>
-                <td><code>/reload</code>, in the TUI — or <code>ctx.reload()</code> from an extension command handler. In-process: the runtime is rebuilt and the transcript is kept.</td>
-                <td>Every extension is re-imported at once, and every <code>pi</code> or <code>ctx</code> object your code kept is stale.</td>
-              </tr>
-              <tr>
-                <td><strong>Restart</strong></td>
-                <td>CLI flags and environment, the set of extensions loaded in headless RPC, and <code>settings.json</code></td>
-                <td>Restart the process. In a headless lane these are read at startup: there is no RPC command that rewrites settings, so a settings change takes a restart to be seen.</td>
-                <td>An interrupted run and a cold context. Nothing is lost that was not in the transcript.</td>
-              </tr>
-              <tr>
-                <td><strong>Code change</strong></td>
-                <td>Provider adapters, and the behaviour of the built-in tools</td>
-                <td>Edit and redeploy the package, then restart.</td>
-                <td>A review, a CI run and a version to roll back to. This is the rung where you can break every lane at once.</td>
-              </tr>
-            </tbody>
-          </table></div>
-          <p>The reload rung is where most "malleable" claims go wrong in one direction or the other. It is more than the sceptics say — the runtime really is rebuilt in place, the transcript really is preserved, and it is not a restart — and less than the enthusiasts say: it is not per-plugin, it is not complete (every extension is re-imported whether you touched it or not), and in this fleet's headless lanes it is not reachable at all. Editing an extension's TypeScript and expecting the next headless run to pick it up does not work, because the extension set is read when the runtime is built and nothing in the RPC or SDK surface issues a reload. Over RPC the only route is an extension command handler calling <code>ctx.reload()</code>, and this fleet's SDK host binds extensions without command actions, which turns that call into a silent no-op. So the honest statement for a headless lane is "extensions are malleable with a restart", and the honest statement for the TUI is "extensions are malleable, all of them at once".</p>
-
-          <h3>The extensibility ladder</h3>
-          <p>The same boundary sorts the ways you can extend the harness. Roughly in order of how much of the loop you get to change:</p>
-          <ol>
-            <li><strong>Extensions</strong> (<code>.ts</code>) — full access: register tools, hook events, change what the loop does.</li>
-            <li><strong>Custom providers</strong> — a new wire protocol for a new endpoint. This is an extension too, not a rung below one: <code>pi.registerProvider()</code> is called from an extension factory and inherits its loading, trust and reload behaviour.</li>
-            <li><strong>Custom tools</strong> (<code>pi.registerTool</code>) — a tool with a schema, without owning the loop.</li>
-            <li><strong>Skills</strong> (<code>SKILL.md</code>) — instructions and procedures the model can load; no new code paths.</li>
-            <li><strong>Prompt templates</strong> — a reusable starting prompt.</li>
-            <li><strong><code>models.json</code></strong> — a new model on an existing protocol: base URL, token limits, and which wire quirks to speak. The provider docs send you here first when the service already speaks a supported API.</li>
-          </ol>
-          <p>Each rung is a real product decision, not a taste. A skill that would solve the problem is better than an extension, because a skill is readable by the person who inherits it and an extension is code you now maintain. The list is also a map of where bugs hide: the further down you go, the less of the loop you own and the more the answer is "it depends on the model"; the higher up, the more it is "it depends on you".</p>
+        <section class="settings" aria-labelledby="fork-title">
+          <h3 id="fork-title" class="settings-heading">E. An isolated scope</h3>
+          <p><code>ctx.isolate("shell")</code> gives a subtree its own <code>ctx.shell</code> without touching the root's. Mount a sandbox provider inside that scope and unmount it again: the root ledger is identical before and after, which is what “scoped” has to mean to be worth anything. (There is no <code>ctx.fork()</code>; these three constructors and fiber ownership are the whole scoping API.)</p>
+          <div class="actions">
+            <button id="mount-fork" type="button">Mount dsh-bash-sandbox in the isolated scope</button>
+            <button id="unmount-fork" type="button" class="secondary">Unmount the isolated scope</button>
+          </div>
+          <p id="fork-status" class="status"></p>
+          <ol id="fork-effects" class="effect-list"></ol>
+          <h4 id="fork-unwind-title" class="unwind-title"></h4>
+          <ol id="fork-unwind" class="effect-list effect-unwound"></ol>
         </section>
 
-        <section id="deepseek">
-          <h2>What is DeepSeek-specific, and what is just the harness</h2>
-          <p>Almost everything described above is generic. The loop, the tool protocol, the sessions, the transcript, compaction, retries and steering behave the same whatever endpoint <code>pi-ai</code> is pointed at. Only the adapter is DeepSeek's.</p>
-          <div class="table-scroll"><table>
-            <thead><tr><th>Concern</th><th>Where it lives</th><th>DeepSeek-specific?</th></tr></thead>
-            <tbody>
-              <tr><td>Turn loop, <code>agent_end</code>, <code>agent_settled</code></td><td>Harness (<code>pi-agent-core</code>)</td><td>No</td></tr>
-              <tr><td>TypeBox validation, allowlists, <code>isError</code>, <code>terminate</code></td><td>Harness</td><td>No</td></tr>
-              <tr><td>Prompt assembly, context files, skills</td><td>Harness + fleet roles</td><td>No</td></tr>
-              <tr><td>Compaction thresholds and the summary</td><td>Harness</td><td>No</td></tr>
-              <tr><td>How thinking is requested</td><td>Provider adapter</td><td><strong>Yes</strong> — <code>thinkingFormat: "deepseek"</code> emits <code>{thinking: {type: "enabled"}}</code>, and <code>reasoning_effort</code> is passed alongside it</td></tr>
-              <tr><td>Whether reasoning text comes back on the assistant message</td><td>Provider adapter</td><td><strong>Yes</strong> — <code>requiresReasoningContentOnAssistantMessages</code>, it must be echoed back</td></tr>
-              <tr><td>Output length field</td><td>Provider adapter</td><td><strong>Yes</strong> — <code>max_tokens</code></td></tr>
-              <tr><td>Provider error classification and network path</td><td>Lane host + deployment</td><td><strong>Yes</strong> — a regex over the provider's error text, and the exe.dev proxy</td></tr>
-            </tbody>
-          </table></div>
-          <p>One of those has a price attached, and the playground is wired to it. <code>requiresReasoningContentOnAssistantMessages</code> means the assistant's reasoning text must be sent back on the next request: drop it and the conversation is not merely less detailed, it is a different conversation. It also means reasoning tokens are paid for twice — as output when produced, and as input on every later request in the run, until a compaction summarises them away. The playground's thinking control is exactly that mechanic, and because more thinking also means more context it can trigger more compaction, which is why the numbers move in both directions there.</p>
-          <p>Operational detail rather than protocol: outbound calls go through the <strong>exe.dev HTTPS proxy</strong>, which is the reason a run that works in a terminal can fail under systemd. And there is no credit-check API in play — the lane hosts classify the provider's <em>error text</em> with a regex (quota, rate limit, insufficient, balance, credit, payment, 402, 429) and, after two consecutive such errors, the lane host cools that provider down for the whole VM and moves the lane to the next model in its role's rotation. That is how "out of credit" and "rate limited" are told apart here: both arrive as an error string, and the lane acts on the words.</p>
+        <section class="settings" aria-labelledby="turn-title">
+          <h3 id="turn-title" class="settings-heading">F. A step, a turn, and a rejection</h3>
+          <p>A <strong>step</strong> is one model request plus the tools it calls; a <strong>turn</strong> is zero or more steps, opened before its first input is claimed and closed once nothing is owed. Choose <code>reject</code> and run a turn: <code>agent/pre-step</code> refuses the claimed message and the turn closes durably with <em>zero steps</em> — the events are in the log, nothing was asked.</p>
+          <div class="fields">
+            <div>
+              <label for="pre-step">agent/pre-step decision</label>
+              <select id="pre-step">
+                <option value="enter">enter — admit the claimed message</option>
+                <option value="reject">reject — close the turn with no step</option>
+              </select>
+            </div>
+          </div>
+          <div class="actions">
+            <button id="run-turn" type="button">Run one turn</button>
+          </div>
+          <p id="turn-status" class="status"></p>
+          <ol id="turn-events" class="event-list"></ol>
         </section>
 
-        <section id="limits">
-          <h2>Honest limits, stated as corrections</h2>
-          <p>Six claims about harnesses like this one are common, plausible, and wrong. Each one is wrong in a way that changes what you should build.</p>
-
-          <h3>1. "The agent runs in a sandbox."</h3>
-          <p>There is no sandbox and no container. Tools execute with the user's operating-system permissions. Schema validation is not a security boundary; it is a shape check. The isolation in this fleet is operational — worktrees, role tool allowlists, branch ownership, the reaper — and every one of those is a convention enforced by code that runs <em>around</em> the tool, not by the kernel around the process. A role whose allowlist omits <code>write</code> is a role that has agreed not to write; give it <code>bash</code> and it can still write.</p>
-
-          <h3>2. "Edit the extension and the next run picks it up."</h3>
-          <p>False in headless RPC, and the near-miss is what makes it confusing. The extension set is read when the runtime is built, and a reload does rebuild it — but <code>/reload</code> is a TUI command. The RPC command list has no reload, so over RPC the only route is an extension command handler calling <code>ctx.reload()</code>, and a host that binds extensions without command actions resolves that call against a no-op. This fleet's SDK host binds them that way, so in a systemd-managed headless lane changing an extension's TypeScript means restarting the process. Plan the restart into the change instead of being surprised by it — this is the single most common way a "malleable" tool turns out to be "malleable after a deploy".</p>
-
-          <h3>3. "DeepSeek takes the same reasoning settings as OpenAI."</h3>
-          <p>It does not, and the mistake is quiet. Thinking is switched on by a <code>thinking</code> object that the <code>deepseek</code> thinking format emits; <code>reasoning_effort</code> travels <em>alongside</em> it rather than replacing it (the adapter does not exclude DeepSeek from effort support), and the length field is <code>max_tokens</code>, not <code>max_completion_tokens</code>. Point an OpenAI-format model entry at DeepSeek and the effort field still goes out with no <code>thinking</code> object at all: the request is accepted, nothing errors, and the model is not thinking the way you asked. Silent accepted-but-ignored fields are exactly what a schema assertion in your own test suite is for.</p>
-
-          <h3>4. "The reviewer can't write, so the reviewer is safe."</h3>
-          <p>A reviewer lane with no <code>write</code> and no <code>edit</code> is restricted by <em>tool allowlist omission plus prompts</em>. That is a good and cheap restriction, and it is not an operating-system block. If a reviewer is given <code>bash</code>, the shell can write. The honest version of the claim is: "the reviewer has no way to write <em>through the tool protocol</em>, and its instructions say not to try any other way". If you need more than that, take the tools away or run it somewhere with real permissions.</p>
-
-          <h3>5. "One tool returning terminate ends the run."</h3>
-          <p>It does not, and it does not even end the batch. Every call in the batch still executes and every result is still appended; what changes is the step after it. The harness skips its automatic follow-up request only when <em>every</em> finalized result in that batch asked to terminate, so a single vote inside a two-call batch is ignored. The <a href="#explorer">explorer</a> has the setting in both shapes on purpose, and it also shows the twist: blocking <code>bash</code> votes inside turn 2's two-call batch and the run carries on — but turn 4 is a solo bash, so that batch is unanimous and the run stops there. Blocking <code>edit</code> votes inside a one-call batch and it stops at turn 3. Whether a vote counts is a property of the batch, never of the setting.</p>
-
-          <h3>6. "Compaction deletes history."</h3>
-          <p>It appends. A compaction is a new entry holding the summary, <code>tokensBefore</code> and a <code>firstKeptEntryId</code>; when the context is rebuilt, the entries before that id are replaced by the summary and the raw entries stay in the file. A retain-none compaction stores its <em>own</em> id in <code>firstKeptEntryId</code> so nothing before it survives into the context — and the file is still whole. What compaction deletes is context, not history, and a fork from before the compaction still sees everything.</p>
-
-          <h3>What this page does not claim</h3>
-          <p>The token counts in both simulations are constants chosen so the mechanics are visible at a few thousand tokens; they are not measurements of a real run. The demo context windows are small on purpose for the same reason. Real billing, real latency, provider caching, tokeniser differences and model behaviour are all outside the simulations — including the scripted assistant in the explorer, which does not react to a blocked or failed call the way a model would. Nothing here was benchmarked: the page describes a harness this fleet runs and the code you can read in it, not a performance claim about any model.</p>
+        <section class="settings" aria-labelledby="goal-title">
+          <h3 id="goal-title" class="settings-heading">G. A goal, its rounds, and the round cap</h3>
+          <p><code>dsh-goal</code> persists one objective across turns; <code>dsh-goal-round-driver</code> continues it while the agent is idle, one round per turn, until the round allowance runs out. The shipped cap is 256 (<code>defaultMaxGoalRounds</code>); the control below sets a lower cap so you can watch it block. Exhaustion is not an error: it records the blocker code <code>round-limit</code>.</p>
+          <div class="fields">
+            <div>
+              <label for="goal-cap">Round cap: <output id="goal-cap-value" for="goal-cap">3</output></label>
+              <input type="range" id="goal-cap" min="1" max="8" step="1" value="3">
+            </div>
+          </div>
+          <div class="actions">
+            <button id="run-goal" type="button">Run the goal</button>
+          </div>
+          <p id="goal-status" class="status"></p>
         </section>
 
-        <section id="evidence">
-          <h2>Where this comes from</h2>
-          <p>The claims above describe the harness as this fleet has it configured, read from its own source rather than from a public announcement: the package <code>@earendil-works/pi-coding-agent</code> and its <code>pi-agent-core</code> and <code>pi-ai</code> dependencies; the lane host in <code>remote/lane-host.mjs</code>; the lane role prompts assembled from <code>roles/common.md</code> and <code>roles/&lt;role&gt;.md</code>; and the provider adapter whose DeepSeek settings are named in the table above. The playground's scripted transcript lives in <code>site/harness/sim.js</code> and is the only input to its arithmetic.</p>
-          <p>The plugin surface in <a href="#plugins">section 4</a> comes from that package's own documentation at version <code>0.87.1</code>: <code>docs/extensions.md</code> for the hook set and the API shape, <code>docs/sessions.md</code> and <code>docs/session-format.md</code> for the tree, <code>firstKeptEntryId</code> and the fork/clone distinction, <code>docs/compaction.md</code> for the retained range, <code>docs/models.md</code> for the one hot-rung claim that involves a file read — "opening <code>/model</code> reloads the file", <code>docs/rpc-commands.md</code> and <code>docs/sdk.md</code> for the two non-TUI audiences and the reload that is missing from one of them, and <code>examples/dynamic-tools</code> for a tool registered from an extension. Where the page says something is undocumented — replacing a tool by name — that is because it is not in those files; it is in the shipped <code>dist/</code>, which is a different kind of evidence. The absence of <code>unregisterTool</code> was checked the same way: zero hits across <code>dist/</code>, <code>docs/</code> and <code>examples/</code>.</p>
-          <p>The explorer's scripted run and its arithmetic live in <code>site/harness/plugins.js</code>; <code>site/harness/explorer.js</code> renders whatever that returns, so a number on the page that disagrees with a control is a bug in one of those two files rather than a stale screenshot.</p>
-          <p>There is no version pin on this page, and that is a limitation: a harness changes faster than a page does. If a name here has moved (an RPC method, a setting key, a flag, a hook), the source in the package is the authority and this page is the summary that was true when it was written.</p>
-        </section>
+        <h4 id="playground-limits">What this does not model</h4>
+        <ul>
+          <li><strong>The registration lists themselves.</strong> Each plugin's one-to-three ledger rows and its <code>inject</code> list are exemplars written in the docs' vocabulary — enough to show the shape of a registration and its inverse — not traced registrations from the clone. Every total the panel prints is arithmetic over that list, not a measurement of dsh. Three of the lists are checked against the source and follow it: <code>dsh-tools</code> injects <code>systemPrompt</code>, <code>dsh-goal</code> injects <code>agents</code> and <code>sessionProjections</code>, and <code>dsh-agent-loop</code> <em>dispatches</em> <code>agent/pre-step</code> (a waterfall) and <code>agent/turn-stopping</code> (serial) rather than listening for them.</li>
+          <li><strong>Token counts.</strong> The per-tool schema sizes (bash 300, read 190, edit 220, write 200) are illustrative. The clone's schemas were not measured, and the page says so rather than dressing a guess as a measurement.</li>
+          <li><strong>Concurrency.</strong> Cordis starts a fiber's top-level disposers in reverse order but concurrently (<code>Promise.all</code>). The animation is sequential, so it shows the order and not the overlap.</li>
+          <li><strong>Sibling order.</strong> Cordis guarantees reverse order within a fiber and dependents-before-provider. The order <em>among</em> several dependents of one provider is not promised; the model picks one (reverse activation order) and this line is the disclosure.</li>
+          <li><strong>Module loading.</strong> The hot swap is one modelled generation boundary. No file is watched, no module graph is traced, no cache is cleared; <code>dsh-hmr</code> does all three.</li>
+          <li><strong>Config, loader and patches.</strong> The composition is a mounted set here, not a profile of ordered bundle rows, <code>cordis.patch.yml</code> layers and <code>!!js</code> expressions.</li>
+          <li><strong>Real isolation.</strong> <code>ctx.isolate</code> is modelled for one service name; the real one can shadow any name. It resolves a service name; it does not confine anything, and neither does dsh-scope, whose own README says the scoped-registration primitive “routes trusted same-process plugins; it is not a sandbox or an authority boundary”.</li>
+          <li><strong>Real work.</strong> No command runs, no tool executes, no model is called, no session is persisted. The session log is a list of typed strings, not <code>SessionEvent</code> payloads.</li>
+          <li><strong>The event vocabulary.</strong> The turn flow shows the documented sequence, not every event: <code>request/header</code>, <code>request/context</code>, <code>assistant/attempt</code>, the <code>tools/*</code> pipeline stages inside one tool call and the <code>internal/*</code> events are all flattened or omitted.</li>
+        </ul>
+
+        <h3 id="limits">11. Limits and corrections</h3>
+        <p>A page like this is only useful if it says where it stops. These are the claims that are weaker than they look, and the ones an earlier version of this page got wrong.</p>
+        <ol>
+          <li><strong>Correction: a turn is not a Cordis subcontext.</strong> Turns are durable records inside one long-lived agent; the isolated registration context belongs to the <em>agent</em> (<a href="#scope">§6</a>). Design per-turn behaviour as an <code>agent/*</code> listener, not as a plugin mounted for a turn.</li>
+          <li><strong>Correction: there is no <code>ctx.fork()</code>.</strong> Cordis 4.1.0 as vendored exposes <code>extend()</code>, <code>isolate()</code> and <code>intercept()</code>. Scoping is a child context plus fiber ownership, and the playground's “isolated scope” control is that, not a fork.</li>
+          <li><strong>Correction: “spatiotemporal” is not about sandboxes or replay.</strong> It is the paper's two axes — revertible effects (time) and reactive coeffects (space) — and dsh's sandbox and session log are separate mechanisms (<a href="#paper">§2</a>).</li>
+          <li><strong>Leak-freedom is a mechanism, not a guarantee.</strong> The kernel owns and unwinds what was registered through a context. Bare timers, module-level state and uncancelled promises are outside it (<a href="#kernel">§4</a>).</li>
+          <li><strong>HMR is not “everything is live”.</strong> <code>dsh-base</code> reloads configuration by default and watches module roots only when configured; headless, SDK and ACP disable it; package installs and some resolution changes need a restart (<a href="#effects">§8</a>).</li>
+          <li><strong>The sandbox is file access.</strong> <code>dsh-bash-sandbox</code>'s own summary: “network access and process visibility remain outside its guarantees”, and a command fails with <code>SANDBOX_UNAVAILABLE</code> rather than running unconfined. Do not read “sandboxed” as “contained”.</li>
+          <li><strong>The goal cap bounds continuation, not work.</strong> <code>dsh-goal</code> “stores goal state but does not schedule work”, and continuation permission is process-local rather than durable. Blocking with <code>round-limit</code> is a policy outcome, not a failure.</li>
+          <li><strong>The paper's formal claims are quoted from its abstract.</strong> Only the abstract page was reachable; theorem-level statements are not repeated here (<a href="#paper">§2</a>).</li>
+          <li><strong>dsh is a developer preview.</strong> Its README promises compatibility-breaking changes, so every package name and file path here is pinned to commit <code>fcc0ad4</code> rather than to a version.</li>
+          <li><strong>The playground is a model.</strong> It is deterministic and honest about its inputs, and it is not dsh: see <a href="#playground-limits">what this does not model</a>.</li>
+        </ol>
+
+        <h3 id="evidence">Where this comes from</h3>
+        <p>Everything above was read from a clone of <code>github.com/deepseek-ai/deepseek-harness</code> at commit <code>fcc0ad4</code> (MIT). The files that carry the load:</p>
+        <div class="table-scroll"><table>
+          <thead><tr><th>Claim</th><th>File</th></tr></thead>
+          <tbody>
+            <tr><td>everything-is-a-plugin; Cordis; MIT; developer preview</td><td><code>README.md</code>, <code>LICENSE</code></td></tr>
+            <tr><td>profiles, bundles, <code>dsh-base</code>, core packages, turn flow, three event domains, waterfalls</td><td><code>docs/architecture.md</code></td></tr>
+            <tr><td>the five Cordis ideas, dispatch modes, waterfall semantics</td><td><code>docs/cordis-primer.md</code></td></tr>
+            <tr><td><code>ctx.effect</code>, <code>ctx.fiber</code>, the dispose order, dependency epochs, listener ownership</td><td><code>vendor/cordis/src/fiber.ts</code>, <code>events.ts</code>, <code>context.ts</code>, <code>service.ts</code>, <code>utils.ts</code></td></tr>
+            <tr><td><code>ctx.timeout</code> / <code>ctx.interval</code> as effects</td><td><code>vendor/timer/src/index.ts</code></td></tr>
+            <tr><td>seam definitions, providers and consumers; <code>ctx.shell</code>, <code>ctx.fs</code>, <code>ctx.sandbox</code></td><td><code>docs/capability-seams.md</code>, <code>packages/shell/*</code>, <code>packages/fs/*</code>, <code>packages/sandbox/*</code></td></tr>
+            <tr><td>what <code>dsh-base</code> mounts, and the permission posture</td><td><code>packages/bundle/base/cordis.patch.yml</code></td></tr>
+            <tr><td>agent lifetimes, scoped contexts, <code>createScope</code></td><td><code>packages/core/agent/README.md</code>, <code>packages/core/scope/src/index.ts</code>, <code>packages/core/agent-loop/src/agent.ts</code></td></tr>
+            <tr><td>hot module replacement and configuration reconciliation</td><td><code>packages/boot/hmr/README.md</code>, <code>vendor/hmr/README.md</code></td></tr>
+            <tr><td>goals, rounds, the cap and the <code>round-limit</code> blocker</td><td><code>packages/goal/goal/README.md</code>, <code>packages/goal/goal-round-driver/README.md</code></td></tr>
+            <tr><td>the cordis tree snapshot the inspector publishes</td><td><code>packages/experimental/inspector/README.md</code></td></tr>
+            <tr><td>the two axes, revertible effects, reactive coeffects</td><td>arXiv 2608.25512, abstract</td></tr>
+          </tbody>
+        </table></div>
+        <p>The playground's arithmetic lives in <code>site/harness/runtime.js</code> and its rendering in <code>site/harness/app.js</code>. A number on this page that disagrees with a control is a bug in one of those two files rather than a stale screenshot.</p>
 
       </article>
     </div>
   </main>
 
-  <footer>A working notebook, not a promise of correctness. Researched October 2026. <a href="https://github.com/PaulKinlan/learnings">Source &amp; limitations</a>. No analytics. The playground and the explorer simulate; they call nothing.</footer>
   <script type="module" src="./app.js"></script>
-  <script type="module" src="./explorer.js"></script>
 </body>
 </html>

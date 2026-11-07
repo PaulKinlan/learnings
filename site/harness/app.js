@@ -1,17 +1,37 @@
 // @ts-check
 /**
- * The playground's DOM half. All arithmetic lives in sim.js; this file reads the controls, asks
- * the simulation for a run, and renders it. Nothing here holds a token count of its own: every
- * number printed comes out of the returned run, which is what makes the page's labels derived
- * rather than hardcoded.
+ * The playground's DOM half. Every number and every state word comes out of runtime.js; this file
+ * only moves them onto the page. Nothing here holds a count of its own, which is what makes a label
+ * that stops tracking its control a bug in one of the two files rather than a stale screenshot.
+ *
+ * Unmounting is animated because the order IS the claim: registrations come off in reverse
+ * registration order. Rows are removed one per tick from the live ledger, and the finished state is
+ * rendered from the reducer — the animation never invents a row the model did not unwind.
  */
-import { DEMO_MODELS, THINKING_LEVELS, TOOLS, PROMPT_TOKENS, simulateRun } from "./sim.js";
+import {
+  DEFAULT_ROUND_CAP,
+  EVENT_DOMAIN,
+  PLUGINS,
+  SERVICE_KEYS,
+  hotSwapLoop,
+  initialRuntime,
+  mount,
+  mountFork,
+  runGoal,
+  runTurn,
+  swapShell,
+  unmount,
+  unmountFork,
+} from "./runtime.js";
 
 const $ = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
 const number = (value) => value.toLocaleString("en-US");
-const percent = (part, whole) => `${Math.min(100, (part / whole) * 100)}%`;
 
-/** The node factory. Text goes in through textContent, never as markup. */
+/** @type {ReturnType<typeof initialRuntime>} */
+let state = initialRuntime();
+let queue = [];
+let running = false;
+
 function node(tag, className, text) {
   const element = document.createElement(tag);
   if (className) element.className = className;
@@ -19,215 +39,308 @@ function node(tag, className, text) {
   return element;
 }
 
-function readControls() {
-  return {
-    model: $("model").value,
-    thinking: $("thinking").value,
-    tools: TOOLS.map((tool) => tool.id).filter((id) => /** @type {HTMLInputElement} */ ($(`tool-${id}`)).checked),
-    batchMode: $("batch").value,
-    inject429: $("failure").value,
-    autoRetry: $("autoretry").value === "on",
-    prompt: $("prompt").value,
-    reserveTokens: Number(/** @type {HTMLInputElement} */ ($("reserve")).value),
-    keepRecentTokens: Number(/** @type {HTMLInputElement} */ ($("keep")).value),
-  };
+function clear(element) {
+  while (element.firstChild) element.removeChild(element.firstChild);
 }
 
-/**
- * The two ranges are bounded by the selected model's window: a reserve larger than the window is
- * not a setting, it is a bug. Moving the window re-clamps them and the outputs follow.
- */
-function syncRangeBounds() {
-  const model = DEMO_MODELS.find((entry) => entry.id === $("model").value) ?? DEMO_MODELS[0];
-  for (const [id, max] of [["reserve", model.contextWindow - 1024], ["keep", model.contextWindow]]) {
-    const input = /** @type {HTMLInputElement} */ ($(id));
-    input.max = String(max);
-    if (Number(input.value) > max) input.value = String(max);
-    $(`${id}-value`).textContent = input.value;
-  }
-}
+// --------------------------------------------------------------------------------------------
+// The ledger
+// --------------------------------------------------------------------------------------------
 
-function bar(contextTokens, window, threshold) {
-  const wrap = node("div", "ctx-bar");
-  wrap.setAttribute("role", "img");
-  wrap.setAttribute(
-    "aria-label",
-    `context ${number(contextTokens)} of ${number(window)} tokens; compaction line at ${number(threshold)}`,
+function ledgerRow(row) {
+  const item = node("li", "effect");
+  item.dataset.seq = String(row.seq);
+  item.dataset.plugin = row.plugin;
+  item.dataset.scope = row.scope ?? "root";
+  const head = node("p", "effect-head");
+  head.append(
+    node("span", "effect-seq", `#${row.seq}`),
+    node("span", "effect-plugin", row.pkg),
+    node("span", "effect-label", row.label),
   );
-  const fill = node("div", "ctx-fill");
-  fill.style.width = percent(contextTokens, window);
-  const mark = node("div", "ctx-mark");
-  mark.style.left = percent(threshold, window);
-  wrap.append(fill, mark);
-  return wrap;
-}
-
-/** One trace entry. Each kind says what the harness did, in the harness's own vocabulary. */
-function entry(event, run) {
-  const item = node("li", `ev ev-${event.kind}`);
-  switch (event.kind) {
-    case "prompt":
-      item.append(
-        node("p", "ev-title", `user message · ${event.role} · ${number(event.tokens)} tokens`),
-        node("p", "ev-note", event.note),
-      );
-      break;
-    case "compaction":
-      item.append(
-        node("p", "ev-title", "compaction"),
-        node(
-          "p",
-          "ev-line",
-          `context ${number(event.before)} → ${number(event.after)} tokens · summarised ${number(event.summarisedTokens)} into ${number(event.summaryTokens)} · kept the last ${event.keptMessages} messages, ${number(event.keptTokens)} tokens of the ${number(event.keepRecentTokens)} keepRecentTokens window`,
-        ),
-      );
-      break;
-    case "compaction-skipped":
-      item.append(
-        node("p", "ev-title", "compaction skipped"),
-        node("p", "ev-line", `context ${number(event.before)} is past the line at ${number(event.threshold)}, but ${event.reason}`),
-      );
-      break;
-    case "request": {
-      const windowTokens = event.window ?? run.model.contextWindow;
-      const over = event.contextTokens > windowTokens;
-      if (over) item.classList.add("ev-over");
-      item.append(
-        node(
-          "p",
-          "ev-title",
-          event.status === "429"
-            ? `request #${event.index} · HTTP 429`
-            : `request #${event.index} · context ${number(event.contextTokens)} / ${number(windowTokens)}`,
-        ),
-        bar(event.contextTokens, windowTokens, event.threshold),
-      );
-      if (over) {
-        item.append(
-          node(
-            "p",
-            "ev-warn",
-            `over the window by ${number(event.contextTokens - windowTokens)} tokens: nothing was left to compact (see the skipped note above), and the bar stops at 100% — a real request this size would be refused or truncated by the provider.`,
-          ),
-        );
-      }
-      if (event.note) item.append(node("p", "ev-note", event.note));
-      if (event.status === "ok") {
-        item.append(
-          node(
-            "p",
-            "ev-note",
-            `billed ${number(event.billed)} input tokens · reasoning ${number(event.reasoningTokens)} · compaction line ${number(event.threshold)}`,
-          ),
-        );
-      }
-      break;
-    }
-    case "retry":
-      item.append(
-        node("p", "ev-title", `retry · attempt ${event.attempt} after HTTP ${event.status}`),
-        node("p", "ev-note", `waiting ${number(event.backoffMs)} ms, then re-sending the same context`),
-      );
-      break;
-    case "assistant":
-      item.append(
-        node(
-          "p",
-          "ev-title",
-          event.calls.length
-            ? `assistant · turn ${event.turn} · ${event.calls.length} call${event.calls.length === 1 ? "" : "s"}`
-            : `assistant · turn ${event.turn} · closing answer`,
-        ),
-        node(
-          "p",
-          "ev-note",
-          `${number(event.textTokens)} text tokens${event.reasoningTokens ? ` + ${number(event.reasoningTokens)} reasoning tokens, kept on the message` : ", no reasoning"}`,
-        ),
-      );
-      break;
-    case "tool":
-      item.append(
-        node(
-          "p",
-          "ev-title",
-          event.status === "ok"
-            ? `${event.tool} ${event.target} → ${number(event.resultTokens)} tokens`
-            : `${event.tool} ${event.target} · isError`,
-        ),
-      );
-      if (event.error) item.append(node("p", "ev-line", event.error));
-      break;
-    case "note":
-      item.append(node("p", "ev-note", event.text));
-      break;
-    case "run-end":
-      item.append(node("p", "ev-title", "agent_end — this run is closed"));
-      break;
-    case "settled":
-      item.append(node("p", "ev-title", "agent_settled — no automatic work remains"));
-      break;
-    case "run-start":
-      item.append(node("p", "ev-title", `run ${event.run} starts over the same transcript`));
-      break;
-    case "failed":
-      item.append(node("p", "ev-title", "run failed"), node("p", "ev-line", event.reason));
-      break;
-    default:
-      item.append(node("p", "ev-title", event.kind));
-  }
+  item.append(head, node("p", "effect-inverse", `unwinds to: ${row.inverse}`));
   return item;
 }
 
-const METRIC_ROWS = [
-  ["Model requests", (run) => number(run.metrics.requests)],
-  ["Tool calls executed", (run) => number(run.metrics.executedCalls)],
-  ["Tool calls refused", (run) => number(run.metrics.rejectedCalls)],
-  ["Retries after a 429", (run) => number(run.metrics.retries)],
-  ["Compactions", (run) => number(run.metrics.compactions)],
-  ["Runs", (run) => number(run.metrics.runs)],
-  [
-    "Prompt tokens (system + tool schemas)",
-    (run) => `${number(run.metrics.promptTokens)} · ${run.metrics.toolDefinitions} tool schema${run.metrics.toolDefinitions === 1 ? "" : "s"}`,
-  ],
-  ["Billed input tokens", (run) => number(run.metrics.billedInputTokens)],
-  ["Reasoning tokens", (run) => number(run.metrics.reasoningTokens)],
-  ["Output tokens", (run) => number(run.metrics.outputTokens)],
-  ["Peak context", (run) => `${number(run.metrics.peakContext)} of ${number(run.model.contextWindow)}`],
-];
+function renderLedger(target, rows) {
+  clear(target);
+  for (const row of rows) target.append(ledgerRow(row));
+}
 
-function render() {
-  syncRangeBounds();
-  const run = simulateRun(readControls());
-
-  const metrics = $("metrics");
-  metrics.replaceChildren();
-  for (const [label, value] of METRIC_ROWS) {
-    metrics.append(node("dt", "", label), node("dd", "number", value(run)));
+function renderUnwind(title, target, record) {
+  if (!record) {
+    title.textContent = "Nothing has unwound yet.";
+    clear(target);
+    return;
   }
-
-  $("status").textContent = {
-    settled: `settled — ${number(run.metrics.requests)} model requests, ${number(run.metrics.compactions)} compactions, ${number(run.metrics.rejectedCalls)} refused ${run.metrics.rejectedCalls === 1 ? "call" : "calls"}, ${number(run.metrics.billedInputTokens)} billed input tokens.`,
-    blocked: `blocked — a write-class call was not in the allowlist, so the scripted run took its blocked branch after ${number(run.metrics.requests)} requests.`,
-    failed: `failed — a 429 with auto-retry off ended the run after ${number(run.metrics.requests)} requests. Everything after it never happened.`,
-  }[run.status];
-
-  $("compaction-line").textContent =
-    `Compaction fires above ${number(run.threshold)} tokens: a ${number(run.model.contextWindow)}-token window minus reserveTokens ${number(run.reserveTokens)}. It leaves the last keepRecentTokens ${number(run.keepRecentTokens)} untouched.`;
-
-  const trace = $("trace");
-  trace.replaceChildren();
-  for (const event of run.events) trace.append(entry(event, run));
-
-  $("sim-inputs").textContent =
-    `The simulation's own constants: base prompt ${number(PROMPT_TOKENS.system)} tokens, task ${number(PROMPT_TOKENS.task)}, ` +
-    `a mid-run prompt ${number(PROMPT_TOKENS.steer)}; thinking ` +
-    `${THINKING_LEVELS.map((level) => `${level.id} = ${number(level.reasoningTokens)} reasoning tokens per response`).join(", ")}; ` +
-    `tool schemas ${TOOLS.map((tool) => `${tool.id} ${number(tool.promptTokens)}`).join(", ")}.`;
+  const count = record.rows.length;
+  title.textContent = `${record.reason} · ${number(count)} registration${count === 1 ? "" : "s"} unwound, in this order:`;
+  renderLedger(target, record.rows);
 }
 
-for (const control of document.querySelectorAll("#model, #thinking, #batch, #failure, #autoretry, #prompt, #reserve, #keep, input[type=checkbox]")) {
-  control.addEventListener("input", render);
-  control.addEventListener("change", render);
+// --------------------------------------------------------------------------------------------
+// The panels
+// --------------------------------------------------------------------------------------------
+
+function renderStatus() {
+  const { counts } = state;
+  $("runtime-status").textContent =
+    `${number(counts.mounted)} plugins mounted · ${number(counts.active)} active · ` +
+    `${number(counts.inactive)} waiting on a service · ${number(counts.registrations)} registrations live`;
+  $("effect-count").textContent = number(counts.registrations);
 }
 
-render();
+function renderServices() {
+  const target = $("services");
+  clear(target);
+  for (const key of SERVICE_KEYS) {
+    const provider = state.services[key];
+    const term = node("dt", null, `ctx.${key}`);
+    const value = node("dd", provider ? null : "muted");
+    if (provider) {
+      const plugin = PLUGINS.find((entry) => entry.id === provider);
+      value.textContent = plugin ? plugin.pkg : provider;
+    } else {
+      value.textContent = "no provider";
+    }
+    target.append(term, value);
+  }
+}
+
+function renderPlugins() {
+  const target = $("plugin-list");
+  clear(target);
+  for (const plugin of PLUGINS) {
+    const mounted = state.mounted.includes(plugin.id);
+    const active = state.active.includes(plugin.id);
+    const waiting = state.inactive.find((entry) => entry.id === plugin.id);
+    const button = node("button", "plugin-toggle");
+    button.type = "button";
+    button.dataset.plugin = plugin.id;
+    button.setAttribute("aria-pressed", mounted ? "true" : "false");
+    button.append(
+      node("span", "plugin-pkg", plugin.pkg),
+      node("span", "plugin-state", active ? "active" : waiting ? `waiting for ctx.${waiting.waitingFor.join(", ctx.")}` : "not mounted"),
+      node("span", "plugin-role", plugin.role),
+    );
+    target.append(button);
+  }
+}
+
+function renderRegistry() {
+  const { tools, schemaTokens } = state.registry;
+  const names = tools.map((tool) => tool.name);
+  $("registry").textContent = tools.length
+    ? `${number(tools.length)} tools · ${names.join(", ")} · ${number(schemaTokens)} schema tokens in the request`
+    : "no tools registered: ctx.tools is mounted, but no consumer contributed a schema";
+}
+
+function renderInactive() {
+  const waiting = state.inactive;
+  $("inactive").textContent = waiting.length
+    ? waiting
+        .map((entry) => {
+          const plugin = PLUGINS.find((candidate) => candidate.id === entry.id);
+          const keys = entry.waitingFor.map((key) => `ctx.${key}`).join(", ");
+          return `${plugin.pkg} is mounted and inactive: no active provider for ${keys}. Its registrations are not in the ledger.`;
+        })
+        .join(" ")
+    : "Every mounted plugin has the services it injects.";
+}
+
+function renderTurn() {
+  const turn = state.turn;
+  const target = $("turn-events");
+  clear(target);
+  if (!turn) {
+    $("turn-status").textContent = "No turn has run since this page loaded.";
+    return;
+  }
+  $("turn-status").textContent =
+    `${turn.id} · agent/pre-step → ${turn.preStep} · ${number(turn.steps)} step${turn.steps === 1 ? "" : "s"} · ` +
+    `${number(turn.requests)} model request${turn.requests === 1 ? "" : "s"} · ` +
+    `${number(turn.toolCalls)} tool call${turn.toolCalls === 1 ? "" : "s"} · shell: ${turn.provider ?? "none"}`;
+  for (const entry of turn.flow) {
+    const item = node("li", `event event-${EVENT_DOMAIN[entry.name] ?? "agent"}`);
+    item.append(node("span", "event-name", entry.name), node("span", "event-text", entry.text));
+    target.append(item);
+  }
+}
+
+function renderSession() {
+  const log = state.sessionLog;
+  $("session-status").textContent = `${number(log.length)} durable events in the log`;
+  const target = $("session-tail");
+  clear(target);
+  for (const entry of log.slice(-4)) {
+    const item = node("li", "event event-session");
+    item.append(node("span", "event-name", entry.type), node("span", "event-text", entry.text));
+    target.append(item);
+  }
+}
+
+function renderGoal() {
+  const goal = state.goal;
+  const target = $("goal-status");
+  if (!goal) {
+    target.textContent = `No goal has run. dsh-goal's default cap is ${number(DEFAULT_ROUND_CAP)} rounds; the control sets a lower one so the block is reachable here.`;
+    return;
+  }
+  if (goal.phase === "inactive") {
+    target.textContent = "The goal service or its round driver is not active, so nothing would schedule a round. Mount both and run it again.";
+    return;
+  }
+  target.textContent =
+    `phase ${goal.phase} · ${number(goal.rounds)} of ${number(goal.cap)} rounds ran · ${number(goal.steps)} steps owed to the goal · ` +
+    `blocker ${goal.blocker.code}: “${goal.blocker.message}”`;
+}
+
+function renderSwap() {
+  const target = $("swap-status");
+  const generation = state.loopGeneration;
+  if (!state.swapRecord) {
+    target.textContent = `dsh-agent-loop is mounted at generation ${number(generation)}. A module swap unloads the fiber and mounts the new code in the same context.`;
+    return;
+  }
+  const record = state.swapRecord;
+  target.textContent =
+    `generation ${number(record.to)} · ${number(record.unwound)} registrations unwound and ${number(record.remounted)} re-registered · ` +
+    `session log ${number(record.logBefore)} events before the swap, ${number(record.logAfter)} after`;
+}
+
+function renderFork() {
+  const status = $("fork-status");
+  const ledger = $("fork-effects");
+  if (!state.fork) {
+    status.textContent = state.forkUnwind
+      ? `The isolated scope is gone; the root ledger still has ${number(state.counts.registrations)} registrations and ctx.shell still resolves to ${state.services.shell ? PLUGINS.find((p) => p.id === state.services.shell).pkg : "nothing"}.`
+      : `No isolated scope is mounted. ctx.shell resolves to ${state.services.shell ? PLUGINS.find((p) => p.id === state.services.shell).pkg : "nothing"} for the whole tree.`;
+    clear(ledger);
+    return;
+  }
+  status.textContent = `ctx.isolate("shell") below one child context mounts ${PLUGINS.find((p) => p.id === state.fork.plugin).pkg} there. The root provider is unchanged, and so is the root ledger (${number(state.counts.registrations)} registrations).`;
+  renderLedger(ledger, state.fork.effects);
+}
+
+function renderAll() {
+  renderStatus();
+  renderServices();
+  renderPlugins();
+  renderLedger($("effect-ledger"), state.effects);
+  renderUnwind($("unwind-title"), $("unwind"), state.unwind);
+  renderRegistry();
+  renderInactive();
+  renderTurn();
+  renderSession();
+  renderGoal();
+  renderSwap();
+  renderFork();
+  renderUnwind($("fork-unwind-title"), $("fork-unwind"), state.forkUnwind);
+}
+
+// --------------------------------------------------------------------------------------------
+// Actions
+// --------------------------------------------------------------------------------------------
+
+/** Remove the unwound rows one tick at a time, from the live ledger, then render the new state. */
+function animate(rows, done) {
+  let index = 0;
+  const step = () => {
+    const row = rows[index];
+    if (!row) {
+      done();
+      return;
+    }
+    const scope = row.scope === "fork" ? "fork-effects" : "effect-ledger";
+    const target = $(scope).querySelector(`[data-seq="${row.seq}"]`);
+    if (target) target.remove();
+    index += 1;
+    setTimeout(step, 60);
+  };
+  step();
+}
+
+function drain() {
+  if (running) return;
+  const next = queue.shift();
+  if (!next) return;
+  const result = next();
+  const rows = result.unwind?.rows ?? [];
+  state = result;
+  // The record panels are rendered from the finished state; the ledger animation runs over the
+  // rows the reducer actually unwound.
+  running = true;
+  if (rows.length) {
+    animate(rows, () => {
+      running = false;
+      renderAll();
+      drain();
+    });
+  } else {
+    running = false;
+    renderAll();
+    drain();
+  }
+}
+
+function act(mutator) {
+  queue.push(() => mutator());
+  drain();
+}
+
+// --------------------------------------------------------------------------------------------
+// Wiring
+// --------------------------------------------------------------------------------------------
+
+$("plugin-list").addEventListener("click", (event) => {
+  const button = /** @type {HTMLElement} */ (event.target).closest("button[data-plugin]");
+  if (!button) return;
+  const id = /** @type {HTMLElement} */ (button).dataset.plugin;
+  if (!id) return;
+  act(() => (state.mounted.includes(id) ? unmount(state, id) : mount(state, id)));
+});
+
+$("swap-shell").addEventListener("click", () => {
+  act(() => swapShell(state, state.services.shell === "bash-local" ? "bash-sandbox" : "bash-local"));
+});
+
+$("hot-swap-loop").addEventListener("click", () => {
+  act(() => {
+    const record = {
+      to: state.loopGeneration + 1,
+      unwound: state.effects.filter((row) => row.plugin === "agent-loop").length,
+      remounted: PLUGINS.find((plugin) => plugin.id === "agent-loop").effects.length,
+      logBefore: state.sessionLog.length,
+    };
+    const next = hotSwapLoop(state);
+    const remounted = next.effects.filter((row) => row.plugin === "agent-loop").length;
+    next.swapRecord = { ...record, remounted, logAfter: next.sessionLog.length };
+    return next;
+  });
+});
+
+$("mount-fork").addEventListener("click", () => act(() => mountFork(state)));
+$("unmount-fork").addEventListener("click", () => act(() => unmountFork(state)));
+
+$("run-turn").addEventListener("click", () => {
+  const preStep = /** @type {HTMLSelectElement} */ ($("pre-step")).value === "reject" ? "reject" : "enter";
+  act(() => runTurn(state, { preStep }));
+});
+
+$("goal-cap").addEventListener("input", () => {
+  $("goal-cap-value").textContent = $("goal-cap").value;
+});
+
+$("run-goal").addEventListener("click", () => {
+  const cap = Number(/** @type {HTMLInputElement} */ ($("goal-cap")).value);
+  act(() => runGoal(state, { cap }));
+});
+
+$("reset").addEventListener("click", () => {
+  queue = [];
+  state = initialRuntime();
+  renderAll();
+});
+
+$("goal-cap-value").textContent = $("goal-cap").value;
+renderAll();
