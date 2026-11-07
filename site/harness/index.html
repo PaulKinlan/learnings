@@ -61,11 +61,11 @@
         <a href="#paper">2. Spatiotemporal composability</a>
         <a href="#tree">3. Context, Service, Plugin</a>
         <a href="#kernel">4. The runtime kernel</a>
-        <a href="#compose">5. How dsh splits the runtime</a>
+        <a href="#compose">5. How dsh splits the agent runtime across the tree</a>
         <a href="#scope">6. Scopes and lifetimes</a>
         <a href="#part2">Malleable programs</a>
         <a href="#malleable">7. The swap surface</a>
-        <a href="#effects">8. Revertible effect trees</a>
+        <a href="#effects">8. Effect trees and hot swaps</a>
         <a href="#rules">9. What to copy</a>
         <a href="#playground">10. Playground</a>
         <a href="#limits">11. Easy to get wrong</a>
@@ -227,7 +227,7 @@ turn/end</code></pre>
         <p>Events fall into three domains, and the domain decides what a listener can do with one. <strong>Session events</strong> are durable: they are appended to the log and broadcast through <code>session/event</code>. <strong>Agent events</strong> (<code>agent/*</code>) carry a live <code>Agent</code> (inbox, step, status, request, validation, continuation) for work in flight. <strong>Capability events</strong> (<code>fs/*</code>, <code>tools/*</code>, <code>telemetry/*</code>) attach policy and adapters to a seam without importing the loop.</p>
         <p><code>agent/pre-step</code>, <code>agent/request</code>, <code>llm/stream</code> and the three <code>tools/*</code> events are <strong>waterfalls</strong>: their listeners must call <code>next()</code> to delegate. <code>agent/turn-stopping</code> is <strong>serial</strong> and has no <code>next()</code>. That is the difference between “you may veto or rewrite this” and “you may observe the decision that was made”.</p>
         <p>On rejection the doc says: “<code>agent/pre-step</code> listeners accept, rewrite, or reject claimed messages; a rejected or empty first claim closes a durable turn without a step.” A turn that asks the model nothing is still a fact in the log, which is why the playground's rejection control grows the session while the step count stays at zero.</p>
-        <p>Above turns sits the goal. <code>dsh-goal</code> persists one objective across turns, resume, fork and restarts, and <code>dsh-goal-round-driver</code> “automatically continues an active goal in the same session while the agent is idle… Each round gives the model another turn toward the objective”, bounded by a round cap that defaults to 256. Exhausting it records the blocker code <code>round-limit</code>. So goal ⊃ rounds ⊃ turns ⊃ steps is a composition across four packages. The docs do not draw it as a hierarchy, and no one package nests another.</p>
+        <p>Above turns sits the goal. <code>dsh-goal</code> persists one objective across turns, resume, fork and restarts, and <code>dsh-goal-round-driver</code> “automatically continues an active goal in the same session while the agent is idle… Each round gives the model another turn toward the objective”, bounded by a round cap that defaults to 256. Exhausting it records the blocker code <code>round-limit</code>. So goal ⊃ rounds ⊃ turns ⊃ steps is a composition across four packages. The docs do not draw it as a hierarchy, and no single package nests another.</p>
 
         <h3 id="scope">6. Scopes and lifetimes</h3>
         <p>It is tempting to picture every conversation, or every turn, as a child context with its own plugin lifetime. The source does not work that way. <strong>There is no <code>ctx.fork()</code></strong> in the vendored framework: a case-insensitive search for <code>fork</code> over <code>vendor/cordis/src/</code> returns nothing. Cordis has three child-context constructors and one ownership rule.</p>
