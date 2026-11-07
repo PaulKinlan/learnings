@@ -390,7 +390,7 @@ test("every control the playground understands exists on the page, with the ids 
   assert.match(page, /<select id="pre-step">/);
   assert.match(page, /<script type="module" src="\.\/app\.js">/, "the renderer is loaded as a module");
   // The honesty labels are on the page, not only in the module.
-  assert.match(page, /What this does not model/);
+  assert.match(page, /What the playground leaves out/);
   assert.match(page, /No model is called/i);
   assert.match(page, /arXiv 2608\.25512/);
 });

@@ -6,7 +6,7 @@
  *
  * Unmounting is animated because the order IS the claim: registrations come off in reverse
  * registration order. Rows are removed one per tick from the live ledger, and the finished state is
- * rendered from the reducer — the animation never invents a row the model did not unwind.
+ * rendered from the reducer. The animation never invents a row the model did not unwind.
  */
 import {
   DEFAULT_ROUND_CAP,
