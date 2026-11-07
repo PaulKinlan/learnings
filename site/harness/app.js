@@ -226,7 +226,7 @@ function renderAll() {
   renderStatus();
   renderServices();
   renderPlugins();
-  renderLedger($("effects"), state.effects);
+  renderLedger($("effect-ledger"), state.effects);
   renderUnwind($("unwind-title"), $("unwind"), state.unwind);
   renderRegistry();
   renderInactive();
@@ -251,11 +251,11 @@ function animate(rows, done) {
       done();
       return;
     }
-    const scope = row.scope === "fork" ? "fork-effects" : "effects";
+    const scope = row.scope === "fork" ? "fork-effects" : "effect-ledger";
     const target = $(scope).querySelector(`[data-seq="${row.seq}"]`);
     if (target) target.remove();
     index += 1;
-    setTimeout(step, 35);
+    setTimeout(step, 60);
   };
   step();
 }

@@ -334,13 +334,26 @@ test("the page's CSP is intact, pins its inline speculation rules, and forbids i
   }
 });
 
+test("every id on the page is unique, and the ledger is its own ordered list", () => {
+  const page = readPage();
+  const ids = [...page.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
+  const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
+  assert.deepEqual(duplicates, [], `duplicate ids make getElementById return the wrong element: ${duplicates.join(", ")}`);
+  assert.match(page, /<h3 id="effects">/, "§8 keeps the #effects anchor the contents list links to");
+  assert.match(page, /<ol id="effect-ledger" class="effect-list"><\/ol>/, "the ledger is its own ordered list");
+  assert.match(page, /<output id="effect-count" for="effect-ledger">/, "the count is bound to that list");
+  const app = readApp();
+  assert.match(app, /renderLedger\(\$\("effect-ledger"\)/, "the renderer fills the list, not the heading");
+  assert.doesNotMatch(app, /\$\("effects"\)/, "and never reaches for the heading");
+});
+
 test("every control the playground understands exists on the page, with the ids app.js reads", () => {
   const page = readPage();
   for (const id of [
     "plugin-list",
     "runtime-status",
     "inactive",
-    "effects",
+    "effect-ledger",
     "effect-count",
     "unwind",
     "unwind-title",
@@ -436,7 +449,12 @@ test("harness playground: every control changes the ledger, the services or the 
         return {
           status: text("#runtime-status"),
           effectCount: text("#effect-count"),
-          effectRows: rows("#effects"),
+          effectRows: rows("#effect-ledger"),
+          ledgerTag: document.querySelector("#effect-ledger").tagName,
+          ledgerChildren: document.querySelectorAll("#effect-ledger > li").length,
+          headingTag: document.querySelector("#effects").tagName,
+          headingChildren: document.querySelector("#effects").children.length,
+          headingText: document.querySelector("#effects").textContent,
           unwind: rows("#unwind"),
           unwindTitle: text("#unwind-title"),
           pluginStates: [...document.querySelectorAll("#plugin-list button[data-plugin]")].map((button) => ({
@@ -466,6 +484,37 @@ test("harness playground: every control changes the ledger, the services or the 
         { args: [wanted], label: label ?? `the ledger to settle at ${wanted}`, timeout: 20000 },
       );
     const clickPlugin = (id) => page.click(`#plugin-list button[data-plugin="${id}"]`);
+    const ledgerSeqs = () =>
+      page.evaluate(() => [...document.querySelectorAll("#effect-ledger > li")].map((row) => Number(row.dataset.seq)));
+    // Watch the live ledger itself while it unwinds, with a MutationObserver started before the
+    // click. The rows must leave it one at a time, and in the order the model unwound them: newest
+    // first. This is the temporal claim made visible, not something read back from the record.
+    const watchUnwind = async (id, expected) => {
+      const before = await ledgerSeqs();
+      await page.evaluate((count) => {
+        window.__removed = [];
+        window.__removalBatches = [];
+        const target = document.getElementById("effect-ledger");
+        const observer = new MutationObserver((records) => {
+          for (const record of records) {
+            const seqs = [...record.removedNodes].map((node) => Number(node.dataset?.seq)).filter((seq) => Number.isFinite(seq));
+            if (seqs.length) window.__removalBatches.push(seqs.length);
+            for (const seq of seqs) {
+              if (window.__removed.length < count) window.__removed.push(seq);
+            }
+          }
+          // Stop before the finishing re-render, which clears what is left of the list.
+          if (window.__removed.length >= count) observer.disconnect();
+        });
+        observer.observe(target, { childList: true });
+      }, expected);
+      await clickPlugin(id);
+      return {
+        before,
+        removed: () => page.evaluate(() => window.__removed),
+        batches: () => page.evaluate(() => window.__removalBatches),
+      };
+    };
     const setSelect = (id, value) =>
       page.evaluate((controlId, wanted) => {
         const control = document.getElementById(controlId);
@@ -485,7 +534,14 @@ test("harness playground: every control changes the ledger, the services or the 
     const defaultMounted = PLUGINS.filter((plugin) => plugin.defaultMounted).length;
     assert.match(initial.status, new RegExp(`^${defaultMounted} plugins mounted`), `saw: ${initial.status}`);
     assert.equal(Number(initial.effectCount.replace(/,/g, "")), initial.effectRows.length);
-    assert.equal(initial.effectRows.length, initial.effectRows.length);
+    // The ledger is an ordered list of registrations, not a heading that swallowed them, and the
+    // count on the page is the model's own.
+    assert.equal(initial.ledgerTag, "OL", "the ledger renders into its own <ol>");
+    assert.equal(initial.ledgerChildren, initial.effectRows.length, "every row is a direct <li> of that list");
+    assert.equal(initial.headingTag, "H3", "§8's heading keeps the #effects anchor");
+    assert.equal(initial.headingChildren, 0, "and nothing was appended into the heading");
+    assert.match(initial.headingText, /^8\. /, "the heading still reads as a heading");
+    assert.equal(initial.effectRows.length, initialRuntime().counts.registrations, "the rendered ledger is the model's");
     assert.match(initial.services, /ctx\.shell/);
     assert.match(initial.services, /dsh-bash-sandbox/, "the default ctx.shell provider is named");
     assert.match(initial.registry, /1 tools · bash/, "the tool registry is the model's");
@@ -496,8 +552,13 @@ test("harness playground: every control changes the ledger, the services or the 
     // 1. Unmount the shell provider: its consumer deactivates first, then the provider unwinds.
     const consumerBefore = initial.effectRows.filter((row) => row.plugin === "tool-bash").map((row) => row.seq);
     const providerBefore = initial.effectRows.filter((row) => row.plugin === "bash-sandbox").map((row) => row.seq);
-    await clickPlugin("bash-sandbox");
-    await waitForCount(initialCount - consumerBefore.length - providerBefore.length);
+    const unwound = initialCount - consumerBefore.length - providerBefore.length;
+    const watch = await watchUnwind("bash-sandbox", 5);
+    await waitForCount(unwound);
+    assert.deepEqual(await watch.removed(), [...watch.before].slice(-5).reverse(), "the live ledger lost its registrations newest-first");
+    const batches = await watch.batches();
+    assert.ok(batches.length >= 3, `they left one at a time rather than in one re-render, saw ${batches.length} batches`);
+    assert.deepEqual(await ledgerSeqs(), watch.before.slice(0, unwound), "and what is left is exactly the older rows");
     const withoutShell = await snapshot();
     const unwindOrder = withoutShell.unwind.map((row) => row.plugin);
     assert.deepEqual(unwindOrder, ["tool-bash", "tool-bash", "tool-bash", "bash-sandbox", "bash-sandbox"]);

@@ -54,6 +54,19 @@ export const PLUGINS = [
     note: "The append-only SessionEvent log. Model-visible means logged, so this is the state that outlives a swap.",
   },
   {
+    id: "session-projection",
+    pkg: "@deepseek-ai/dsh-session-projection",
+    role: "core",
+    claims: ["sessionProjections"],
+    injects: [],
+    effects: [
+      { label: 'ctx.provide("sessionProjections")', inverse: "unregister ctx.sessionProjections" },
+      { label: "ctx.effect(register the projection registry)", inverse: "unregister every projection unit" },
+    ],
+    defaultMounted: true,
+    note: "The projection seam: registered units fold committed SessionEvents, and carriers read client views through snapshot().",
+  },
+  {
     id: "system-prompt",
     pkg: "@deepseek-ai/dsh-system-prompt",
     role: "core",
@@ -71,7 +84,7 @@ export const PLUGINS = [
     pkg: "@deepseek-ai/dsh-tools",
     role: "core",
     claims: ["tools"],
-    injects: [],
+    injects: ["systemPrompt"],
     effects: [
       { label: 'ctx.provide("tools")', inverse: "unregister ctx.tools" },
       { label: 'ctx.on("tools/pre-execute", policy)', inverse: "remove the pre-execute policy listener" },
@@ -106,6 +119,19 @@ export const PLUGINS = [
     note: "One adapter behind the ctx.llm seam. Nothing above it imports it by name.",
   },
   {
+    id: "agent",
+    pkg: "@deepseek-ai/dsh-agent",
+    role: "core",
+    claims: ["agents"],
+    injects: ["sessionProjections"],
+    effects: [
+      { label: 'ctx.provide("agents")', inverse: "unregister ctx.agents" },
+      { label: 'ctx.on("agent/created", publish)', inverse: "remove the agent/created listener" },
+    ],
+    defaultMounted: true,
+    note: "The live Agent registry: create/resume/dispose handles, agent/* events, and the per-agent scoped context.",
+  },
+  {
     id: "agent-loop",
     pkg: "@deepseek-ai/dsh-agent-loop",
     role: "core",
@@ -113,8 +139,8 @@ export const PLUGINS = [
     injects: ["tools", "sessions", "systemPrompt", "llm"],
     effects: [
       { label: 'ctx.provide("agentLoop")', inverse: "unregister ctx.agentLoop" },
-      { label: 'ctx.on("agent/pre-step", admit)', inverse: "remove the pre-step listener" },
-      { label: 'ctx.on("agent/turn-stopping", decide)', inverse: "remove the turn-stopping listener" },
+      { label: 'dispatch.waterfall("agent/pre-step", …)', inverse: "stop dispatching the pre-step waterfall" },
+      { label: 'dispatch.serial("agent/turn-stopping", …)', inverse: "stop dispatching the turn-stopping event" },
     ],
     defaultMounted: true,
     note: "The default driver behind ctx.agentLoop: one model request plus its tools is a step, zero or more steps is a turn.",
@@ -243,7 +269,7 @@ export const PLUGINS = [
     pkg: "@deepseek-ai/dsh-goal",
     role: "core",
     claims: ["goals"],
-    injects: [],
+    injects: ["agents", "sessionProjections"],
     effects: [
       { label: 'ctx.provide("goals")', inverse: "unregister ctx.goals" },
       { label: 'ctx.on("agent/turn-stopping", arm)', inverse: "remove the continuation listener" },
@@ -284,7 +310,7 @@ const BY_ID = new Map(PLUGINS.map((plugin) => [plugin.id, plugin]));
 export const DEFAULT_ROUND_CAP = 256;
 
 /** Root-context service keys, in the order the page's table lists them. */
-export const SERVICE_KEYS = ["sessions", "systemPrompt", "tools", "llm", "agentLoop", "shell", "sandbox", "approval", "permissionPresets", "goals", "fs", "inspector"];
+export const SERVICE_KEYS = ["sessions", "sessionProjections", "systemPrompt", "tools", "llm", "agents", "agentLoop", "shell", "sandbox", "approval", "permissionPresets", "goals", "fs", "inspector"];
 
 /** ctx keys that must resolve to exactly one provider at a time. */
 const EXCLUSIVE_KEYS = new Set(["shell"]);
