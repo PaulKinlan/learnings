@@ -142,7 +142,7 @@
           </tbody>
         </table></div>
         <p>A waterfall is around-middleware: “A listener receives <code>(...args, next)</code>. Call <code>next()</code> to delegate the possibly wrapped result to the next service; return without <code>next()</code> to short-circuit.” That sentence is why dsh can veto a claimed message from a plugin without the loop knowing the plugin exists.</p>
-        <p>And the line that makes the spatial axis concrete, from the bundle that composes the shipped product: <strong>“Row order carries no load semantics (activation is service-availability driven)”</strong> (<code>packages/bundle/base/cordis.patch.yml</code>). A config file lists 100+ rows in whatever order reads well; what decides when each activates is the services it declares it needs. There is no boot sequence to get right.</p>
+        <p>And the line that makes the spatial axis concrete, from the bundle that composes the shipped product: <strong>“Row order carries no load semantics (activation is service-availability driven)”</strong> (<code>packages/bundle/base/cordis.patch.yml</code>). <code>dsh-base</code>'s patch lists 99 rows in whatever order reads well; what decides when each activates is the services it declares it needs. There is no boot sequence to get right.</p>
 
         <h3 id="kernel">4. The runtime kernel, read from the vendored source</h3>
         <p>This section is the one a reviewer should check hardest, so every claim carries a file and a line. Everything below is from <code>vendor/cordis/src/</code> at <code>fcc0ad4</code>.</p>
