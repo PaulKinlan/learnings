@@ -1,28 +1,51 @@
 /* The harness page's own styles. Everything shared — type, colours, buttons, the reading grid —
-   comes from ../style.css; this file only adds what the trace and the context bar need. */
+   comes from ../style.css; this file only adds the stack diagram, the effect ledger, the plugin
+   list and the event lists. */
 
-.tool-list {
+/* The stack diagram: five labelled layers, one per row, with the framework at the bottom. */
+.stack {
+  border: 1px solid var(--line);
+  background: #f4f9fd;
+  margin: 1.5rem 0;
+}
+
+.stack-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(9rem, 100%), 1fr));
-  gap: 0.35rem 1rem;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  gap: 1rem;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid #dbe6ef;
+  align-items: baseline;
 }
 
-.tool-list label {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  font-weight: 500;
-  margin: 0;
-  min-height: 44px;
+.stack-row:last-child {
+  border-bottom: 0;
 }
 
-.tool-list input[type="checkbox"] {
-  width: 1.15rem;
-  height: 1.15rem;
-  margin: 0;
+.stack-label {
+  font-weight: 700;
+  color: #142d44;
+  font-size: 0.92rem;
 }
 
-/* The numbers panel: a definition list that reads as a table without being one. */
+.stack-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.94rem;
+  color: var(--muted);
+}
+
+.stack-base {
+  background: var(--wash);
+}
+
+.stack-base .stack-body {
+  color: var(--ink);
+  font-weight: 550;
+}
+
+
+/* The services panel: a definition list that reads as a table without being one. */
 .metrics {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -34,6 +57,8 @@
 }
 
 .metrics dt {
+  font-family: ui-monospace, monospace;
+  font-size: 0.86rem;
   color: var(--muted);
 }
 
@@ -41,233 +66,209 @@
   margin: 0;
   font-weight: 650;
   text-align: right;
-}
-
-/* The rolling context bar: fill is the context, the marker is the compaction line. */
-.ctx-bar {
-  position: relative;
-  height: 1.1rem;
-  background: var(--wash);
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  overflow: hidden;
-  margin: 0.4rem 0 0.5rem;
-}
-
-.ctx-fill {
-  height: 100%;
-  background: #4c8fc4;
-}
-
-.ctx-mark {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: #ad5500;
-}
-
-/* The trace: an ordered list of transcript events. */
-.trace {
-  list-style: none;
-  margin: 1.2rem 0 1.5rem;
-  padding: 0;
-  border-left: 3px solid var(--line);
-}
-
-.ev {
-  padding: 0.5rem 0 0.5rem 1.1rem;
-  border-bottom: 1px solid var(--line);
-  max-width: 82ch;
-}
-
-.ev-title {
-  margin: 0;
-  font-weight: 650;
-  color: #142d44;
-}
-
-.ev-line,
-.ev-note {
-  margin: 0.2rem 0 0;
-  font-size: 0.92rem;
-  color: var(--muted);
   overflow-wrap: anywhere;
 }
 
-.ev-request {
+/* The plugin list: one button per package, its mount state and its role. The button is the
+   control and the label at once, so a reader can see the whole composition without clicking. */
+.plugin-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(17rem, 100%), 1fr));
+  gap: 0.6rem;
+  margin: 1rem 0;
+}
+
+.plugin-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.1rem 0.6rem;
+  align-items: baseline;
+  text-align: left;
+  padding: 0.55rem 0.7rem;
+  background: white;
+  color: var(--ink);
+  border: 1px solid #7c97ac;
+}
+
+.plugin-toggle:hover {
+  background: var(--wash);
+  color: var(--ink);
+}
+
+.plugin-toggle[aria-pressed="true"] {
+  border-left: 4px solid #075c9c;
   background: #f2f8fd;
 }
 
-.ev-compaction .ev-title,
-.ev-compaction-skipped .ev-title {
-  color: #8a4300;
-}
-
-.ev-tool .ev-title {
-  font-variant-numeric: tabular-nums;
-}
-
-.ev-settled .ev-title,
-.ev-run-end .ev-title {
+.plugin-toggle[aria-pressed="false"] {
+  border-left: 4px solid #9fb4c6;
   color: var(--muted);
 }
 
-.ev-failed {
-  background: #fff1d8;
-}
-
-@media (max-width: 760px) {
-  .metrics {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-}
-
-/* Long identifiers — `requiresReasoningContentOnAssistantMessages` is the offender that found
-   this — have no break opportunity, so a phone-width column overflows the page without it. */
-.article p,
-.article li,
-.article dd {
+.plugin-pkg {
+  font-family: ui-monospace, monospace;
+  font-size: 0.82rem;
   overflow-wrap: anywhere;
+  grid-column: 1;
 }
 
-/* A request the compaction could not bring back under the window: the bar is capped at 100%, so the
-   number and this row are what tell the reader it happened. */
-.ev-over .ev-title {
-  color: #8a1f00;
+.plugin-state {
+  grid-column: 1;
+  font-size: 0.8rem;
+  color: var(--muted);
 }
 
-.ev-warn {
-  margin: 0.2rem 0 0;
-  font-size: 0.92rem;
-  font-weight: 600;
-  color: #8a1f00;
-  overflow-wrap: anywhere;
+.plugin-toggle[aria-pressed="true"] .plugin-state {
+  color: #075c9c;
+  font-weight: 650;
 }
 
-/* The plugin explorer's additions. The load-order buttons wrap rather than shrink, and the graph
-   is two files side by side that stack on a phone. */
-.plugin-buttons {
+.plugin-role {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  align-self: center;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+/* The effect ledger. Each row is one registration and the inverse the runtime holds for it; the
+   rows are numbered, because the order they come off in is the whole point. */
+.effect-list {
+  list-style: none;
+  margin: 1rem 0 1.5rem;
+  padding: 0;
+  border-left: 3px solid #4c8fc4;
+}
+
+.effect {
+  padding: 0.45rem 0 0.45rem 0.9rem;
+  border-bottom: 1px solid #dbe6ef;
+  max-width: 82ch;
+}
+
+.effect-head {
+  margin: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin: 0.6rem 0;
-}
-
-.plugin-buttons button {
-  min-height: 40px;
-  padding: 0.4rem 0.8rem;
-}
-
-.plugin-order {
-  margin: 1rem 0;
-  padding-left: 1.2rem;
-}
-
-.plugin-order li {
-  margin: 0.5rem 0;
-}
-
-.plugin-order .ev-title,
-.plugin-order .ev-note {
-  margin: 0.1rem 0;
-}
-
-.tree-files {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
-  gap: 1.5rem;
-  margin: 1rem 0 2rem;
-  align-items: start;
-}
-
-.file {
-  background: #f4f9fd;
-  border: 1px solid var(--line);
-  padding: 0.9rem 1rem;
-  min-width: 0;
-}
-
-.file h4 {
-  margin: 0 0 0.2rem;
-  font-size: 1rem;
-  color: #142d44;
-}
-
-.entries {
-  list-style: none;
-  margin: 0.7rem 0 0;
-  padding: 0;
-}
-
-/* One entry: the id, what it holds, what it costs. The left edge carries the state — amber for a
-   branch the fork abandoned, grey for an entry the summary has replaced. */
-.entry {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 0.15rem 0.6rem;
+  gap: 0.15rem 0.55rem;
   align-items: baseline;
-  padding: 0.4rem 0.5rem;
-  border-left: 3px solid #4c8fc4;
-  border-bottom: 1px solid #dbe6ef;
-  font-size: 0.9rem;
 }
 
-.entry-id {
+.effect-seq {
+  font-variant-numeric: tabular-nums;
   font-family: ui-monospace, monospace;
   font-size: 0.78rem;
   color: var(--muted);
 }
 
-.entry-label {
-  overflow-wrap: anywhere;
-}
-
-.entry-tokens {
-  font-variant-numeric: tabular-nums;
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-
-.entry-flag,
-.entry-note {
-  grid-column: 1 / -1;
-  margin: 0;
-  font-size: 0.78rem;
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
-
-.entry-flag {
+.effect-plugin {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  color: #142d44;
   font-weight: 650;
-  color: #8a1f00;
 }
 
-.entry-abandoned {
+.effect-label {
+  font-family: ui-monospace, monospace;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.effect-inverse {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* The unwound ledger keeps the same rows: an inversion is the same registration, read backwards. */
+.effect-unwound {
   border-left-color: #ad5500;
-  background: #fff8ef;
 }
 
-.entry-replaced {
-  border-left-color: #9fb4c6;
-  background: #eef4f9;
+.effect-unwound .effect-inverse {
+  color: #8a4300;
 }
 
-.entry-summary {
-  border-left-color: #ad5500;
-  background: #fdf1dd;
-  font-weight: 600;
+.effect-unwinding {
+  background: #fff1d8;
+}
+
+.unwind-title {
+  margin: 1.6rem 0 0.4rem;
+  font-size: 1rem;
+}
+
+.unwind-title:empty {
+  display: none;
+}
+
+/* The event lists: the turn flow and the tail of the session log. */
+.event-list {
+  list-style: none;
+  margin: 0.8rem 0 1.5rem;
+  padding: 0;
+  border-left: 3px solid var(--line);
+}
+
+.event {
+  display: grid;
+  grid-template-columns: minmax(9rem, auto) minmax(0, 1fr);
+  gap: 0.2rem 0.8rem;
+  align-items: baseline;
+  padding: 0.3rem 0 0.3rem 0.9rem;
+  border-bottom: 1px solid #dbe6ef;
+  font-size: 0.9rem;
+}
+
+.event-name {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  color: #142d44;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.event-text {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.event-session {
+  border-left: 0;
+}
+
+.event-agent .event-name {
+  color: #8a4300;
+}
+
+.event-capability .event-name {
+  color: #0b5e46;
+}
+
+.muted {
+  color: var(--muted);
+  font-weight: 500;
 }
 
 @media (max-width: 760px) {
-  .tree-files {
+  .stack-row {
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+  }
+
+  .event {
     grid-template-columns: 1fr;
   }
 }
 
-/* An entry the summary has replaced still exists, so it is dimmed rather than struck through: the
-   reader has to be able to see that the text is still there. */
-.entry-replaced .entry-label,
-.entry-replaced .entry-id {
-  color: #6b8298;
+/* Long identifiers have no break opportunity, so a phone-width column overflows the page
+   without this. */
+.article p,
+.article li,
+.article dd,
+.article td {
+  overflow-wrap: anywhere;
 }
