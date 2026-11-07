@@ -380,17 +380,16 @@ export function hotSwapLoop(state) {
 export function mountFork(state) {
   const next = clone(state);
   if (next.fork) return derive(next);
-  const rows = [
-    {
-      seq: next.nextSeq++,
-      plugin: "bash-sandbox",
-      pkg: BY_ID.get("bash-sandbox").pkg,
-      label: 'ctx.provide("shell")',
-      inverse: "unregister the isolated shell provider",
-      scope: "fork",
-      reason: "mounted inside ctx.isolate(\"shell\")",
-    },
-  ];
+  const spec = BY_ID.get("bash-sandbox");
+  const rows = spec.effects.map((effect, index) => ({
+    seq: next.nextSeq++,
+    plugin: spec.id,
+    pkg: spec.pkg,
+    label: effect.label,
+    inverse: effect.inverse,
+    scope: "fork",
+    reason: index === 0 ? 'mounted inside ctx.isolate("shell")' : undefined,
+  }));
   next.fork = { plugin: "bash-sandbox", effects: rows };
   next.forkUnwind = null;
   next.lastAction = { kind: "fork-mount" };

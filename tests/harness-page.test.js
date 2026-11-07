@@ -246,13 +246,13 @@ test("an isolated scope's registrations are not in the root ledger", () => {
   const start = initialRuntime();
   const forked = mountFork(start);
   assert.notEqual(forked.fork, null);
-  assert.equal(forked.fork.effects.length, 1);
+  assert.equal(forked.fork.effects.length, pluginById("bash-sandbox").effects.length);
   assert.equal(forked.counts.registrations, start.counts.registrations, "the root ledger is untouched");
   assert.equal(forked.services.shell, "bash-sandbox", "and the root provider is unchanged");
 
   const unmounted = unmountFork(forked);
   assert.equal(unmounted.fork, null);
-  assert.equal(unmounted.forkUnwind.rows.length, 1, "the isolated inverse ran");
+  assert.equal(unmounted.forkUnwind.rows.length, forked.fork.effects.length, "every isolated inverse ran");
   assert.equal(unmounted.counts.registrations, start.counts.registrations);
   assert.deepEqual(unmounted.services, start.services);
 });
@@ -603,17 +603,17 @@ test("harness playground: every control changes the ledger, the services or the 
     // 7. The isolated scope: mount and unmount it, and the root ledger never moves.
     const rootBeforeFork = await registrations();
     await page.click("#mount-fork");
-    await page.waitFor(() => document.querySelector("#fork-effects").children.length === 1, {
+    await page.waitFor(() => document.querySelector("#fork-effects").children.length === 2, {
       label: "the isolated registration to render",
       timeout: 20000,
     });
     const forked = await snapshot();
     assert.match(forked.fork, /ctx\.isolate\("shell"\)/);
     assert.match(forked.fork, /root ledger \(\d+ registrations\)/);
-    assert.equal(forked.forkRows.length, 1, "the isolated scope has one registration");
+    assert.equal(forked.forkRows.length, 2, "the isolated scope has the provider's registrations");
     assert.equal(await registrations(), rootBeforeFork, "the root ledger did not change");
     await page.click("#unmount-fork");
-    await page.waitFor(() => document.querySelector("#fork-unwind").children.length === 1, {
+    await page.waitFor(() => document.querySelector("#fork-unwind").children.length === 2, {
       label: "the isolated inverse to run",
       timeout: 20000,
     });
